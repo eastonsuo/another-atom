@@ -78,80 +78,118 @@ External: LLM Orchestrator -- HTTPS --> OpenAI API
 
 ### 3.1 V1 必须实现
 
+#### 3.1.1 Agent 与产物 Contract
+
 - 真实 LLM 调用，不使用预设文本替代 Blueprint 或 AppSpec。
 - 结构化 Blueprint 与 AppSpec，所有模型输出都必须经过 Pydantic 校验。
-- 用户确认 Blueprint 后才能创建 Build Job。
+
+#### 3.1.2 受控构建与异步执行
+
 - 固定 React 模板、固定依赖和固定构建命令。
 - 构建脱离 HTTP 请求生命周期，通过持久化异步 Job 执行。
-- React Visual Studio 通过 SSE 查看 LLM、构建和验证事件。
+
+#### 3.1.3 状态、存储与配额
+
 - PostgreSQL 持久化用户、项目、Session、Run、Job、版本、配额和附件元数据。
 - Railway Volume 保存附件、项目工作区和构建产物。
 - 同一用户拥有多个 Session，所有 Session 共享账户配额。
+
+#### 3.1.4 用户审批与公开交付
+
+- 用户确认 Blueprint 后才能创建 Build Job。
+- React Visual Studio 通过 SSE 查看 LLM、构建和验证事件。
 - 公开 Preview、显式 Publish、Update 与 Unpublish。
 
 ### 3.2 V1 明确不实现
 
+#### 3.2.1 本地执行与数据同步
+
 - Terminal CLI 或本地仓库执行。
 - SQLite 与 PostgreSQL 同步。
+
+#### 3.2.2 自由代码生成与执行沙箱
+
 - `npm install`、动态依赖或模型生成的 Shell 命令。
 - 任意技术栈、任意文件结构或任意后端生成。
 - 公网多租户任意代码执行沙箱。
-- 模型选择器和真实多 Agent 并行。
+
+#### 3.2.3 Agent 与模型扩展
+
+- 模型选择器。
+- 真实多 Agent 自主委派与并行执行（由 V2 实现）。
+
+#### 3.2.4 生成应用的业务后端
+
 - 生成应用内部的数据库、认证、支付和订单系统。
+
+#### 3.2.5 平台商业化能力
+
 - Stripe 真实支付、Wallet、充值和发票。
 
 ## 4. 产品执行链路
 
 ```text
-User Prompt
+[1. 请求与资源准备]
+
+用户提交 Prompt
     |
     v
-Authenticate User
+校验用户身份
     |
     v
-Create Project + Session
+创建 Project + Session
     |
     v
-Reserve LLM Quota
+预占 LLM 配额
     |
     v
-Product Manager Agent -> Blueprint + support_level -> Pydantic Validation
+[2. Blueprint 生成与审批]
+
+Product Manager Agent -> Blueprint + support_level -> Pydantic 校验
     |                    |
-    |                    `-- invalid -> bounded retry -> run.failed
+    |                    `-- 校验失败 -> 有限重试 -> run.failed
     v
-User Edit / Approve
+用户编辑 / 确认 Blueprint
     |
     v
-Designer Agent -> VisualSpec -> Pydantic Validation
+[3. 设计与应用规格]
+
+Designer Agent -> VisualSpec -> Pydantic 校验
     |
     v
-Engineer Agent -> AppSpec -> Pydantic Validation
+Engineer Agent -> AppSpec -> Pydantic 校验
     |
     v
-Create Build Job -> Return 202
+[4. 异步构建]
+
+创建 Build Job -> API 返回 202
     |
     v
-Worker Lease Job
+Worker 获取 Job lease
     |
     v
-Renderer -> Fixed React Template -> npm run build
+Renderer -> 固定 React 模板 -> npm run build
     |
-    +-- failed -> build.failed -> run.failed
-    |
-    v
-Deterministic ValidationReport
+    +-- 构建失败 -> build.failed -> run.failed
     |
     v
-QA Agent -> QAReview -> Preview Ready
+[5. 校验与预览]
+
+确定性校验 -> ValidationReport
     |
     v
-User Follow-up -> New AppSpec -> New Build Job -> New Version
+QA Agent -> QAReview -> Preview 就绪
     |
     v
-User Explicitly Publishes Selected Version
+[6. 修改、版本与发布]
+
+用户 Follow-up -> 新 AppSpec -> 新 Build Job -> 新 Version
     |
     v
-Public HTTPS URL
+用户显式发布选定 Version
+    |
+    v
+公开 HTTPS URL
 ```
 
 `publish` 不属于 Agent Loop。Agent Run 在生成通过校验的 Preview Version 后结束；发布是用户显式调用平台 API 的独立状态机。
