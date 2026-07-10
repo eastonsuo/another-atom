@@ -14,15 +14,15 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
-| **V1** | Deliver one complete, publicly testable product-building flow | Planner, Designer, Engineer, and QA run in a fixed sequence | Current implementation target |
-| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product, Architect, Designer, Engineer, and QA agents | Design direction only |
+| **V1** | Deliver one complete, publicly testable product-building flow | Product Manager, Designer, Engineer, and QA run in a fixed sequence | Current implementation target |
+| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product Manager, Architect, Designer, Engineer, and QA agents | Design direction only |
 
 V1 is the only implementation and acceptance baseline. V2 documentation describes future direction and must not be read as completed functionality.
 
 ## V1 Target Experience
 
 1. The user describes a product and can attach reference files.
-2. Planner creates a **Blueprint**, an editable product plan containing pages, modules, visual direction, and data needs.
+2. Product Manager creates a **Blueprint**, an editable product plan containing pages, modules, visual direction, and data needs.
 3. The user reviews and approves the Blueprint. Building cannot start without this approval.
 4. Designer produces a **VisualSpec**, the structured visual and interaction rules.
 5. Engineer produces an **AppSpec**, the machine-validated instructions used to create the application.
@@ -33,7 +33,7 @@ V1 is the only implementation and acceptance baseline. V2 documentation describe
 Product request
       |
       v
-Planner -> Blueprint --------> User approval
+Product Manager -> Blueprint -> User approval
                                     |
                                     v
 Designer -> VisualSpec -> Engineer -> AppSpec
@@ -57,7 +57,7 @@ Team Mode is a **sequential role pipeline**. The roles do not run in parallel or
 
 - Natural-language product requests and reference attachments.
 - Editable Blueprint with an explicit approval gate.
-- Planner, Designer, Engineer, and QA stage timeline.
+- Product Manager, Designer, Engineer, and QA stage timeline.
 - Real LLM calls with schema-validated outputs.
 - Live progress events and an interactive desktop/mobile preview.
 - Natural-language revisions, issue resolution, version restore, and version history.
@@ -151,7 +151,6 @@ Not completed:
 
 - Source repository: [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - Online version: not deployed yet
-- [Documentation index](./docs/README.md)
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 submission note](./docs/v1/submission-note.md)

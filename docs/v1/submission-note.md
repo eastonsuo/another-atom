@@ -99,9 +99,9 @@ ProjectVersion：可恢复、可比较的结果
 
 ### 3.2 固定角色接力，而不是多 Agent 表演
 
-Planner、Designer、Engineer、QA 是独立 instruction 与结构化输出的角色 Agent，但由平台按固定顺序编排。每个阶段必须绑定实际产物：
+Product Manager、Designer、Engineer、QA 是独立 instruction 与结构化输出的角色 Agent，但由平台按固定顺序编排。每个阶段必须绑定实际产物：
 
-- Planner -> Blueprint
+- Product Manager -> Blueprint
 - Designer -> VisualSpec
 - Engineer -> AppSpec + BuildJob
 - QA -> ValidationReport

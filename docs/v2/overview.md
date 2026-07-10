@@ -8,10 +8,10 @@ V2 从 V1 的固定顺序角色接力演进到自主多 Agent 协作。当前已
 
 ```text
 V1: Fixed Sequential Role Pipeline
-Planner -> Designer -> Engineer -> QA
+Product Manager -> Designer -> Engineer -> QA
 
 V2: Autonomous Multi-Agent System
-Leader -> Product / Architect / Designer / Engineer / QA
+Leader -> Product Manager / Architect / Designer / Engineer / QA
        -> dynamic delegation / selective parallel execution
        -> independent context and tool permissions
        -> feedback loops / conflict resolution / result merge
