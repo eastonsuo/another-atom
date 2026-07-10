@@ -51,7 +51,7 @@ FastAPI / LLM Orchestrator
     -> ProjectVersion：可检查、可恢复的结果
 ```
 
-Planner、Designer、Engineer、QA 是同一受控流程的可见阶段，不代表多个 Agent 并行运行。每个阶段都必须产生可供评审检查的产物。
+Planner、Designer、Engineer、QA 是固定顺序 Pipeline 中的角色 Agent，不动态委派、也不并行执行。每次交接都必须产生可供评审检查的产物，自主多 Agent 编排留到 V2。
 
 ## V1 范围
 
@@ -106,15 +106,17 @@ Terminal CLI -> Local Agent -> 本地文件 / Git / shell / npm
 
 - 源代码仓库：[github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - 在线 Demo：尚未部署
-- 实现取舍、完成程度、创新性和后续优先级：[笔试提交说明](./docs/submission-note.md)
+- 实现取舍、完成程度、创新性和后续优先级：[笔试提交说明](./docs/v1/submission-note.md)
 
 ## 文档
 
 - [文档索引](./docs/README.md)
-- [V1 架构设计](./docs/architecture-design.md)
-- [V1 产品需求文档](./docs/another-atom-v1-prd.md)
-- [Atoms 参考产品功能分析](./docs/atoms-reference-analysis.md)
-- [笔试提交说明](./docs/submission-note.md)
+- [V1 文档索引](./docs/v1/README.md)
+- [V1 架构设计](./docs/v1/architecture-design.md)
+- [V1 产品需求文档](./docs/v1/another-atom-v1-prd.md)
+- [V2 方向说明](./docs/v2/README.md)
+- [Atoms 参考产品功能分析](./docs/reference/atoms-reference-analysis.md)
+- [笔试提交说明](./docs/v1/submission-note.md)
 
 ## 附录
 

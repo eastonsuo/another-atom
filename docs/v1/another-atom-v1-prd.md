@@ -4,7 +4,7 @@
 
 - 文档状态：已确认，进入实施
 - 版本名称：V1.0 可部署纵切版
-- 前置文档：[Atoms 参考产品功能分析](./atoms-reference-analysis.md)
+- 前置文档：[Atoms 参考产品功能分析](../reference/atoms-reference-analysis.md)
 - 技术文档：[Another Atom V1 架构设计](./architecture-design.md)
 
 ## 1. 版本结论
@@ -205,7 +205,9 @@ Blueprint 是 Another Atom 的主要衍生能力，也是从 Prompt 进入 Build
 - 用户可修改字段、删除非关键模块、确认构建或返回继续编辑 Prompt。
 - 未确认 Blueprint 时不能进入 Building。
 - Prompt、附件元信息、Blueprint 和确认结果必须随项目持久化。
-- Golden Path 生成完整 Blueprint；其他自由输入只做有限字段提取，不承诺任意需求理解。
+- V1 只支持商品展示/商品目录站。Planner 输出必须包含 `support_level`：`supported`、`adapted` 或 `unsupported`。
+- `supported` 直接进入 Blueprint；`adapted` 必须在界面列出被替换、忽略或映射的需求，用户确认后才能继续。
+- `unsupported` 不创建 Build Job，界面明确说明“V1 仅支持商品展示/目录站”，并提供 Golden Path 示例。
 - 文件和图片附件支持本地选择、名称/大小预览和移除，不上传到第三方服务。
 - Projects 支持查看、重命名和删除项目；删除需要二次确认。
 
@@ -213,40 +215,39 @@ Blueprint 是 Another Atom 的主要衍生能力，也是从 Prompt 进入 Build
 
 #### Engineer Mode
 
-- Blueprint 确认后只显示 Engineer 执行。
-- 执行步骤较少，直接进入构建和验证。
+- Engineer 根据 Prompt 生成最小 Blueprint，用户确认后由同一 Engineer 生成 AppSpec。
+- 全程只显示 Engineer 角色，执行步骤较少，随后进入固定构建和验证。
 - 只展示预计执行阶段，不展示不会真实变化的 credit 或扣费信息。
 - 适合用户观察“快速、低成本、覆盖窄”的模式特征。
 
 #### Team Mode
 
-- Planner 根据 Blueprint 整理页面与模块。
-- Designer 输出视觉方向，Engineer 构建，QA 检查路由和核心交互。
+- Team Mode 是固定顺序的角色接力：Planner、Designer、Engineer、QA 使用独立 instruction 和结构化输出，按顺序消费上一阶段的明确产物。
+- Planner 根据 Prompt 和附件生成 Blueprint；用户确认后，Designer 生成 VisualSpec，Engineer 生成 AppSpec，固定 Renderer 完成构建，QA 基于 ValidationReport 生成 QAReview。
 - 基础 SEO 作为 Blueprint 和构建产物的一部分生成，不设置 Atoms 专有角色名称。
-- 用户确认 Blueprint 后按阶段展示进度、当前角色和阶段产物。
+- 工作区标题或时间线必须标注“Team Mode · 分阶段接力”，并展示当前角色、阶段状态和可检查产物。
 - 同一时刻只突出一个主执行阶段，避免把阶段事件做成无意义的消息瀑布。
+- V1 不并行执行角色，不动态委派，不共享隐藏长期记忆，也不进行自动无限返工；这些属于 V2 自主多 Agent。
 
 #### 共同行为
 
 - 支持 Stop；停止后可 Continue 或 Remix。
 - LLM 输出必须经过结构校验和有限重试；文件写入与构建工具必须提供可检查、可恢复的确定性状态。
 - 构建完成后自动打开 App Viewer。
-- 角色文案明确是演示流程，不伪造真实模型推理内容。
+- 角色文案明确是固定顺序角色 Pipeline，不使用“多个 Agent 正在并行协作”“团队自主讨论”等表述，也不展示模型私有推理内容。
 
 两种可执行模式必须在流程上可区分，而不只是切换标签：
 
 ```text
  Engineer Mode
 
- Blueprint --> Confirm --> Engineer --> Build --> Validate --> Viewer
+ Prompt --> Engineer --> Blueprint --> Confirm --> AppSpec --> Build --> Validate --> Viewer
 
- Team Mode
+ Team Mode: fixed sequential role pipeline
 
- Blueprint --> Confirm --> Planner --> Designer --> Engineer --> QA
-      ^            |          |           |            |        |
-      |       edit / confirm  pages      visual       build   validate
-      +-----------------------------------------------------------+
-                         user can return to edit
+ Prompt --> Planner --> Blueprint --> Confirm --> Designer --> Engineer --> Build --> QA --> Viewer
+              |            |                    |           |          |       |
+           requirements  edit/approve       VisualSpec    AppSpec  Validation QAReview
 ```
 
 ### 6.4 App Viewer
@@ -285,9 +286,46 @@ Blueprint 是 Another Atom 的主要衍生能力，也是从 Prompt 进入 Build
 - 公开 URL 应在无登录、无本地项目状态的浏览器中访问，展示被发布版本。
 - Specify Version 下继续编辑或保存新版本，不应改变线上内容；手动 Update 后才改变。
 - Always Latest 下保存新版本后，线上内容应更新到最新保存版本。
-- Share 支持 Public 和 Link Only；Private 不进入 V1.0，因为第一版没有真实账号和成员体系。
+- Share 支持 Public 和 Link Only；Private 不进入 V1.0，因为第一版没有公开应用访问控制与成员授权体系。
 - 支持编辑公开卡片的标题、描述和封面。
-- Export 至少导出包含项目信息、当前内容和版本摘要的 JSON；静态代码 zip 不属于 P0。
+- Export 导出版本化 JSON；静态代码 zip 不属于 P0。JSON 最小字段集必须符合下面的 Contract，不导出密钥、凭证、绝对存储路径、原始对话或内部配额流水。
+
+```json
+{
+  "schema_version": "1.0",
+  "exported_at": "2026-07-11T00:00:00Z",
+  "project": {
+    "id": "project_123",
+    "name": "Mono Market",
+    "product_type": "product_catalog"
+  },
+  "blueprint": {},
+  "visual_spec": {},
+  "app_spec": {},
+  "current_version": {
+    "id": "version_2",
+    "number": 2,
+    "source": "Build|Edit|Resolve|Restore",
+    "created_at": "2026-07-11T00:00:00Z",
+    "summary": "Updated hero copy"
+  },
+  "versions": [],
+  "publication": {
+    "status": "unpublished|live|paused",
+    "strategy": "latest|specified",
+    "version_id": "version_2",
+    "url": "https://example.com/apps/project_123"
+  },
+  "attachments": [
+    {
+      "id": "attachment_1",
+      "file_name": "reference.png",
+      "mime_type": "image/png",
+      "size_bytes": 1024
+    }
+  ]
+}
+```
 
 版本历史只有一份，两个发布策略只是使用不同指针：
 
@@ -342,6 +380,14 @@ Blueprint 是 Another Atom 的主要衍生能力，也是从 Prompt 进入 Build
  Status legend:
  [D] Demo available   [R] Reference only   [N] Not included
 ```
+
+### 6.9 LLM 失败降级与范围提示
+
+- LLM 在架构规定的最大尝试次数后仍失败时，项目进入 Needs input，不创建 Build Job，且保留 Prompt、附件、Project 和 Session。
+- 界面必须显示失败阶段和可执行操作：Retry、Edit request、Use starter Blueprint。
+- Use starter Blueprint 是用户主动选择的非 AI 回退方案，界面必须明确标注，不能伪装成模型生成结果。
+- `QUOTA_EXCEEDED` 使用独立提示和配额状态，不显示为模型故障。
+- `unsupported` 输入必须在 Blueprint 前终止，展示支持范围和 Golden Path 示例；不能继续播放角色时间线或构建进度。
 
 ## 7. P1 候选范围
 
@@ -444,7 +490,7 @@ V1.0 不实现：
 
 1. 用户从 Home 的 Prompt Composer 输入 Golden Path prompt，选择 Team Mode，并添加一个可移除的图片附件。
 2. 系统创建 Draft 项目并生成 Blueprint，用户修改视觉方向、删除一个非关键模块后确认。
-3. Planner、Designer、Engineer、QA 依次执行，角色时间线和阶段产物与 Blueprint 对应。
+3. Planner、Designer、Engineer、QA 按固定顺序接力，分别产生 Blueprint、VisualSpec、AppSpec、ValidationReport/QAReview；时间线标注“分阶段接力”。
 4. 构建完成后进入 Mono Market 的 Desktop 预览。
 5. 用户切换到 Mobile，并在 Home/Catalog/Product 之间导航。
 6. 用户选中首页标题，修改文案；替换一张商品图并 Apply。
@@ -468,6 +514,8 @@ V1.0 不实现：
 
 ## 11. 验收标准
 
+### 11.1 功能验收
+
 V1.0 只有同时满足以下条件才算完成：
 
 1. 主路径可在一个连续会话内完整演示，不需要修改数据文件或刷新页面修复状态。
@@ -481,6 +529,36 @@ V1.0 只有同时满足以下条件才算完成：
 9. 至少覆盖三层状态中的 Draft、Blueprint、Needs input、Building、Failed、Ready、Live、Paused。
 10. 至少覆盖 Build、Edit、Resolve、Restore 四种版本来源。
 11. 部署地址可公开访问，README 写明运行方式、演示账号要求和已知边界；若不需要账号，应明确写无账号。
+12. 非 Golden Path 输入明确进入 supported、adapted 或 unsupported，不产生超出支持范围的虚假构建。
+13. Export JSON 包含约定最小字段，且不包含密钥、凭证、绝对路径、原始对话或内部配额流水。
+
+### 11.2 量化验收与产品漏斗
+
+V1 不在没有真实样本的情况下预设 Blueprint 审批率或 Publish 转化率，但必须采集完整漏斗，为后续价值判断建立基线：
+
+```text
+prompt_submitted
+scope_classified
+blueprint_generated
+blueprint_approved
+role_stage_completed
+build_succeeded
+preview_opened
+revision_applied
+published
+public_app_opened
+```
+
+每条产品事件至少包含 `event_id`、`event_name`、`user_id`、`project_id`、`session_id`、`run_id`、`timestamp`、`mode`、`outcome` 和 `error_code`；公开页面访问等无登录事件允许 `user_id`、`session_id`、`run_id` 为空。事件不得记录完整 Prompt、附件内容或模型私有推理。
+
+部署前必须满足：
+
+- Golden Path 在干净数据下连续执行 5 次，完成率为 5/5。
+- 预期漏斗事件完整率为 100%，且顺序符合状态机。
+- 跨 Project 或 Session 串事件数量为 0。
+- 异步创建 Run/Build Job 的 API 在 1 秒内返回标识。
+- 请求被接受后 2 秒内产生第一条用户可见状态事件。
+- 5 次刷新恢复测试中，Project、Session、版本和 Publish 状态恢复率为 5/5。
 
 ## 12. 风险与取舍
 

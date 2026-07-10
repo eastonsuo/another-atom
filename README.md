@@ -51,7 +51,7 @@ User intent
     -> ProjectVersion: inspectable and recoverable result
 ```
 
-Planner, Designer, Engineer, and QA are visible stages of one controlled workflow, not a claim that multiple agents are running in parallel. Each stage must produce an artifact that reviewers can inspect.
+Planner, Designer, Engineer, and QA are role-specific agents in a fixed sequential pipeline. They do not delegate dynamically or run in parallel, and every handoff must produce an artifact that reviewers can inspect. Autonomous multi-agent orchestration is reserved for V2.
 
 ## V1 Scope
 
@@ -106,15 +106,17 @@ Not completed yet:
 
 - Source repository: [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - Online Demo: not deployed yet
-- Implementation decisions, completion status, innovation, and roadmap: [Submission note](./docs/submission-note.md)
+- Implementation decisions, completion status, innovation, and roadmap: [Submission note](./docs/v1/submission-note.md)
 
 ## Documentation
 
 - [Documentation index](./docs/README.md)
-- [V1 architecture design](./docs/architecture-design.md)
-- [V1 product requirements](./docs/another-atom-v1-prd.md)
-- [Atoms reference product analysis](./docs/atoms-reference-analysis.md)
-- [Submission note](./docs/submission-note.md)
+- [V1 documentation](./docs/v1/README.md)
+- [V1 architecture design](./docs/v1/architecture-design.md)
+- [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
+- [V2 direction](./docs/v2/README.md)
+- [Atoms reference product analysis](./docs/reference/atoms-reference-analysis.md)
+- [Submission note](./docs/v1/submission-note.md)
 
 ## Appendix
 
