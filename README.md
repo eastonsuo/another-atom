@@ -2,7 +2,7 @@
 
 > An Atoms-inspired agentic app builder demo with interactive generation, live preview, persistence, versioning, and publishing.
 
-Another Atom 是一个受 [Atoms](https://atoms.dev/) 启发的独立产品 Demo，目标是把自然语言需求转化为可交互、可修改、可保存和可发布的网页应用。
+Another Atom 是一个受 Atoms 启发的独立产品 Demo，目标是把自然语言需求转化为可交互、可修改、可保存和可发布的网页应用。
 
 本项目用于完成 Atoms Demo 挑战，同时作为公开的产品设计与工程实现案例。它不是 Atoms 官方项目，也不与 Atoms 代码或内部实现耦合。
 
@@ -23,3 +23,7 @@ Another Atom 是一个受 [Atoms](https://atoms.dev/) 启发的独立产品 Demo
 - [ ] 技术设计
 - [ ] Demo 实现
 - [ ] 生产部署
+
+## 附录
+
+- 原版产品：[Atoms](https://atoms.dev/)
