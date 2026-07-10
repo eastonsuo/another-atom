@@ -8,16 +8,16 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** product and architecture design are complete. Application implementation and public deployment are not complete yet.
+> **Current status:** V1 product and architecture design and V2 role orchestration design are complete. Application implementation and public deployment for both versions are not complete yet.
 
 ## Version Roadmap
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
 | **V1** | Deliver one complete, publicly testable product-building flow | Product Manager, Designer, Engineer, and QA run in a fixed sequence | Current implementation target |
-| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product Manager, Architect, Designer, Engineer, and QA agents | Design direction only |
+| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product Manager, Architect, Designer, Engineer, and QA agents | Implement after V1 |
 
-V1 is the only implementation and acceptance baseline. V2 documentation describes future direction and must not be read as completed functionality.
+The project will be implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 is a committed roadmap version to implement after V1 passes acceptance. Neither application version is complete yet.
 
 ## V1 Target Experience
 
@@ -29,101 +29,206 @@ V1 is the only implementation and acceptance baseline. V2 documentation describe
 6. The platform builds the React application inside a restricted environment, and QA checks routes and core interactions.
 7. The user previews the result, requests changes, restores an earlier version, exports project data, and publishes a selected version.
 
+### A. Application Generation and Development
+
+#### Step 1: Confirm the Requirement
+
 ```text
-[INPUT] Product request
-   |
-   v
-[ROLE] Product Manager
-   |
-   v
-[ARTIFACT] Blueprint
-   |
-   v
-[USER] Review and approve
-   |
-   v
-[ROLE] Designer
-   |
-   v
-[ARTIFACT] VisualSpec
-   |
-   v
-[ROLE] Engineer
-   |
-   v
-[ARTIFACT] AppSpec
-   |
-   v
-[PLATFORM] Controlled React build
-   |
-   v
-[ROLE] QA
-   |
-   v
-[RESULT] Interactive preview
-   |
-   v
-[USER] Edit, restore, or publish a version
-   |
-   v
-[RESULT] Public URL
+User prompt
+    |
+    v
+[Product Manager]
+    |
+    v
+Blueprint
+    |
+    v
+User review and approval
+```
+
+#### Step 2: Design and Build
+
+```text
+Approved Blueprint
+    |
+    v
+[Designer] -> VisualSpec
+    |
+    v
+[Engineer] -> AppSpec
+    |
+    v
+Platform-controlled React build
+```
+
+#### Step 3: Validate Quality
+
+```text
+Build result
+    |
+    v
+[QA] -> ValidationReport / QAReview
+    |
+    v
+Interactive preview
+```
+
+### B. Preview, Version, and Publish
+
+```text
+Interactive preview
+    |
+    +-- Edit or Resolve -> save new version -> validate again
+    |
+    +-- Restore --------> create recovery version; keep history
+    |
+    `-- Select version -> Publish / Update
+                                  |
+                                  v
+                           Stable public URL
 ```
 
 Team Mode is a **sequential role pipeline**. The roles do not run in parallel or delegate work dynamically in V1. Every handoff produces an artifact the user or reviewer can inspect.
 
-## Planned V1 Features
+## V1 Capability Map
 
-- Natural-language product requests and reference attachments.
-- Editable Blueprint with an explicit approval gate.
-- Product Manager, Designer, Engineer, and QA stage timeline.
-- Real LLM calls with schema-validated outputs.
-- Live progress events and an interactive desktop/mobile preview.
-- Natural-language revisions, issue resolution, version restore, and version history.
-- Multiple sessions with account-level usage limits.
-- Versioned JSON export.
-- User-controlled publishing, updates, unpublishing, and a stable public URL.
-- Railway deployment with PostgreSQL and persistent project storage.
-
-V1 is scoped to a controlled product catalog/storefront structure. Unsupported requests are stopped before building; related requests can only continue after the user reviews the proposed mapping.
-
-## Why This Design
-
-A direct chat-to-output flow makes intermediate decisions difficult to inspect. Another Atom instead introduces three structured checkpoints:
+V1 is not a collection of disconnected features. It is one complete path from an idea to a public result:
 
 ```text
-User intent
-    -> Blueprint: what should be built
-    -> VisualSpec: how the product should look and behave
-    -> AppSpec: what the build system should create
-    -> ProjectVersion: the result that can be inspected and restored
+Main flow:   Prompt + attachments -> Project -> Blueprint -> approval -> role pipeline -> Preview
+Change flow: Preview -> Edit / Resolve / Restore -> ProjectVersion
+Publish flow: ProjectVersion -> Publish / Update -> Public URL
+
+End-to-end guarantees: persistence | quota | SSE events | recovery | Railway deployment
 ```
 
-This makes the generation process easier to understand and test. In V1, real LLM calls produce the structured checkpoints, while a fixed React template and platform-controlled build process turn them into a runnable result.
+### 1. Start: Turn an Idea into a Recoverable Project
 
-## How V1 Runs
+- **User goal:** Enter a multiline request, add reference attachments, and select Engineer Mode or Team Mode directly from Home, without crossing a marketing page.
+- **System behavior:** Empty prompts, in-progress attachments, and submission failures have explicit Build states. A valid submission creates a Project instead of leaving only a transient conversation.
+- **Inspectable result:** The Project retains the prompt, attachment metadata, and recent state and can be reopened, renamed, or deleted from Projects.
 
-V1 has one execution path: a cloud-hosted application deployed on Railway.
+### 2. Confirm: Agree on What Will Be Built
+
+- **What the user sees:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
+- **How the system decides:** A real LLM classifies the request as `supported`, `adapted`, or `unsupported`, and the structured result must pass schema validation.
+- **How work proceeds:** Only user approval allows Designer, Engineer, and QA to produce VisualSpec, AppSpec, and QAReview in sequence. No approval or artifact means no completed stage.
+- **Failure path:** After bounded model failures, the Project and input remain available for Retry, Edit request, or an explicitly selected non-AI Starter Blueprint.
+
+### 3. Build: Make Both Process and Result Inspectable
+
+- **Real execution:** AppSpec enters the controlled React renderer. The asynchronous Build Worker uses only the fixed template and preinstalled dependencies, never arbitrary model-generated commands.
+- **Visible process:** Studio streams role, build, and error events over SSE and restores the current state after refresh.
+- **Usable result:** Viewer switches between desktop and mobile and actually navigates Home, Catalog, and Product routes with their core interactions.
+- **Continued editing:** Users can change copy, buttons, colors, and product images. Console exposes actionable errors, and Resolve records the repair.
+
+### 4. Deliver: Turn a Generation into a Managed Version
+
+- **Version rule:** Build, Edit, Resolve, and Restore each create a ProjectVersion. Restore creates a recovery version without overwriting history.
+- **Publish rule:** The user explicitly runs Publish, Update, or Unpublish and selects Always Latest or Specify Version. Agents never publish automatically.
+- **Final result:** A stable Public URL opens the correct version in a clean browser without login or local project state.
+- **Portable data:** Export returns versioned JSON while excluding secrets, absolute paths, raw conversations, and internal quota ledger entries.
+
+### 5. Protect: Make Multi-User Public Operation Real
+
+- **Durable state:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
+- **Bounded usage:** Plans and the Usage Ledger reserve before an LLM call and settle afterward; concurrent sessions cannot bypass account quota.
+- **Public deployment:** Railway hosts the web service, asynchronous builds, and published results behind one HTTPS entry point.
+- **Honest boundaries:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
+
+V1 is limited to a controlled product catalog/storefront structure. `unsupported` requests stop before build; `adapted` requests show mapped and omitted requirements and require user approval before continuing.
+
+## V1 Delivery Milestones
+
+| Milestone | Deliverable | Stage acceptance | Status |
+| --- | --- | --- | --- |
+| **M0 Design baseline** | PRD, architecture, role contracts, and submission note | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
+| **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL, and base Project/Session/Quota models | A project can be created and reopened; base state survives refresh and process restart | Not started |
+| **M2 Generation flow** | Prompt, attachments, Blueprint approval, four-role sequence, and asynchronous build | No build before approval; every stage has a real artifact; failures are visible and retryable | Not started |
+| **M3 Studio loop** | Desktop/mobile preview, editing, Resolve, versions, and Restore | Core routes and interactions work; Build/Edit/Resolve/Restore all create recoverable versions | Not started |
+| **M4 Publish and hardening** | Publish/Update/Unpublish, stable URL, Export, automated tests, and Railway deployment | Main flow, negative paths, recovery, quota, and public access meet the final baseline | Not started |
+
+### Final Acceptance Baseline
+
+- The Golden Path completes successfully 5/5 times against clean data.
+- Run/Build Job creation returns an identifier within one second, and the first user-visible event appears within two seconds of acceptance.
+- Project, Session, version, and publish state recover in 5/5 refresh tests, with zero cross-project or cross-session event leakage.
+- Unapproved Blueprints, unsupported input, quota exhaustion, LLM failures, and build failures show explicit states without fake progress.
+- A clean browser can open the public URL, and it follows Always Latest and Specify Version pointers exactly.
+- Every visible control has working behavior, a disabled reason, or a capability-boundary response. Desktop and mobile layouts have no interaction-blocking overlap.
+- Export JSON follows the contract and excludes secrets, credentials, absolute paths, raw conversations, and internal quota ledger entries.
+
+## Design Principles
+
+### 1. Product Layer: Approve the Target Before Spending Build Resources
+
+Natural-language requests can be ambiguous or outside V1 scope. Blueprint turns model interpretation into a product plan the user can edit and approve. Approval is both a product decision gate and a hard precondition for creating a Build Job.
+
+### 2. Collaboration Layer: Roles Handoff Artifacts, Not Roleplay Messages
+
+Product Manager, Designer, Engineer, and QA progressively reduce different kinds of uncertainty:
 
 ```text
-Browser
-  |
-  v
-React Visual Studio
-  |
-  | REST commands + SSE progress events
-  v
-FastAPI
-  |
-  +---- Sequential role orchestrator ----> OpenAI
-  |
-  +---- PostgreSQL
-  |       users / projects / sessions / quota / jobs / versions
-  |
-  `---- Async build worker
-          fixed React template / preinstalled dependencies
-                              |
-                              v
-                    Preview and published app
+Request layer      Prompt       -> Blueprint      decide what to build
+Design layer       Blueprint    -> VisualSpec     constrain presentation and interaction
+Engineering layer  VisualSpec   -> AppSpec        define what the build system creates
+Validation layer   Build Result -> QAReview       verify the result against the contracts
+Delivery layer     QAReview     -> ProjectVersion preserve, restore, and publish the result
+```
+
+Every handoff is schema-validated, persisted, and inspectable in the interface. A role message without an artifact change does not complete a stage.
+
+### 3. Execution Layer: Models Decide, the Platform Controls Authority
+
+The LLM interprets requirements and makes structured decisions, but it cannot install dependencies, alter build commands, execute arbitrary shell input, or publish automatically. The platform owns the renderer, build worker, quota transactions, and publishing service.
+
+### 4. State Layer: Runs, Versions, and Publishing Stay Separate
+
+A failed Agent Run must not damage an existing version. An edit must not silently change a pinned public version, and Restore must not erase history. Project, Run, ProjectVersion, and publish pointers are therefore modeled separately so every change is traceable and recoverable.
+
+### 5. Evolution Layer: Prove the Loop in V1, Add Autonomy in V2
+
+V1 proves whether request, approval, build, preview, edit, versioning, and publishing work as one usable loop. V2 keeps the same artifact and event contracts, then adds Leader, independent contexts, dynamic delegation, rework, and arbitration without burdening V1 with untestable complexity.
+
+## V1 Deployment and Access Architecture
+
+Two operations are separate: **the developer deploys the Another Atom platform to Railway**, while **a user publishes a generated application version inside the platform**. The first is infrastructure deployment; the second is a product capability.
+
+```text
+Platform deployment
+
+Developer -- git push --> GitHub
+                         |
+                         v
+                  Railway auto-deploy
+                         |
+                         v
+              Another Atom cloud service
+
+User access and generated-app publishing
+
+User browser -- HTTPS --> Railway public domain
+                         |
+             +-----------+----------------+
+             | React Visual Studio        |
+             | FastAPI REST + SSE         |----> OpenAI
+             | Sequential role pipeline   |
+             | Async Build Worker         |
+             | Preview / Published Routes |
+             +-----------+----------------+
+                         |
+                +--------+---------+
+                |                  |
+                v                  v
+          PostgreSQL        Persistent Volume
+       users / projects /     workspace / builds
+       sessions / quota /
+       jobs / versions
+
+User selects ProjectVersion -- Publish / Update --> Published Route
+                                                    |
+                                                    v
+                                            Stable public URL
 ```
 
 The model cannot install dependencies, change build commands, execute arbitrary shell input, or publish automatically. Builds run asynchronously with a controlled template and a bounded worker.
@@ -133,18 +238,18 @@ The model cannot install dependencies, change build commands, execute arbitrary 
 - Terminal CLI or local repository execution.
 - Runtime dependency installation or arbitrary code execution.
 - Arbitrary technology stacks or generated backends.
-- Autonomous or parallel multi-agent collaboration.
+- Autonomous or parallel multi-agent collaboration, which is implemented in V2.
 - A model selector.
 - Generated-app authentication, database, commerce, or payment systems.
 - Stripe billing, wallet, top-up, or invoicing.
 
-## Future Directions
+## Version Implementation Plan
 
-### V2: Autonomous Multi-Agent
+### V2: Autonomous Multi-Agent (Planned Implementation)
 
-V2 introduces a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. See the [V2 role and orchestration design](./docs/v2/role-orchestration-design.md).
+V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Its full product scope, deployment profile, and quantitative acceptance baseline will be completed before V2 development; see the [V2 role and orchestration design](./docs/v2/role-orchestration-design.md).
 
-### Local Agent Runtime
+### Unassigned Version: Local Agent Runtime
 
 A Claude Code-like runtime could later work with local files, Git, shell, npm, and a localhost Visual Studio. This direction is not implemented and has not yet been assigned to a release.
 
@@ -160,10 +265,10 @@ Completed:
 
 Not completed:
 
-- [ ] React Visual Studio and FastAPI implementation
-- [ ] LLM integration, renderer, build worker, and persistence
-- [ ] Automated testing and Railway resource verification
-- [ ] Public deployment and online URL
+- [ ] V1 React Visual Studio, FastAPI, LLM, renderer, build worker, and persistence
+- [ ] V1 automated tests, Railway deployment, and public URL
+- [ ] V2 complete PRD, technical design, deployment profile, and acceptance baseline
+- [ ] V2 autonomous multi-agent implementation, testing, and deployment
 
 ## Links
 
@@ -172,7 +277,7 @@ Not completed:
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 submission note](./docs/v1/submission-note.md)
-- [V2 overview](./docs/v2/overview.md)
+- [V2 implementation plan](./docs/v2/overview.md)
 - [V2 role and orchestration design](./docs/v2/role-orchestration-design.md)
 - [Atoms reference analysis](./docs/reference/atoms-reference-analysis.md)
 
