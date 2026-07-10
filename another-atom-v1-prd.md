@@ -1,10 +1,10 @@
-# atoms_demo V1.0 产品版本定义
+# Another Atom V1.0 产品需求文档
 
 [toc]
 
 - 文档状态：待确认
 - 版本名称：V1.0 可部署纵切版
-- 前置文档：[Atoms 公开功能分析](./atoms_demo_analysis.md)
+- 前置文档：[Atoms 参考产品功能分析](./atoms-reference-analysis.md)
 - 后续文档：用户确认本版本后再编写技术设计文档。
 
 ## 1. 版本结论

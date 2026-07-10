@@ -1,4 +1,4 @@
-# Atoms 公开功能分析
+# Atoms 参考产品功能分析
 
 [toc]
 
@@ -524,13 +524,13 @@ Changelog 进一步确认了数据库和存储管理界面：
 - Ads Agent 的预算硬限制、账户审核、自动暂停和异常投放保护。
 - Changelog 中带有 “supported scenarios”“eligible users” 的功能，具体计划、地区和灰度范围。
 
-## 6. 对 atoms_demo 的直接启示
+## 6. 对 Another Atom 的直接启示
 
 功能分析只给出一个结论：**demo 的主干必须是从 prompt 到公开版本的连续闭环，而不是把上述九个功能域各做一张卡片。**
 
 最值得保留的产品骨架是：模式差异、Agent 可见协作、App Viewer、可编辑结果、错误修复、版本恢复、发布链接。Cloud、集成、SEO、广告、Wallet 和 App World 用来说明平台边界，但是否进入 demo 的可操作范围，应由单独的版本文档决定。
 
-对应范围见 [atoms_demo_v1_product_spec.md](./atoms_demo_v1_product_spec.md)。
+对应范围见 [Another Atom V1.0 产品需求文档](./another-atom-v1-prd.md)。
 
 ## 7. 主要资料索引
 
