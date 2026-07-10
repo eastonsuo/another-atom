@@ -5,7 +5,6 @@ import {
   CircleAlert,
   Code2,
   ExternalLink,
-  FileJson,
   History,
   Layers3,
   LoaderCircle,
@@ -15,12 +14,12 @@ import {
   Rocket,
   Smartphone,
   Sparkles,
-  Trash2,
   Users,
   X,
 } from "lucide-react";
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { PreviewLoader } from "./components/PreviewApp";
+import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
 import { api } from "./lib/api";
 import type {
   AttachmentMeta,
@@ -221,7 +220,7 @@ function Sidebar({
 }) {
   return (
     <aside className="studio-sidebar">
-      <div className="brand"><span className="brand-mark"><Sparkles size={17} /></span><strong>Another Atom</strong></div>
+      <div className="brand"><AtomLogo /><strong>Another Atom</strong></div>
       <button className="new-project" onClick={onNew}><Plus size={17} /> New project</button>
       <div className="sidebar-section">
         <span className="sidebar-label">Projects</span>
@@ -282,6 +281,16 @@ function Composer({
     <section className="composer-view">
       <div className="composer-heading">
         <span className="notice"><Sparkles size={14} /> Mock LLM is active</span>
+        <div className="crew-stage" aria-label="Your build team">
+          <span className="crew-spark spark-one" />
+          <span className="crew-spark spark-two" />
+          {(["product", "designer", "engineer", "qa"] as RoleKey[]).map((role) => (
+            <div className="crew-member" key={role}>
+              <RoleAvatar role={role} size="large" />
+              <span>{ROLE_META[role].label}</span>
+            </div>
+          ))}
+        </div>
         <h1>What should the team build?</h1>
         <p>Describe a product showcase or catalog. You will review the plan before any build starts.</p>
       </div>
@@ -408,13 +417,14 @@ function Timeline({ run, events }: { run: RunView; events: RunEvent[] }) {
     ? ["product_manager", "blueprint_approval", "designer", "engineer", "build", "qa", "complete"]
     : ["product_manager", "blueprint_approval", "engineer", "build", "complete"];
   const labels: Record<string, string> = { product_manager: "Product Manager", blueprint_approval: "Your approval", designer: "Designer", engineer: "Engineer", build: "Renderer", qa: "QA", complete: "Preview ready", build_queue: "Build queue", scope_review: "Scope review" };
+  const roles: Record<string, RoleKey> = { product_manager: "product", blueprint_approval: "user", designer: "designer", engineer: "engineer", build: "renderer", qa: "qa", complete: "qa" };
   const currentIndex = stages.indexOf(run.current_stage);
   return <div className="timeline">
     {stages.map((stage, index) => {
       const completed = currentIndex > index || TERMINAL.has(run.status) && run.status.startsWith("completed");
       const active = run.current_stage === stage || (run.current_stage === "build_queue" && stage === "engineer");
       return <div className={active ? "timeline-item active" : completed ? "timeline-item complete" : "timeline-item"} key={stage}>
-        <span className="timeline-dot">{completed ? <Check size={12} /> : active ? <LoaderCircle className="spin" size={12} /> : index + 1}</span>
+        <div className="timeline-avatar"><RoleAvatar role={roles[stage]} size="small" /><span className="timeline-state">{completed ? <Check size={10} /> : active ? <LoaderCircle className="spin" size={10} /> : index + 1}</span></div>
         <div><strong>{labels[stage]}</strong><small>{active ? "In progress" : completed ? "Complete" : "Waiting"}</small></div>
       </div>;
     })}
@@ -427,7 +437,7 @@ function Timeline({ run, events }: { run: RunView; events: RunEvent[] }) {
 
 function BlueprintEditor({ blueprint, setBlueprint, approve, approving }: { blueprint: Blueprint; setBlueprint: (value: Blueprint) => void; approve: () => void; approving: boolean }) {
   return <div className="blueprint-view">
-    <div className="content-heading"><div><span>Approval gate</span><h1>Confirm what we will build</h1><p>The build cannot start until this structured Blueprint is approved.</p></div><SupportBadge level={blueprint.support_level} /></div>
+    <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>Product Manager · Approval gate</span><h1>Confirm what we will build</h1><p>The build cannot start until this structured Blueprint is approved.</p></div><SupportBadge level={blueprint.support_level} /></div>
     {blueprint.support_level === "adapted" && <div className="scope-note"><CircleAlert size={17} /><div><strong>Some requirements were adapted</strong><p>{blueprint.omitted_requirements.join(" ")}</p></div></div>}
     <div className="blueprint-form">
       <label>Project name<input value={blueprint.project_name} onChange={(e) => setBlueprint({ ...blueprint, project_name: e.target.value })} /></label>
@@ -449,7 +459,8 @@ function FailedState({ run }: { run: RunView }) {
 }
 
 function BuildingState({ run }: { run: RunView }) {
-  return <div className="center-state"><span className="state-icon"><LoaderCircle className="spin" /></span><h1>{run.current_stage === "build_queue" ? "Build queued" : "Building your application"}</h1><p>The current stage is persisted. Refreshing this page will not lose the run.</p><div className="build-meter"><span /></div></div>;
+  const role: RoleKey = run.current_stage === "designer" ? "designer" : run.current_stage === "qa" ? "qa" : run.current_stage === "build" ? "renderer" : "engineer";
+  return <div className="center-state building-cartoon"><div className="working-avatar"><RoleAvatar role={role} size="hero" /><span><LoaderCircle className="spin" /></span></div><h1>{run.current_stage === "build_queue" ? "Build queued" : `${ROLE_META[role].label} is working`}</h1><p>The current stage is persisted. Refreshing this page will not lose the run.</p><div className="build-meter"><span /></div></div>;
 }
 
 function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, setTab, refreshShell, refreshRun, setError }: { run: RunView; versions: VersionView[]; setVersions: (v: VersionView[]) => void; device: "desktop" | "mobile"; setDevice: (v: "desktop" | "mobile") => void; tab: "preview" | "edit" | "versions"; setTab: (v: "preview" | "edit" | "versions") => void; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (v: string) => void }) {

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Another Atom">
+  <circle cx="32" cy="32" r="27" fill="#fffaf0" stroke="#27243a" stroke-width="4"/>
+  <ellipse cx="32" cy="32" rx="22" ry="9" fill="none" stroke="#27243a" stroke-width="2.5" transform="rotate(45 32 32)"/>
+  <ellipse cx="32" cy="32" rx="22" ry="9" fill="none" stroke="#27243a" stroke-width="2.5" transform="rotate(-45 32 32)"/>
+  <circle cx="32" cy="7" r="5" fill="#ff7163" stroke="#27243a" stroke-width="2.5"/>
+  <circle cx="57" cy="32" r="5" fill="#ffd45c" stroke="#27243a" stroke-width="2.5"/>
+  <circle cx="32" cy="57" r="5" fill="#6fd6b2" stroke="#27243a" stroke-width="2.5"/>
+  <circle cx="7" cy="32" r="5" fill="#8e7cf0" stroke="#27243a" stroke-width="2.5"/>
+  <circle cx="32" cy="32" r="11" fill="#ffffff" stroke="#27243a" stroke-width="3"/>
+  <path d="M27 37l5-13 5 13m-8-5h6" fill="none" stroke="#27243a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

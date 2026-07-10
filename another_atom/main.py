@@ -64,6 +64,9 @@ def _mount_studio(app: FastAPI, dist_path: Path) -> None:
     @app.get("/{path:path}", include_in_schema=False, response_model=None)
     async def studio_fallback(path: str) -> FileResponse | JSONResponse:
         index = dist_path / "index.html"
+        candidate = (dist_path / path).resolve()
+        if candidate.is_relative_to(dist_path.resolve()) and candidate.is_file():
+            return FileResponse(candidate)
         if index.exists() and not path.startswith("api/"):
             return FileResponse(index)
         return JSONResponse(
