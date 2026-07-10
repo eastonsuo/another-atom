@@ -10,6 +10,7 @@
 ## V2: Planned Direction
 
 - [V2 direction and unresolved boundaries](./v2/README.md)
+- [V2 role and orchestration design](./v2/role-orchestration-design.md)
 
 ## Reference
 
