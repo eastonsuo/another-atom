@@ -150,13 +150,30 @@ V1 is limited to a controlled product catalog/storefront structure. `unsupported
 
 ### Final Acceptance Baseline
 
+#### 1. Functional Loop
+
 - The Golden Path completes successfully 5/5 times against clean data.
-- Run/Build Job creation returns an identifier within one second, and the first user-visible event appears within two seconds of acceptance.
-- Project, Session, version, and publish state recover in 5/5 refresh tests, with zero cross-project or cross-session event leakage.
-- Unapproved Blueprints, unsupported input, quota exhaustion, LLM failures, and build failures show explicit states without fake progress.
 - A clean browser can open the public URL, and it follows Always Latest and Specify Version pointers exactly.
-- Every visible control has working behavior, a disabled reason, or a capability-boundary response. Desktop and mobile layouts have no interaction-blocking overlap.
-- Export JSON follows the contract and excludes secrets, credentials, absolute paths, raw conversations, and internal quota ledger entries.
+
+#### 2. Stability and Data Isolation
+
+- Project, Session, version, and publish state recover in 5/5 refresh tests.
+- Cross-project and cross-session event leakage remains at zero.
+
+#### 3. Responsiveness and State Visibility
+
+- Run/Build Job creation returns an identifier within one second, and the first user-visible event appears within two seconds of acceptance.
+- Unapproved Blueprints, unsupported input, quota exhaustion, LLM failures, and build failures show explicit states without fake progress.
+
+#### 4. User Experience
+
+- Every visible control has working behavior, a disabled reason, or a capability-boundary response.
+- Desktop and mobile layouts have no content or control overlap that blocks interaction.
+
+#### 5. Data Contract and Security
+
+- Export JSON follows the defined contract.
+- Exported data excludes secrets, credentials, absolute paths, raw conversations, and internal quota ledger entries.
 
 ## Design Principles
 
