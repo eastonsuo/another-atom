@@ -4,6 +4,8 @@
 
 - 文档状态：V2 计划实施的 Agent 设计稿；按 V1 验收完成后进入实现
 - 更新日期：2026-07-11
+- V2 产品范围：[V2 产品需求文档](./another-atom-v2-prd.md)
+- V2 工程架构：[V2 架构设计](./architecture-design.md)
 - V1 基线：[V1 架构设计](../v1/architecture-design.md)
 - V1 Agent 基线：[V1 Agent 设计](../v1/agent-design.md)
 - V1 产品范围：[V1 产品需求文档](../v1/another-atom-v1-prd.md)
@@ -425,6 +427,14 @@ run_deadline
 4. 达到总轮次、调用数、token 预算或 deadline，失败结束。
 5. 失败结束保留最近可用 Version，释放未使用配额并返回可操作错误。
 
+### 12.1 并行分支的 Agent 行为
+
+- 一支成功、一支失败时，Leader 不能建议回滚已发生的 Provider 用量，也不能删除成功 Artifact 来伪装原子失败。
+- 成功 Artifact 保持 Accepted/PendingMerge；失败分支生成新的 attempt 或 ReworkRequest。
+- 除非上游 Contract 已改变，Runtime 不允许 Leader 重跑已经成功且 hash 未变化的分支。
+- Leader 可以建议：重试失败分支、取消未启动依赖、重排 TaskGraph、使用成功 Artifact 继续，或请求用户追加预算/修改范围。
+- 预算预占、结算、释放和部分失败补偿由 Runtime 执行，具体事务语义以 [V2 架构设计：并行配额与部分失败](./architecture-design.md#5-并行配额与部分失败)为准。
+
 Atoms 官方建议连续 2-3 轮无法修复时通过 Remix 减少旧上下文干扰，这可以支持“必须止损”的方向，但不能直接证明 V2 各回退边的具体轮次上限。
 
 ## 13. Context、Tool 与 Sandbox
@@ -571,4 +581,5 @@ V2 不通过直接替换 `orchestrator.py` 获得；Runtime、数据模型、预
 - 远程沙箱实现、网络策略和依赖白名单。
 - QA 是否加入视觉截图评估，以及对应测试集。
 - 各回退边、总预算和 deadline 的压测结果。
-- V2 产品范围、验收指标和部署成本。
+- V2 是否扩展商品目录站以外的应用类型。
+- Web、Agent Worker、Object Storage 和 Sandbox Provider 的实际部署成本。

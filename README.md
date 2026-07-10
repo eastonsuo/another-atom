@@ -8,7 +8,7 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** V1 product, engineering architecture, and agent design and V2 agent design are complete. Application implementation and public deployment for both versions are not complete yet.
+> **Current status:** V1 implementation-baseline documents and V2 product/architecture/agent design drafts are complete. Application implementation and public deployment for both versions are not complete yet.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
@@ -135,6 +135,7 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 
 - **State survives:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
 - **Usage stays bounded:** Plans and the Usage Ledger reserve quota before an LLM call and settle afterward; concurrent sessions cannot bypass account limits.
+- **Quota exhaustion has an exit:** V1 has no self-service top-up. Projects and existing results remain available for viewing/export while the demo account waits for an operator reset.
 - **One HTTPS entry point:** Railway hosts the web service, asynchronous builds, and published results behind the same domain.
 - **Boundaries stay honest:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
 
@@ -277,7 +278,7 @@ The model cannot install dependencies, change build commands, execute arbitrary 
 
 ### V2: Autonomous Multi-Agent (Planned Implementation)
 
-V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Its full product scope, deployment profile, and quantitative acceptance baseline will be completed before V2 development; see the [V2 agent design](./docs/v2/agent-design.md).
+V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Product, engineering, and behavior baselines are defined in the [V2 PRD](./docs/v2/another-atom-v2-prd.md), [V2 architecture](./docs/v2/architecture-design.md), and [V2 agent design](./docs/v2/agent-design.md). Sandbox provider, model strategy, and load-tested budgets still require ADR/test decisions before development.
 
 ### Unassigned Version: Local Agent Runtime
 
@@ -290,14 +291,14 @@ Completed:
 - [x] Atoms public-feature analysis
 - [x] V1 product requirements and acceptance criteria
 - [x] V1 architecture and deployment design
-- [x] V2 agent design
+- [x] V2 PRD, architecture, and agent design drafts
 - [x] Bilingual README, evaluation evidence, and project implementation constraints
 
 Not completed:
 
 - [ ] V1 React Visual Studio, FastAPI, LLM, renderer, build worker, and persistence
 - [ ] V1 automated tests, Railway deployment, and public URL
-- [ ] V2 complete PRD, technical design, deployment profile, and acceptance baseline
+- [ ] V2 sandbox/model ADRs, load-tested budgets, and security baseline confirmation
 - [ ] V2 autonomous multi-agent implementation, testing, and deployment
 
 ### Pre-Submission Check
@@ -325,7 +326,8 @@ Not completed:
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 agent design](./docs/v1/agent-design.md)
-- [V2 implementation plan](./docs/v2/overview.md)
+- [V2 product requirements](./docs/v2/another-atom-v2-prd.md)
+- [V2 architecture design](./docs/v2/architecture-design.md)
 - [V2 agent design](./docs/v2/agent-design.md)
 - [Atoms reference analysis](./docs/reference/atoms-reference-analysis.md)
 

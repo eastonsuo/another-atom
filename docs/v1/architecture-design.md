@@ -349,7 +349,18 @@ V1 使用一个 Railway Web Service 内的持久化后台 Worker：
 - 每个 Job 设置可配置超时、输出上限和工作区磁盘上限。
 - 禁止启用多个 Uvicorn Worker 后各自无协调地消费任务。
 
-部署前必须使用目标 Railway 规格完成并发 1 的内存和构建耗时压测。未通过时不能提高并发；具体实例内存必须由压测结果决定，当前文档不预设数值。
+部署前必须在 Build 并发为 1 且构建实际发生时同时观测：Build 耗时、进程 RSS/CPU、API p95、SSE keepalive 间隔和 Job 排队时间，不能只测内存与单次构建耗时。
+
+V1 同进程 Web + Worker 是刻意降低部署复杂度的基线，不是长期扩展方案。若构建期间 API/首事件响应不再满足验收基线、SSE keepalive 明显延迟或实例发生资源退出，必须先拆分 Worker，而不是提高同进程并发：
+
+```text
+Railway Web Service ------ PostgreSQL ------ Railway Build Worker Service
+        |                                            |
+        |                                            v
+        `---------------- Artifact Store <------ build / dist
+```
+
+拆分后 Web 和 Worker 继续通过 PostgreSQL lease 协调 Job；工作区与 BuildArtifact 需要迁移到两服务都可访问的对象存储或明确的产物传输协议，不能假设两个 Service 共享同一个本地 Volume。
 
 ## 6. JavaScript 与 Python 通信
 
@@ -408,19 +419,36 @@ role_stage.started
 role_stage.completed
 app_spec.generated
 build.queued
+build.queue_updated
 build.started
+build.cancelled
 build.failed
 validation.issue_detected
 validation.completed
+qa.degraded
 preview.ready
 run.failed
 run.completed
+run.completed_degraded
 deployment.started
 deployment.completed
 deployment.failed
 ```
 
-事件先写入 `run_events`，再推送 SSE。浏览器断线重连后按 `event_id` 补取，不能只依赖内存广播。
+每条 SSE 消息使用数据库 `event_id` 作为原生 SSE `id`：
+
+```text
+id: evt_123
+event: build.started
+data: { ... }
+```
+
+事件先写入 `run_events`，再推送 SSE。浏览器断线重连时由 EventSource 发送 `Last-Event-ID`，服务端校验用户/Session/Run 归属后，从该游标之后补发；不能只依赖内存广播，也不能因重连重新触发 Agent 或 Build。
+
+- 没有业务事件时，服务端默认每 15 秒发送 SSE comment keepalive；keepalive 不写入 `run_events`。
+- V1 默认保留详细 `run_events` 30 天，保留天数通过配置管理；Run 终态、Artifact、Version 和错误摘要按 Project 生命周期保留。
+- 清理任务只能删除超过窗口且所属 Run 已终止的详细事件，不删除运行中的游标范围。
+- `Last-Event-ID` 已超出保留窗口时，服务端发送 `stream.reset`，前端先通过 Run/Build snapshot API 恢复当前状态，再从新游标继续。
 
 ## 7. 状态模型
 
@@ -438,12 +466,17 @@ Created -> ProductRunning -> AwaitingApproval
                                     v
                                BuildQueued
                                     |
-                             build callback
                                     v
-                                QARunning
-                                    |
-                                    v
-                           Completed / Failed
+                                Building
+                             |            |
+                             v            v
+                           Failed      Validating
+                                      |          |
+                                      v          v
+                               Repairing/Failed QARunning
+                                                 |       |
+                                                 v       v
+                                          Completed  CompletedDegraded
 ```
 
 ### 7.2 Build Job
@@ -468,6 +501,15 @@ Live -> Unpublishing -> Unpublished
 ```
 
 Build 成功不会自动发布。Publish 必须携带用户选择的 `version_id`。
+
+公开访问与缓存约束：
+
+- `public_id` 使用不可预测的随机标识，不暴露顺序 Project/Deployment ID；`/apps/{public_id}/*` 查不到或已 Unpublish 时统一返回 404。
+- 发布快照不可变，Update 通过数据库事务切换 stable public route 指针，不原地覆盖旧快照。
+- 公开入口 HTML 和发布元数据使用 `Cache-Control: no-store`；带 content hash 的静态资产可以使用 immutable cache。
+- Unpublish 先原子更新 Deployment 状态并撤销路由，再异步清理快照；即使文件尚未删除，公开入口也不能继续命中。
+- V1 不接 CDN。未来增加 CDN 时，Publish/Update/Unpublish 必须包含 purge/invalidation 结果，不能只修改数据库指针。
+- Link Only 页面增加 `noindex`，但不可预测 ID 不能被描述为完整访问控制；带 token 和过期时间的访问控制属于未归属版本的后续候选。
 
 ## 8. 数据设计
 
@@ -756,6 +798,14 @@ GitHub 仓库
 3. 复制固定应用模板和 Renderer。
 4. 不在运行时执行依赖安装。
 
+依赖锁定与升级：
+
+- Node 模板和 Studio 提交 lockfile，镜像构建使用 lockfile 的冻结安装模式；lockfile 与声明不一致时构建失败。
+- Python 运行依赖同样锁定精确版本，镜像不能在构建时解析浮动最新版本。
+- 模板依赖升级使用独立变更：更新 lockfile -> 安全检查 -> Golden Path 构建/交互回归 -> 镜像压测 -> 合并。
+- 常规依赖更新在计划窗口执行；高危漏洞可以进入紧急升级，但同样不能跳过构建与 Golden Path 回归。
+- ProjectVersion 记录 `template_version`，旧版本恢复仍能定位其对应模板，不能静默改用不兼容的新模板。
+
 启动阶段：
 
 1. 执行 Alembic migration。
@@ -767,6 +817,15 @@ GitHub 仓库
 Railway PostgreSQL 是独立、按资源计费的非托管服务，不是免费附赠数据库。V1 需要配置备份并验证恢复流程。
 
 Volume 保存工作区和构建产物，但不能替代 PostgreSQL 元数据。服务重启或重新部署后，数据库与 Volume 中的必要状态必须保持一致。
+
+V1 明确采用**单 Web Service 实例 + 单 Volume**，不承诺水平扩展。Volume 中的工作区是短期构建状态，发布快照是读多写少的不可变交付物；两者必须通过 Artifact Contract 区分，不能只保存绝对文件路径。
+
+扩展路径：
+
+1. 优先把发布快照和带 hash 的静态资产迁移到 S3-compatible Object Storage。
+2. Worker 拆分后，再把 BuildArtifact/工作区交换迁移到对象存储或受控产物传输。
+3. PostgreSQL 继续保存 Artifact 元数据、hash、对象 key 和发布指针。
+4. 完成迁移前不得增加 Web/Worker 水平副本并假设 Volume 可共享。
 
 ### 12.3 GitHub
 
@@ -808,7 +867,7 @@ Renderer、Build Worker 和领域服务不能直接定义第二套 AppSpec。所
 8. 实现附件、ProductEvent 漏斗、Export JSON、一次 Follow-up 修改和 ProjectVersion。
 9. 实现 Resolve、Restore 和显式 Publish。
 10. Docker 化并部署 Railway Web Service、PostgreSQL 和 Volume。
-11. 在目标 Railway 规格完成内存、构建耗时和重启恢复压测。
+11. 在目标 Railway 规格完成构建期 API p95、SSE keepalive、队列等待、CPU/RSS、构建耗时和重启恢复压测。
 
 ## 15. V1 验收
 
@@ -820,12 +879,16 @@ Renderer、Build Worker 和领域服务不能直接定义第二套 AppSpec。所
 - AppSpec 不能改变依赖、构建命令或工作区边界。
 - HTTP 创建构建后立即返回，构建由异步 Worker 完成。
 - 同一实例的构建并发不超过配置上限，初始为 1。
+- 构建运行期间，异步创建/查询 API p95 仍满足 1 秒返回基线，首条用户可见事件在 2 秒内到达，SSE keepalive 间隔不超过配置值。
+- 压测报告记录队列等待、CPU、RSS 和构建耗时；若单进程方案不满足基线，部署必须改为独立 Worker Service。
 - 用户可以恢复两个不同 Session，且上下文不会串线。
 - 并发模型调用不能绕过同一账户配额。
 - 附件元数据与 Volume 文件状态一致。
 - Build Error 与预设 Resolve 问题使用不同事件和状态。
 - 用户明确选择版本后才能 Publish。
 - Railway 重启后 queued Job、项目、版本和发布结果可以恢复。
+- SSE 使用 `Last-Event-ID` 补取；游标过期时通过 snapshot resync 恢复，不重复执行 Run。
+- Unpublish 后原公开入口返回 404，Specify/Latest 指针与缓存策略不会继续暴露旧入口。
 - 部署后获得可公开测试的 HTTPS 地址。
 - Golden Path 连续 5 次完成，产品漏斗事件完整率为 100%，跨 Session 串事件为 0。
 - Export JSON 满足最小 Contract，且不包含密钥、凭证、绝对路径、原始对话和内部用量流水。
@@ -851,7 +914,7 @@ Local Python Agent Runtime
 Local Runtime ---- HTTPS ----> Cloud Auth / Quota / LLM Gateway
 ```
 
-P1 必须重新设计：
+后续实现必须重新设计：
 
 - Python/Node 安装与跨平台打包。
 - 本地权限审批和工作区信任模型。
