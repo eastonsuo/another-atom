@@ -2,6 +2,8 @@
 
 本文只描述当前仓库已经实现的 V1 纵切版本。仓库默认使用 Mock Provider；配置 `OLLAMA_API_KEY` 和 `LLM_PROVIDER=ollama` 后使用 Ollama Cloud，默认模型为 DeepSeek V4 Pro。项目、Session、角色产物、配额、事件、版本和发布流程真实运行并持久化。
 
+> 当前运行说明与已确认目标设计必须区分：现有纵切版仍使用 Engineer/Team、Blueprint 确认和演示身份头；[V1 架构设计](./architecture-design.md)已将正式 V1 调整为用户名密码 Session Gateway、Lead `direct/team` 路由、Project 本地 Git、xterm.js + 受限 Vim 和 Linux Sandbox Host。这些新增能力尚未落地，本文不会把它们写成当前可用功能。
+
 ## 1. 当前可运行范围
 
 已经实现：
@@ -13,7 +15,7 @@
 - SSE 事件、Desktop/Mobile 预览、结构化编辑；
 - Build/Edit/Restore 版本历史；
 - Publish、Unpublish、稳定公开路由和 JSON Export；
-- 多用户数据隔离、账户配额、失败重试和启动时 Build Job 恢复。
+- 基于演示身份头的用户数据过滤、账户配额、失败重试和启动时 Build Job 恢复。
 
 尚未实现：
 
@@ -21,6 +23,7 @@
 - Resolve 修复入口、项目重命名/删除和附件文件上传；
 - Railway 公网实例和真实域名；
 - V2 自主多 Agent。
+- 用户名密码登录、真实 Lead 路由、Project 本地 Git、xterm.js/Vim 和 Linux Sandbox Host。
 
 ## 2. 本地启动
 
@@ -127,7 +130,7 @@ npm run build
 
 `.env` 已被 Git 忽略；仓库只提交 `.env.example`。Ollama Cloud 当前不提供服务端 Structured Outputs，因此响应会经过本地 Pydantic 校验；失败时先带校验错误修复一次，再进入阶段级有限重试。
 
-## 5. Railway 部署
+## 5. 当前纵切版的 Railway 部署
 
 仓库已提供：
 
@@ -209,3 +212,23 @@ Railway 容器中的项目目录是 `/app`，相对路径 `./data` 对应 `/app/
 - 当前代码尚未实际创建 Railway Project，因此仓库中没有可填写的在线 Demo URL。
 - Dockerfile 已提供，但本机 Docker daemon 未响应，本轮未完成本地镜像构建验证；Railway 首次 Build Log 仍需人工确认。
 - 当前 Provider 是 Mock；部署成功只能证明产品闭环、状态与 UI 可运行，不能证明真实模型质量。
+
+## 7. 正式 V1 的 Sandbox 部署前置
+
+当前 Railway 单服务步骤只用于部署现有纵切版，不能验收正式 V1 的源码 WebIDE。正式 V1 需要增加 Linux Sandbox Host：
+
+```text
+Browser -- HTTPS/SSE/WSS --> Control Plane (Railway or Linux VM)
+                                  |
+                                  +--> PostgreSQL
+                                  |
+                                  `--> Linux Sandbox Host
+                                       local Git / Vim PTY / Build
+```
+
+Sandbox Host 必须支持 rootless container、Linux namespace 和 cgroup。Editor Sandbox 使用非 root 用户、只读根文件系统、禁网、无平台 Secret、drop capabilities、seccomp、`no-new-privileges` 和 CPU/内存/磁盘/PID/时限上限；只挂载当前 EditorSession 的临时 worktree，且不包含 `.git`。
+
+仅使用 Vim restricted mode、目录前缀检查或 `chroot` 不能作为多用户隔离边界。部署环境无法提供上述机制时，xterm.js 入口必须关闭。正式落地可以选择：
+
+1. Railway 承载 Control Plane，独立 Linux VM 承载 Sandbox Host；
+2. 一台 Linux VM 通过 Docker Compose 同时承载两层，但 Control Plane 不挂载用户 worktree，Sandbox 不持有数据库和 Provider 密钥。

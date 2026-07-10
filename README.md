@@ -10,51 +10,46 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Current status:** A runnable V1 vertical slice is implemented with Ollama Cloud and Mock providers. DeepSeek V4 Pro is the default real model, with V4 Flash selectable per Run. Local generation, preview, editing, versioning, publishing routes, persistence, quota, and automated tests are available. Railway public deployment is not complete.
 
+> **Approved V1 design expansion, not implemented yet:** username/password Session Gateway with user-level Project isolation; a real Lead Agent that routes each message to `direct` or the complete fixed team; one server-side local Git repository per Project; and an xterm.js + restricted Vim WebIDE backed by an isolated Linux Sandbox Host.
+
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
 ## Version Roadmap
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
-| **V1** | Deliver one complete, publicly testable product-building flow | Team Leader, Product Manager, Architect, Engineer, and Data Analyst run in a fixed sequence | Local vertical slice implemented; hardening and cloud deployment remain |
-| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Team Leader coordinates Product Manager, Architect, Engineer, and Data Analyst agents | Implement after V1 |
+| **V1** | Deliver a login-isolated, code-owning, publicly testable product-building flow | Lead chooses `direct` or the complete Product Manager → Architect → Engineer → Data Analyst team | Existing vertical slice works; Gateway/Git/WebIDE/Sandbox design is pending implementation |
+| **V2** | Add autonomous task graphs, role subsets, parallel work, rework, and arbitration | Lead dynamically coordinates specialist Agents under Runtime policy | Implement after V1 |
 
 The project is implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 starts after V1 passes cloud acceptance.
 
 ## V1 Target Experience
 
-1. The user describes a product and can attach reference files.
-2. Product Manager creates a **Blueprint**, an editable product plan containing pages, modules, visual direction, and data needs.
-3. The user reviews and approves the Blueprint. Building cannot start without this approval.
-4. Architect produces an **ArchitectureSpec** covering routes, data boundaries, visual tokens, and interaction structure.
-5. Engineer produces an **AppSpec** and owns deterministic build and interaction validation.
-6. Data Analyst checks catalog data completeness and explains the immutable engineering validation evidence.
-7. The user previews the result, requests changes, restores an earlier version, exports project data, and publishes a selected version.
+1. The user signs in with a username and password; switching accounts exposes only the newly authenticated user's Projects.
+2. The user talks to Lead. Lead either answers/clarifies directly or invokes the complete fixed specialist team.
+3. Product Manager creates a **Blueprint**. Normal supported work proceeds without a redundant approval; scope adaptation, extra budget, destructive repository actions, and public changes request inline confirmation.
+4. Architect and Engineer produce **ArchitectureSpec** and **AppSpec**; Data Analyst explains immutable validation evidence.
+5. Every Project owns one server-side local Git repository. Build, Edit, Resolve, and Restore versions map to Git commits.
+6. The user edits through structured controls or an xterm.js + restricted Vim WebIDE whose PTY runs in an isolated Sandbox.
+7. Save Version validates and builds the worktree before committing; the user then previews and explicitly publishes a selected version.
 
 ### A. Application Generation and Development
 
-#### Step 1: Confirm the Requirement
+#### Step 1: Sign In and Route the Request
 
 ```text
-User prompt
+Username/password -> authenticated user context
     |
     v
-[Team Leader] -> fixed orchestration
+[Lead] -> direct answer / clarification
     |
-    v
-[Product Manager]
-    |
-    v
-Blueprint
-    |
-    v
-User review and approval
+    `----> fixed team when execution is required
 ```
 
 #### Step 2: Design and Build
 
 ```text
-Approved Blueprint
+Product Manager -> Blueprint -> Risk Policy
     |
     v
 [Architect] -> ArchitectureSpec
@@ -63,7 +58,7 @@ Approved Blueprint
 [Engineer] -> AppSpec
     |
     v
-Platform-controlled React build
+Platform-controlled build -> local Git commit
 ```
 
 #### Step 3: Validate Quality
@@ -75,7 +70,7 @@ Build result -> deterministic engineering ValidationReport
 [Data Analyst] -> DataReview
     |
     v
-Interactive preview
+Interactive preview / xterm.js + restricted Vim
 ```
 
 ### B. Preview, Version, and Publish
@@ -93,31 +88,32 @@ Interactive preview
                            Stable public URL
 ```
 
-Team Mode is a **sequential role pipeline**. The roles do not run in parallel or delegate work dynamically in V1. Every handoff produces an artifact the user or reviewer can inspect.
+Lead exposes one conversation surface. If it selects `team`, specialists run as a **fixed sequential pipeline**; V1 does not dynamically select role subsets, run roles in parallel, or arbitrate rework.
 
 ## V1 Capability Map
 
 V1 is not a collection of disconnected features. It is one complete path from an idea to a public result:
 
 ```text
-Main flow:   Prompt + attachments -> Project -> Blueprint -> approval -> role pipeline -> Preview
-Change flow: Preview -> Edit / Resolve / Restore -> ProjectVersion
+Main flow:   Login -> Lead direct | fixed team -> Project -> Blueprint -> Build -> Preview
+Code flow:   Project -> local Git -> xterm/Vim Sandbox -> Save Version -> commit
+Change flow: Preview -> structured Edit / Vim / Resolve / Restore -> ProjectVersion
 Publish flow: ProjectVersion -> Publish / Update -> Public URL
 
-End-to-end guarantees: persistence | quota | SSE events | recovery | Railway deployment
+Target guarantees: user isolation | persistence | quota | Git traceability | Sandbox | recovery
 ```
 
 ### 1. Start: Create a Project Directly from an Idea
 
-- **What you do:** Open Home, write a multiline request, add reference attachments, and select Engineer Mode or Team Mode without first crossing a marketing page.
-- **What the system does:** Empty requests, in-progress attachments, and submission failures show explicit states. A successful submission creates a real Project rather than a conversation that disappears when closed.
-- **What remains:** The request, attachment metadata, and recent progress stay with the Project, which can later be reopened, renamed, or deleted from Projects.
+- **What you do:** Sign in, open Home, and tell Lead what you want to build. There is no marketing page or mode selector in front of the workspace.
+- **What the system does:** Lead makes one visible choice: answer or clarify directly, or call the complete fixed team. The user may override a direct route by choosing **Call team**.
+- **What remains:** A team route creates a real Project and server-side local Git repository. The request, attachment metadata, recent progress, and source history stay bound to the authenticated user.
 
-### 2. Confirm: Agree on the Target Before Building
+### 2. Scope: Make Decisions Visible Without Approving Every Step
 
 - **What you see:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
 - **How the system decides:** Ollama Cloud or the deterministic Mock Provider classifies the request as `supported`, `adapted`, or `unsupported`; every result must pass the same Pydantic validation before it can change Run state.
-- **How work proceeds:** Architect, Engineer, and Data Analyst produce ArchitectureSpec, AppSpec, and DataReview only after user approval. A stage cannot claim completion without approval and a real artifact.
+- **How work proceeds:** A normal `supported` request continues through the fixed team without another approval. `adapted` scope, extra budget, destructive repository actions, Restore pointer changes, and public deployment changes pause for an inline risk confirmation.
 - **Failure path:** After bounded model failures, the Project and input remain intact. The user can Retry, revise the request, or continue from a non-AI Starter Blueprint.
 
 ### 3. Build: See the Process and Use the Result
@@ -125,22 +121,24 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 - **Real execution:** AppSpec enters the controlled React renderer. The asynchronous Build Worker uses only the fixed template and preinstalled dependencies and never executes ad hoc model-generated commands.
 - **Visible process:** Studio streams the current role, build progress, and errors over SSE and restores the previous state after refresh.
 - **Usable result:** Viewer switches between desktop and mobile. Home, Catalog, and Product pages and their core interactions actually run instead of appearing as static screenshots.
-- **Continued editing:** Copy, buttons, colors, and product images remain editable. Console exposes actionable errors, and every Resolve leaves a repair record.
+- **Continued editing:** Copy, buttons, colors, and product images remain editable. A restricted xterm.js + Vim editor exposes only the current Project worktree inside a rootless Sandbox; it is not a login shell.
 
 ### 4. Deliver: Make Every Generation a Managed Version
 
-- **Every change becomes a version:** Build, Edit, Resolve, and Restore each create a ProjectVersion. Restore creates a recovery version without overwriting history.
+- **Every change becomes a version:** Build, Edit, Resolve, and Restore each create a ProjectVersion mapped to a commit in the Project's server-side local Git repository. Restore creates a recovery commit and version without rewriting history.
 - **The user controls publishing:** Publish, Update, and Unpublish require an explicit user action and support Always Latest or Specify Version. Agents never publish automatically.
 - **The result is verifiable:** A Public URL opens the correct version in a clean browser without login or local project state.
 - **Data remains portable:** Export returns versioned JSON while excluding secrets, absolute paths, raw conversations, and internal quota ledger entries.
 
 ### 5. Protect: Make Multi-User Public Access Real
 
-- **State survives:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
+- **Identity is enforced:** Username/password login creates a server-side session cookie. Resource ownership comes from that session, not a caller-supplied user header; signing in as another user exposes only that user's Projects.
+- **State survives:** PostgreSQL stores identity, projects, sessions, quota, jobs, events, and versions. The Sandbox Host persists trusted local Git repositories and immutable build artifacts.
 - **Usage stays bounded:** Plans and the Usage Ledger reserve quota before an LLM call and settle afterward; concurrent sessions cannot bypass account limits.
 - **Quota is application-local:** Another Atom's demo units count Provider requests for product control and are not shared with Codex usage. Ollama Cloud account limits remain an independent Provider concern.
 - **Quota exhaustion has an exit:** V1 has no self-service top-up. Projects and existing results remain available for viewing/export while the demo account waits for an operator reset.
-- **One HTTPS entry point:** Railway hosts the web service, asynchronous builds, and published results behind the same domain.
+- **Execution is isolated:** Terminal and build work run on a Linux Sandbox Host with non-root containers, no network, no secrets, a read-only root filesystem, dropped capabilities, seccomp, and CPU/memory/disk/PID/time limits.
+- **One product entry point:** The browser uses one HTTPS Control Plane endpoint. Railway can host that Control Plane, while the WebIDE and builds require a Linux Sandbox Host; both may also run on one Linux VM for V1.
 - **Boundaries stay honest:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
 
 > **What V1 can build:** V1 focuses on controlled product catalog and storefront sites. `unsupported` requests stop before build; `adapted` requests show what is mapped or omitted and require user approval before continuing.
@@ -150,10 +148,11 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 | Milestone | Deliverable | Stage acceptance | Status |
 | --- | --- | --- | --- |
 | **M0 Design baseline** | PRD, architecture, role contracts, and bilingual README | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
-| **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL-compatible models, and Project/Session/Quota state | A project can be created and reopened; persisted jobs recover after restart | Implemented locally |
-| **M2 Generation flow** | Prompt, attachment metadata, Blueprint approval, fixed role sequence, per-Run model selection, and persisted Build Job | No build before approval; every stage has a schema-validated artifact; failures are visible | Implemented with Ollama Cloud + Mock |
-| **M3 Studio loop** | Desktop/mobile preview, editing, versions, and Restore | Core routes and interactions work; Build/Edit/Restore create recoverable versions | In progress; Resolve remains |
-| **M4 Publish and hardening** | Publish/Unpublish, stable route, Export, automated tests, and Railway deployment | Main flow and negative paths pass locally; public cloud URL passes acceptance | In progress; Railway deployment remains |
+| **M1 Runtime foundation** | React workspace, FastAPI, persistence, quota, events, and leased Build Jobs | A Project can be created and reopened; persisted jobs recover after restart | Implemented locally |
+| **M2 Agent flow** | Real Lead `direct/team` routing, fixed specialist team, structured artifacts, and risk policy | Direct never mutates a repository; Team stages persist inspectable artifacts; only risk events block | Lead/risk redesign pending implementation; current fixed pipeline works |
+| **M3 Identity and source ownership** | Session Gateway, user isolation, one local Git repository per Project, and commit/version mapping | Two users cannot read each other's resources; every saved version resolves to a Project commit | Design complete; implementation pending |
+| **M4 Studio and Sandbox** | Preview, structured editing, xterm.js + Vim, save/build/validate, and Restore | Terminal sees only its leased worktree; escape/network/resource tests pass; saved source is recoverable | Preview/editing works; WebIDE/Sandbox pending |
+| **M5 Public delivery** | Publish/Unpublish, stable route, Export, automated tests, and cloud deployment | Main and negative paths pass; a clean browser opens the selected public version | Routes/tests implemented; public deployment pending |
 
 ### Final Acceptance Baseline
 
@@ -165,12 +164,12 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 #### 2. Stability and Data Isolation
 
 - Project, Session, version, and publish state recover in 5/5 refresh tests.
-- Cross-project and cross-session event leakage remains at zero.
+- Cross-user, cross-project, and cross-session resource/event leakage remains at zero.
 
 #### 3. Responsiveness and State Visibility
 
 - Run/Build Job creation returns an identifier within one second, and the first user-visible event appears within two seconds of acceptance.
-- Unapproved Blueprints, unsupported input, quota exhaustion, LLM failures, and build failures show explicit states without fake progress.
+- Lead routing, required risk approvals, unsupported input, quota exhaustion, LLM failures, build failures, and queued work show explicit states without fake progress.
 
 #### 4. User Experience
 
@@ -181,19 +180,20 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 
 - Export JSON follows the defined contract.
 - Exported data excludes secrets, credentials, absolute paths, raw conversations, and internal quota ledger entries.
+- Every ProjectVersion resolves to a commit in its owning Project repository; Sandbox worktrees cannot access `.git`, other Projects, credentials, the host network, or the container runtime.
 
 ## Design Principles
 
-### 1. Product Layer: Approve the Target Before Spending Build Resources
+### 1. Product Layer: One Lead, Confirmation Only at Real Risk
 
-Natural-language requests can be ambiguous or outside V1 scope. Blueprint turns model interpretation into a product plan the user can edit and approve. Approval is both a product decision gate and a hard precondition for creating a Build Job.
+The user talks to one Lead. Lead either answers/clarifies or invokes the complete team. Blueprint remains an inspectable product contract, but it is not a blanket approval gate: confirmation appears only for adapted scope, additional budget, destructive source actions, pointer changes, and public deployment actions.
 
 ### 2. Collaboration Layer: Roles Handoff Artifacts, Not Roleplay Messages
 
-Team Leader, Product Manager, Architect, Engineer, and Data Analyst progressively reduce different kinds of uncertainty:
+Lead, Product Manager, Architect, Engineer, and Data Analyst progressively reduce different kinds of uncertainty:
 
 ```text
-Coordination layer Run state          -> StageDecision     control order, retry, and failure closure
+Coordination layer User message       -> LeadDecision      direct answer or fixed-team route
 Product layer      Prompt             -> Blueprint         decide what to build
 Architecture layer Blueprint          -> ArchitectureSpec  define routes, data, and presentation bounds
 Engineering layer  ArchitectureSpec   -> AppSpec + Report  build and validate platform behavior
@@ -201,26 +201,28 @@ Data layer         AppSpec + Report   -> DataReview        check data and explai
 Delivery layer     DataReview         -> ProjectVersion    preserve, restore, and publish the result
 ```
 
-Every specialist handoff is schema-validated, persisted, and inspectable. V1 Team Leader is the deterministic orchestrator and emits auditable StageDecision/progress events rather than a fabricated model conversation.
+Every specialist handoff is schema-validated, persisted, and inspectable. Lead is a real V1 Agent, but its authority is deliberately narrow: `direct` or `team`. The Runtime, not Lead, owns risk checks, state transitions, retries, and failure closure.
 
 ### 3. Execution Layer: Models Decide, the Platform Controls Authority
 
-The LLM interprets requirements and makes structured decisions, but it cannot install dependencies, alter build commands, execute arbitrary shell input, or publish automatically. The platform owns the renderer, build worker, quota transactions, and publishing service.
+The LLM interprets requirements and makes structured decisions, but it cannot install dependencies, alter build commands, execute arbitrary shell input, or publish automatically. The platform owns identity, repositories, renderer, build worker, Sandbox, quota transactions, and publishing. The WebIDE launches fixed Vim inside a restricted worktree, not a general shell.
 
 ### 4. State Layer: Runs, Versions, and Publishing Stay Separate
 
-A failed Agent Run must not damage an existing version. An edit must not silently change a pinned public version, and Restore must not erase history. Project, Run, ProjectVersion, and publish pointers are therefore modeled separately so every change is traceable and recoverable.
+A failed Agent Run must not damage an existing version. An edit must not silently change a pinned public version, and Restore must not erase history. Project, Run, ProjectVersion, Git commit, and publish pointers are modeled separately so every source and deployment change is traceable and recoverable.
 
 ### 5. Evolution Layer: Prove the Loop in V1, Add Autonomy in V2
 
-V1 proves whether request, approval, build, preview, edit, versioning, and publishing work as one usable loop. V2 keeps the same artifact and event contracts, then adds Leader, independent contexts, dynamic delegation, rework, and arbitration without burdening V1 with untestable complexity.
+V1 proves whether identity isolation, Lead routing, structured team execution, risk confirmation, source editing, build, versioning, and publishing work as one usable loop. V2 keeps these contracts and upgrades Lead to dynamic task graphs, role subsets, parallel work, rework, and arbitration.
 
 ## Implementation Approach and Key Trade-offs
 
 | Decision | Why | Benefit | Cost and boundary |
 | --- | --- | --- | --- |
 | Real LLM + structured contracts + deterministic renderer | Prove real requirement understanding while controlling execution risk in a shared cloud environment | Blueprint/AppSpec respond to input and builds remain verifiable | V1 does not support arbitrary stacks or free-form code execution |
-| Railway Cloud as the only V1 execution surface | Public acceptance needs one stable, reproducible Session, Preview, and Publish path | Only one state, storage, and deployment path to maintain | V1 cannot operate on a user's local repository |
+| Username/password Session Gateway + user-level tenant | Project ownership must be derived from trusted identity, not a caller header | Switching accounts produces testable Project isolation | V1 has no Organization, membership, or shared Project roles |
+| One server-side local Git repository per Project | A Project needs durable, inspectable source ownership | ProjectVersion maps to a commit without requiring GitHub OAuth | V1 has no remote, push, pull, or user-machine repository |
+| xterm.js + fixed Vim in a rootless Sandbox | Users need source-level editing without exposing a host shell | Familiar terminal editing with bounded filesystem and resources | Requires a Linux Sandbox Host; it is not a Claude Code-like terminal Agent |
 | Asynchronous Build Job + fixed template and dependencies | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and resource/failure scope stays bounded | Generation is limited by template capability; initial build concurrency is one |
 | Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
 
@@ -228,37 +230,35 @@ See the [V1 architecture design](./docs/v1/architecture-design.md) for component
 
 ## V1 Deployment and Access Architecture
 
-Two operations are separate: **the developer deploys the Another Atom platform to Railway**, while **a user publishes a generated application version inside the platform**. The first is infrastructure deployment; the second is a product capability.
+Two operations are separate: **the developer deploys the Another Atom platform**, while **a user publishes a generated application version inside the platform**. The first provisions a trusted Control Plane and Sandbox Host; the second changes a product deployment pointer.
 
 ```text
 Platform deployment
 
 Developer -- git push --> GitHub
                          |
-                         v
-                  Railway auto-deploy
+                         +--> Railway or Linux VM: Control Plane
                          |
-                         v
-              Another Atom cloud service
+                         `--> Linux Sandbox Host: Git / Vim / Build
 
 User access and generated-app publishing
 
-User browser -- HTTPS --> Railway public domain
+User browser -- HTTPS/WSS --> Control Plane public domain
                          |
              +-----------+----------------+
              | React Visual Studio        |
-             | FastAPI REST + SSE         |----> Ollama Cloud / Mock
-             | Sequential role pipeline   |
-             | Async Build Worker         |
+             | FastAPI REST + SSE + WSS   |----> Ollama Cloud / Mock
+             | Session Gateway + Lead     |
+             | Repository Service         |
              | Preview / Published Routes |
              +-----------+----------------+
                          |
-                +--------+---------+
+                +--------+----------------+
                 |                  |
                 v                  v
-          PostgreSQL        Persistent Volume
-       users / projects /     workspace / builds
-       sessions / quota /
+          PostgreSQL        Linux Sandbox Host
+       users / sessions /   local Git / worktrees /
+       projects / quota /   Vim PTY / builds / artifacts
        jobs / versions
 
 User selects ProjectVersion -- Publish / Update --> Published Route
@@ -267,14 +267,15 @@ User selects ProjectVersion -- Publish / Update --> Published Route
                                             Stable public URL
 ```
 
-The model cannot install dependencies, change build commands, execute arbitrary shell input, or publish automatically. Builds run asynchronously with a controlled template and a bounded worker.
+Railway can host the Control Plane, but Railway alone is not assumed to provide the required terminal isolation. A Linux host with rootless containers/namespaces/cgroups is required for real WebIDE and Build Sandboxes. A single Linux VM may host both layers in V1 if network and privilege boundaries remain explicit.
 
 ## Not in V1
 
-- Terminal CLI or local repository execution.
+- Terminal CLI, login shell, or execution against a repository on the user's computer.
+- GitHub/GitLab remote integration, push/pull, SSH keys, or repository sharing.
 - Runtime dependency installation or arbitrary code execution.
 - Arbitrary technology stacks or generated backends.
-- Autonomous or parallel multi-agent collaboration, which is implemented in V2.
+- Autonomous or parallel multi-agent collaboration, which is planned for V2.
 - Arbitrary providers or unrestricted model identifiers; V1 exposes only the configured DeepSeek allowlist.
 - Generated-app authentication, database, commerce, or payment systems.
 - Stripe billing, wallet, top-up, or invoicing.
@@ -283,7 +284,7 @@ The model cannot install dependencies, change build commands, execute arbitrary 
 
 ### V2: Autonomous Multi-Agent (Planned Implementation)
 
-V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Product, engineering, and behavior baselines are defined in the [V2 PRD](./docs/v2/another-atom-v2-prd.md), [V2 architecture](./docs/v2/architecture-design.md), and [V2 agent design](./docs/v2/agent-design.md). Sandbox provider, model strategy, and load-tested budgets still require ADR/test decisions before development.
+V2 is the next implementation version after V1, not an optional showcase direction. It upgrades the V1 Lead from binary routing to dynamic task graphs, independent specialist contexts, role subsets, selective parallel execution, structured rework, arbitration, and run-level budgets. Product, engineering, and behavior baselines are defined in the [V2 PRD](./docs/v2/another-atom-v2-prd.md), [V2 architecture](./docs/v2/architecture-design.md), and [V2 agent design](./docs/v2/agent-design.md).
 
 ### Unassigned Version: Local Agent Runtime
 
@@ -309,6 +310,10 @@ Completed:
 Not completed:
 
 - [ ] Per-project source materialization and `npm run build`; the current generated app is a validated AppSpec rendered by the shared React runtime
+- [ ] Username/password Session Gateway and two-user isolation acceptance
+- [ ] Real Lead `direct/team` routing and risk-driven inline approvals
+- [ ] ProjectRepository provisioning and ProjectVersion-to-commit mapping
+- [ ] xterm.js + restricted Vim, Terminal Gateway, and rootless Sandbox Host
 - [ ] Resolve workflow, project rename/delete, and attachment file upload
 - [ ] Railway deployment and public URL
 - [ ] V2 sandbox/model ADRs, load-tested budgets, and security baseline confirmation
@@ -328,8 +333,8 @@ Not completed:
 | --- | --- |
 | Completeness | Golden Path, negative paths, persistence recovery, public Preview/Publish, and automated test results |
 | Engineering judgment | Technology choices, contracts, asynchronous builds, quota transactions, security boundaries, and explicit trade-offs |
-| User experience | Blueprint approval, live state, interactive Preview, recoverable versions, and actionable errors |
-| Innovation | Blueprint/ArchitectureSpec/AppSpec artifact chain, controlled role handoff, and versioned publishing loop |
+| User experience | One Lead entry point, risk-driven confirmation, live state, interactive Preview/WebIDE, recoverable versions, and actionable errors |
+| Innovation | Inspectable artifact chain, user-isolated local Git ownership, restricted terminal editing, and versioned publishing loop |
 | Deliverability | GitHub source, bilingual README, reproducible run steps, Railway URL, and known boundaries |
 
 ## Links
