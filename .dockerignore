@@ -1,0 +1,10 @@
+.git
+.venv
+.ruff_cache
+.pytest_cache
+.coverage
+data
+studio/node_modules
+studio/dist
+.idea
+.DS_Store

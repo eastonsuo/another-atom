@@ -8,7 +8,7 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** V1 implementation-baseline documents and V2 product/architecture/agent design drafts are complete. Application implementation and public deployment for both versions are not complete yet.
+> **Current status:** A runnable V1 vertical slice is implemented with a Mock LLM Provider. Local application generation, preview, editing, versioning, publishing routes, persistence, quota, and automated tests are available. Real LLM integration and the Railway public deployment are not complete.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
@@ -16,10 +16,10 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
-| **V1** | Deliver one complete, publicly testable product-building flow | Product Manager, Designer, Engineer, and QA run in a fixed sequence | Current implementation target |
+| **V1** | Deliver one complete, publicly testable product-building flow | Product Manager, Designer, Engineer, and QA run in a fixed sequence | Local vertical slice implemented; hardening and cloud deployment remain |
 | **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product Manager, Architect, Designer, Engineer, and QA agents | Implement after V1 |
 
-The project will be implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 is a committed roadmap version to implement after V1 passes acceptance. Neither application version is complete yet.
+The project is implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 starts after V1 passes cloud acceptance.
 
 ## V1 Target Experience
 
@@ -113,7 +113,7 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 ### 2. Confirm: Agree on the Target Before Building
 
 - **What you see:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
-- **How the system decides:** A real LLM classifies the request as `supported`, `adapted`, or `unsupported`; the result is valid only after schema validation.
+- **How the system decides:** The current Mock Provider deterministically classifies the request as `supported`, `adapted`, or `unsupported`; every result still passes the same schema validation required by the future real LLM Provider.
 - **How work proceeds:** Designer, Engineer, and QA produce VisualSpec, AppSpec, and QAReview only after user approval. A stage cannot claim completion without approval and a real artifact.
 - **Failure path:** After bounded model failures, the Project and input remain intact. The user can Retry, revise the request, or continue from a non-AI Starter Blueprint.
 
@@ -146,10 +146,10 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 | Milestone | Deliverable | Stage acceptance | Status |
 | --- | --- | --- | --- |
 | **M0 Design baseline** | PRD, architecture, role contracts, and bilingual README | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
-| **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL, and base Project/Session/Quota models | A project can be created and reopened; base state survives refresh and process restart | Not started |
-| **M2 Generation flow** | Prompt, attachments, Blueprint approval, four-role sequence, and asynchronous build | No build before approval; every stage has a real artifact; failures are visible and retryable | Not started |
-| **M3 Studio loop** | Desktop/mobile preview, editing, Resolve, versions, and Restore | Core routes and interactions work; Build/Edit/Resolve/Restore all create recoverable versions | Not started |
-| **M4 Publish and hardening** | Publish/Update/Unpublish, stable URL, Export, automated tests, and Railway deployment | Main flow, negative paths, recovery, quota, and public access meet the final baseline | Not started |
+| **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL-compatible models, and Project/Session/Quota state | A project can be created and reopened; persisted jobs recover after restart | Implemented locally |
+| **M2 Generation flow** | Prompt, attachment metadata, Blueprint approval, fixed role sequence, and persisted Build Job | No build before approval; every stage has a schema-validated artifact; failures are visible | Implemented with Mock Provider |
+| **M3 Studio loop** | Desktop/mobile preview, editing, versions, and Restore | Core routes and interactions work; Build/Edit/Restore create recoverable versions | In progress; Resolve remains |
+| **M4 Publish and hardening** | Publish/Unpublish, stable route, Export, automated tests, and Railway deployment | Main flow and negative paths pass locally; public cloud URL passes acceptance | In progress; Railway deployment remains |
 
 ### Final Acceptance Baseline
 
@@ -293,11 +293,17 @@ Completed:
 - [x] V1 architecture and deployment design
 - [x] V2 PRD, architecture, and agent design drafts
 - [x] Bilingual README, evaluation evidence, and project implementation constraints
+- [x] FastAPI API, SQLAlchemy persistence, quota ledger, events, versions, and publication routes
+- [x] React Studio, interactive controlled renderer, desktop/mobile preview, editing, and restore
+- [x] Mock role Pipeline with schema validation and bounded failure paths
+- [x] Unit/integration tests, including five consecutive Golden Path runs
+- [x] Dockerfile and Railway configuration
 
 Not completed:
 
-- [ ] V1 React Visual Studio, FastAPI, LLM, renderer, build worker, and persistence
-- [ ] V1 automated tests, Railway deployment, and public URL
+- [ ] Real LLM Provider and real model usage settlement
+- [ ] Resolve workflow, project rename/delete, and attachment file upload
+- [ ] Railway deployment and public URL
 - [ ] V2 sandbox/model ADRs, load-tested budgets, and security baseline confirmation
 - [ ] V2 autonomous multi-agent implementation, testing, and deployment
 
@@ -326,6 +332,8 @@ Not completed:
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 agent design](./docs/v1/agent-design.md)
+- [Local run and Railway deployment guide (Chinese)](./docs/v1/local-run-and-railway-deployment.md)
+- [V1 implementation review](./review/2026-07-11-v1-implementation-review.md)
 - [V2 product requirements](./docs/v2/another-atom-v2-prd.md)
 - [V2 architecture design](./docs/v2/architecture-design.md)
 - [V2 agent design](./docs/v2/agent-design.md)
