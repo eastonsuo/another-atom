@@ -30,25 +30,43 @@ V1 is the only implementation and acceptance baseline. V2 documentation describe
 7. The user previews the result, requests changes, restores an earlier version, exports project data, and publishes a selected version.
 
 ```text
-Product request
-      |
-      v
-Product Manager -> Blueprint -> User approval
-                                    |
-                                    v
-Designer -> VisualSpec -> Engineer -> AppSpec
-                                    |
-                                    v
-                         Controlled React build
-                                    |
-                                    v
-                      QA -> Preview -> Edit -> Version
-                                                    |
-                                                    v
-                                             User publishes
-                                                    |
-                                                    v
-                                               Public URL
+[INPUT] Product request
+   |
+   v
+[ROLE] Product Manager
+   |
+   v
+[ARTIFACT] Blueprint
+   |
+   v
+[USER] Review and approve
+   |
+   v
+[ROLE] Designer
+   |
+   v
+[ARTIFACT] VisualSpec
+   |
+   v
+[ROLE] Engineer
+   |
+   v
+[ARTIFACT] AppSpec
+   |
+   v
+[PLATFORM] Controlled React build
+   |
+   v
+[ROLE] QA
+   |
+   v
+[RESULT] Interactive preview
+   |
+   v
+[USER] Edit, restore, or publish a version
+   |
+   v
+[RESULT] Public URL
 ```
 
 Team Mode is a **sequential role pipeline**. The roles do not run in parallel or delegate work dynamically in V1. Every handoff produces an artifact the user or reviewer can inspect.
