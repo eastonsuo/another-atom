@@ -10,6 +10,8 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Current status:** V1 product and architecture design and V2 role orchestration design are complete. Application implementation and public deployment for both versions are not complete yet.
 
+> **Technical implementation baseline:** [Another Atom V1 Architecture Design](./docs/v1/architecture-design.md)
+
 ## Version Roadmap
 
 | Version | Purpose | Role model | Status |
@@ -102,47 +104,47 @@ Publish flow: ProjectVersion -> Publish / Update -> Public URL
 End-to-end guarantees: persistence | quota | SSE events | recovery | Railway deployment
 ```
 
-### 1. Start: Turn an Idea into a Recoverable Project
+### 1. Start: Create a Project Directly from an Idea
 
-- **User goal:** Enter a multiline request, add reference attachments, and select Engineer Mode or Team Mode directly from Home, without crossing a marketing page.
-- **System behavior:** Empty prompts, in-progress attachments, and submission failures have explicit Build states. A valid submission creates a Project instead of leaving only a transient conversation.
-- **Inspectable result:** The Project retains the prompt, attachment metadata, and recent state and can be reopened, renamed, or deleted from Projects.
+- **What you do:** Open Home, write a multiline request, add reference attachments, and select Engineer Mode or Team Mode without first crossing a marketing page.
+- **What the system does:** Empty requests, in-progress attachments, and submission failures show explicit states. A successful submission creates a real Project rather than a conversation that disappears when closed.
+- **What remains:** The request, attachment metadata, and recent progress stay with the Project, which can later be reopened, renamed, or deleted from Projects.
 
-### 2. Confirm: Agree on What Will Be Built
+### 2. Confirm: Agree on the Target Before Building
 
-- **What the user sees:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
-- **How the system decides:** A real LLM classifies the request as `supported`, `adapted`, or `unsupported`, and the structured result must pass schema validation.
-- **How work proceeds:** Only user approval allows Designer, Engineer, and QA to produce VisualSpec, AppSpec, and QAReview in sequence. No approval or artifact means no completed stage.
-- **Failure path:** After bounded model failures, the Project and input remain available for Retry, Edit request, or an explicitly selected non-AI Starter Blueprint.
+- **What you see:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
+- **How the system decides:** A real LLM classifies the request as `supported`, `adapted`, or `unsupported`; the result is valid only after schema validation.
+- **How work proceeds:** Designer, Engineer, and QA produce VisualSpec, AppSpec, and QAReview only after user approval. A stage cannot claim completion without approval and a real artifact.
+- **Failure path:** After bounded model failures, the Project and input remain intact. The user can Retry, revise the request, or continue from a non-AI Starter Blueprint.
 
-### 3. Build: Make Both Process and Result Inspectable
+### 3. Build: See the Process and Use the Result
 
-- **Real execution:** AppSpec enters the controlled React renderer. The asynchronous Build Worker uses only the fixed template and preinstalled dependencies, never arbitrary model-generated commands.
-- **Visible process:** Studio streams role, build, and error events over SSE and restores the current state after refresh.
-- **Usable result:** Viewer switches between desktop and mobile and actually navigates Home, Catalog, and Product routes with their core interactions.
-- **Continued editing:** Users can change copy, buttons, colors, and product images. Console exposes actionable errors, and Resolve records the repair.
+- **Real execution:** AppSpec enters the controlled React renderer. The asynchronous Build Worker uses only the fixed template and preinstalled dependencies and never executes ad hoc model-generated commands.
+- **Visible process:** Studio streams the current role, build progress, and errors over SSE and restores the previous state after refresh.
+- **Usable result:** Viewer switches between desktop and mobile. Home, Catalog, and Product pages and their core interactions actually run instead of appearing as static screenshots.
+- **Continued editing:** Copy, buttons, colors, and product images remain editable. Console exposes actionable errors, and every Resolve leaves a repair record.
 
-### 4. Deliver: Turn a Generation into a Managed Version
+### 4. Deliver: Make Every Generation a Managed Version
 
-- **Version rule:** Build, Edit, Resolve, and Restore each create a ProjectVersion. Restore creates a recovery version without overwriting history.
-- **Publish rule:** The user explicitly runs Publish, Update, or Unpublish and selects Always Latest or Specify Version. Agents never publish automatically.
-- **Final result:** A stable Public URL opens the correct version in a clean browser without login or local project state.
-- **Portable data:** Export returns versioned JSON while excluding secrets, absolute paths, raw conversations, and internal quota ledger entries.
+- **Every change becomes a version:** Build, Edit, Resolve, and Restore each create a ProjectVersion. Restore creates a recovery version without overwriting history.
+- **The user controls publishing:** Publish, Update, and Unpublish require an explicit user action and support Always Latest or Specify Version. Agents never publish automatically.
+- **The result is verifiable:** A Public URL opens the correct version in a clean browser without login or local project state.
+- **Data remains portable:** Export returns versioned JSON while excluding secrets, absolute paths, raw conversations, and internal quota ledger entries.
 
-### 5. Protect: Make Multi-User Public Operation Real
+### 5. Protect: Make Multi-User Public Access Real
 
-- **Durable state:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
-- **Bounded usage:** Plans and the Usage Ledger reserve before an LLM call and settle afterward; concurrent sessions cannot bypass account quota.
-- **Public deployment:** Railway hosts the web service, asynchronous builds, and published results behind one HTTPS entry point.
-- **Honest boundaries:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
+- **State survives:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
+- **Usage stays bounded:** Plans and the Usage Ledger reserve quota before an LLM call and settle afterward; concurrent sessions cannot bypass account limits.
+- **One HTTPS entry point:** Railway hosts the web service, asynchronous builds, and published results behind the same domain.
+- **Boundaries stay honest:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
 
-V1 is limited to a controlled product catalog/storefront structure. `unsupported` requests stop before build; `adapted` requests show mapped and omitted requirements and require user approval before continuing.
+> **What V1 can build:** V1 focuses on controlled product catalog and storefront sites. `unsupported` requests stop before build; `adapted` requests show what is mapped or omitted and require user approval before continuing.
 
 ## V1 Delivery Milestones
 
 | Milestone | Deliverable | Stage acceptance | Status |
 | --- | --- | --- | --- |
-| **M0 Design baseline** | PRD, architecture, role contracts, and submission note | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
+| **M0 Design baseline** | PRD, architecture, role contracts, and bilingual README | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
 | **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL, and base Project/Session/Quota models | A project can be created and reopened; base state survives refresh and process restart | Not started |
 | **M2 Generation flow** | Prompt, attachments, Blueprint approval, four-role sequence, and asynchronous build | No build before approval; every stage has a real artifact; failures are visible and retryable | Not started |
 | **M3 Studio loop** | Desktop/mobile preview, editing, Resolve, versions, and Restore | Core routes and interactions work; Build/Edit/Resolve/Restore all create recoverable versions | Not started |
@@ -206,6 +208,17 @@ A failed Agent Run must not damage an existing version. An edit must not silentl
 ### 5. Evolution Layer: Prove the Loop in V1, Add Autonomy in V2
 
 V1 proves whether request, approval, build, preview, edit, versioning, and publishing work as one usable loop. V2 keeps the same artifact and event contracts, then adds Leader, independent contexts, dynamic delegation, rework, and arbitration without burdening V1 with untestable complexity.
+
+## Implementation Approach and Key Trade-offs
+
+| Decision | Why | Benefit | Cost and boundary |
+| --- | --- | --- | --- |
+| Real LLM + structured contracts + deterministic renderer | Prove real requirement understanding while controlling execution risk in a shared cloud environment | Blueprint/AppSpec respond to input and builds remain verifiable | V1 does not support arbitrary stacks or free-form code execution |
+| Railway Cloud as the only V1 execution surface | Public acceptance needs one stable, reproducible Session, Preview, and Publish path | Only one state, storage, and deployment path to maintain | V1 cannot operate on a user's local repository |
+| Asynchronous Build Job + fixed template and dependencies | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and resource/failure scope stays bounded | Generation is limited by template capability; initial build concurrency is one |
+| Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
+
+See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details.
 
 ## V1 Deployment and Access Architecture
 
@@ -278,7 +291,7 @@ Completed:
 - [x] V1 product requirements and acceptance criteria
 - [x] V1 architecture and deployment design
 - [x] V2 role and orchestration design
-- [x] Submission note and bilingual documentation
+- [x] Bilingual README, evaluation evidence, and project implementation constraints
 
 Not completed:
 
@@ -287,13 +300,30 @@ Not completed:
 - [ ] V2 complete PRD, technical design, deployment profile, and acceptance baseline
 - [ ] V2 autonomous multi-agent implementation, testing, and deployment
 
+### Pre-Submission Check
+
+- Add the online Demo URL to the README and challenge result form.
+- Keep the GitHub repository public and complete the Golden Path in a clean browser.
+- State whether a demo account is required; explicitly say when no account is needed.
+- Update completed and incomplete status without presenting planned features as implemented.
+- Record known boundaries, failure cases, Railway resource profile, and load-test results.
+
+## Evaluation Evidence
+
+| Dimension | Evidence required from the README and implementation |
+| --- | --- |
+| Completeness | Golden Path, negative paths, persistence recovery, public Preview/Publish, and automated test results |
+| Engineering judgment | Technology choices, contracts, asynchronous builds, quota transactions, security boundaries, and explicit trade-offs |
+| User experience | Blueprint approval, live state, interactive Preview, recoverable versions, and actionable errors |
+| Innovation | Blueprint/VisualSpec/AppSpec artifact chain, controlled role handoff, and versioned publishing loop |
+| Deliverability | GitHub source, bilingual README, reproducible run steps, Railway URL, and known boundaries |
+
 ## Links
 
 - Source repository: [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - Online version: not deployed yet
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
-- [V1 submission note](./docs/v1/submission-note.md)
 - [V2 implementation plan](./docs/v2/overview.md)
 - [V2 role and orchestration design](./docs/v2/role-orchestration-design.md)
 - [Atoms reference analysis](./docs/reference/atoms-reference-analysis.md)
