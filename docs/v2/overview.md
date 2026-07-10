@@ -1,10 +1,10 @@
 # Another Atom V2
 
-- 文档状态：V2 计划实施；角色编排设计已完成，完整 PRD、技术方案、部署规格与验收基线待实施前补齐
+- 文档状态：V2 计划实施；Agent 设计已完成，完整 PRD、技术方案、部署规格与验收基线待实施前补齐
 
-V2 从 V1 的固定顺序角色接力演进到自主多 Agent 协作。当前已完成角色、控制权、Handoff、回退、仲裁和收敛机制的专题设计：
+V2 从 V1 的固定顺序角色接力演进到自主多 Agent 协作。当前已完成执行范式、角色、控制权、Context、Tool、Sandbox、Handoff、回退、仲裁和收敛机制的 Agent 设计：
 
-- [V2 角色与编排设计](./role-orchestration-design.md)
+- [V2 Agent 设计](./agent-design.md)
 
 ```text
 V1: Fixed Sequential Role Pipeline

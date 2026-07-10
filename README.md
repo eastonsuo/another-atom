@@ -8,9 +8,9 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** V1 product and architecture design and V2 role orchestration design are complete. Application implementation and public deployment for both versions are not complete yet.
+> **Current status:** V1 product, engineering architecture, and agent design and V2 agent design are complete. Application implementation and public deployment for both versions are not complete yet.
 
-> **Technical implementation baseline:** [Another Atom V1 Architecture Design](./docs/v1/architecture-design.md)
+> **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
 ## Version Roadmap
 
@@ -218,7 +218,7 @@ V1 proves whether request, approval, build, preview, edit, versioning, and publi
 | Asynchronous Build Job + fixed template and dependencies | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and resource/failure scope stays bounded | Generation is limited by template capability; initial build concurrency is one |
 | Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
 
-See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details.
+See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details. See the [V1 agent design](./docs/v1/agent-design.md) for execution semantics, human-in-the-loop, context, tools, sandbox boundaries, validation, and repair.
 
 ## V1 Deployment and Access Architecture
 
@@ -277,7 +277,7 @@ The model cannot install dependencies, change build commands, execute arbitrary 
 
 ### V2: Autonomous Multi-Agent (Planned Implementation)
 
-V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Its full product scope, deployment profile, and quantitative acceptance baseline will be completed before V2 development; see the [V2 role and orchestration design](./docs/v2/role-orchestration-design.md).
+V2 is the next implementation version after V1, not an optional showcase direction. It adds a Leader Agent, independent specialist contexts, selective parallel execution, structured rework, arbitration, and run-level budgets. Its full product scope, deployment profile, and quantitative acceptance baseline will be completed before V2 development; see the [V2 agent design](./docs/v2/agent-design.md).
 
 ### Unassigned Version: Local Agent Runtime
 
@@ -290,7 +290,7 @@ Completed:
 - [x] Atoms public-feature analysis
 - [x] V1 product requirements and acceptance criteria
 - [x] V1 architecture and deployment design
-- [x] V2 role and orchestration design
+- [x] V2 agent design
 - [x] Bilingual README, evaluation evidence, and project implementation constraints
 
 Not completed:
@@ -324,8 +324,9 @@ Not completed:
 - Online version: not deployed yet
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
+- [V1 agent design](./docs/v1/agent-design.md)
 - [V2 implementation plan](./docs/v2/overview.md)
-- [V2 role and orchestration design](./docs/v2/role-orchestration-design.md)
+- [V2 agent design](./docs/v2/agent-design.md)
 - [Atoms reference analysis](./docs/reference/atoms-reference-analysis.md)
 
 ## Appendix
