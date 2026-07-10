@@ -25,4 +25,4 @@ Leader -> Product / Architect / Designer / Engineer / QA
 - 远程执行沙箱与本地执行的关系。
 - V2 的产品范围、验收标准和部署方案。
 
-V2 正式立项前，以 [V1 文档](../v1/README.md)为唯一实施基线；角色设计稿不能视为已经实现或承诺交付。
+V2 正式立项前，以 [V1 产品需求](../v1/another-atom-v1-prd.md)和 [V1 架构设计](../v1/architecture-design.md)为唯一实施基线；角色设计稿不能视为已经实现或承诺交付。
