@@ -3,436 +3,523 @@
 [toc]
 
 - 文档状态：V1 实施基线
-- 更新日期：2026-07-10
+- 更新日期：2026-07-11
 - 产品文档：[Another Atom V1 产品需求文档](./another-atom-v1-prd.md)
 - 参考分析：[Atoms 参考产品功能分析](./atoms-reference-analysis.md)
+- 提交说明：[笔试提交说明](./submission-note.md)
 
 ## 1. 架构结论
 
-Another Atom V1 定位为一个 **终端优先、本地执行、浏览器可视化、云端控制与发布** 的 AI 应用生成工具。
+Another Atom V1 只交付一种运行形态：**部署在 Railway 的 Cloud Demo**。
 
-终端不是 Web 产品的附属入口，而是 Agent 的主要控制面；浏览器 Visual Studio 用于展示 Blueprint、构建事件、应用预览和版本。真实 LLM 负责把自然语言需求转换成结构化 Blueprint 与 AppSpec，受控工具负责写入项目、执行构建并产生可运行结果。
+用户通过 React Visual Studio 输入需求；Python 服务调用真实 LLM 生成经过 Pydantic 校验的 Blueprint 与 AppSpec；确定性 Renderer 将 AppSpec 写入固定 React 模板；异步 Build Worker 完成构建；用户在浏览器中预览、修改、保存版本并显式发布。
 
 ```text
-                         Another Atom V1
-
 ┌──────────────────────────── 用户交互层 ────────────────────────────┐
 │                                                                  │
-│  Terminal CLI（主入口）                  React Visual Studio      │
-│  Python + Typer/Rich                     浏览器可视化工作台         │
-│  · 输入需求                              · Blueprint 审批          │
-│  · 恢复 Session                          · 构建过程                 │
-│  · 确认/取消操作                          · 应用预览与修改            │
-│         │                                      │                  │
-└─────────│──────────────────────────────────────│──────────────────┘
-          │ Python 调用                          │ REST + SSE
-          │                                      │ OpenAPI 类型同步
-          ▼                                      ▼
-┌──────────────────── Python 本地 Agent Runtime ────────────────────┐
-│                      FastAPI Local Daemon                         │
-│                                                                  │
-│  ┌────────────────── OpenAI Agents SDK ──────────────────────┐   │
-│  │ Agent Loop                                                │   │
-│  │ 需求 → Blueprint → 用户审批 → AppSpec → 执行 → 修改        │   │
-│  │                                                           │   │
-│  │ Tools                                                     │   │
-│  │ · 读取/写入项目文件     · Shell 命令                       │   │
-│  │ · Git/版本管理          · 启停 npm Dev Server              │   │
-│  └───────────────────────────────────────────────────────────┘   │
-│             │                              │                     │
-│             ▼                              ▼                     │
-│  ┌────────────────────┐        ┌────────────────────────────┐    │
-│  │ SQLite             │        │ 本地项目工作区              │    │
-│  │ · Projects         │        │ · React 项目源码            │    │
-│  │ · Sessions         │        │ · 生成文件                  │    │
-│  │ · Runs/Events      │        │ · Git 版本                  │    │
-│  │ · Versions         │        └─────────────┬──────────────┘    │
-│  └────────────────────┘                      │ npm run dev        │
-└──────────────────────────────────────────────│───────────────────┘
-                                               ▼
-                                  ┌─────────────────────────┐
-                                  │ 生成应用 Dev Server      │
-                                  │ localhost:动态端口       │
-                                  │                         │
-                                  │ Visual Studio 通过       │
-                                  │ iframe 展示真实应用       │
-                                  └────────────┬────────────┘
-                                               │ publish
-                                               ▼
-                                  ┌─────────────────────────┐
-                                  │ 公网部署                  │
-                                  │ 可测试的在线访问地址       │
-                                  └─────────────────────────┘
-
-
-┌────────────────────────── 云端控制面 ─────────────────────────────┐
-│                                                                  │
-│  用户认证        配额预占/结算       订阅状态       LLM Gateway    │
-│      │                │                │               │          │
-│      └────────────────┴────────────────┴───────┬───────┘          │
-│                                               ▼                  │
-│                                      PostgreSQL                  │
-│                              Users / Plans / Usage Ledger         │
-│                                               │                  │
-└───────────────────────────────────────────────│──────────────────┘
-                                                ▼
-                                      OpenAI / 其他 LLM
+│                     React Visual Studio                          │
+│  Prompt / Blueprint 审批 / 构建事件 / 应用预览 / 修改 / 发布       │
+│                              │                                   │
+└──────────────────────────────│───────────────────────────────────┘
+                               │ REST + SSE
+                               │ OpenAPI 类型同步
+                               ▼
+┌──────────────────────── Railway Web Service ─────────────────────┐
+│                                                                 │
+│  FastAPI                                                        │
+│     │                                                           │
+│     ├── Auth / Project / Session / Version / Publish            │
+│     │                                                           │
+│     ├── LLM Orchestrator                                        │
+│     │      Prompt → Blueprint → 审批 → AppSpec                  │
+│     │                         │                                  │
+│     │                         ▼                                  │
+│     └── Build Job Queue → Bounded Worker                         │
+│                               │                                  │
+│                               ▼                                  │
+│                    Deterministic Renderer                        │
+│                    固定模板 / 固定依赖 / 固定命令                 │
+│                               │ npm run build                    │
+│                               ▼                                  │
+│                    Preview / Published Build                     │
+└──────────────────────┬───────────────────────┬───────────────────┘
+                       │                       │
+                       ▼                       ▼
+                PostgreSQL              Persistent Volume
+        用户/Session/配额/Job/版本       附件/工作区/dist
+                       │
+                       ▼
+                OpenAI / 其他 LLM
 ```
 
-V1 同时提供两种运行形态：
+本版本不实现 Terminal CLI、本地 Agent Runtime、SQLite、本地工作区或 `localhost` Dev Server。这些能力属于 P1，不参与 V1 验收。
 
-1. **Local Mode**：CLI、Agent 和工作区运行在用户机器上，Visual Studio 通过 localhost 打开。这是长期产品的核心形态。
-2. **Cloud Demo Mode**：同一套 Agent Core 运行在 Railway 的受控容器中，提供公开可测试链接。这是挑战验收与产品展示形态。
-
-Cloud Demo Mode 只允许受控文件操作与构建命令，不向公网用户开放任意 Shell。完整远程编码沙箱不属于 V1。
-
-## 2. 设计目标与约束
+## 2. 已确认的架构决策
 
 ### 2.1 V1 必须实现
 
-- 真实调用 LLM，不使用预设文本伪装生成结果。
-- 从终端或 Visual Studio 创建项目并获得结构化 Blueprint。
-- 用户确认 Blueprint 后才进入文件生成和构建阶段。
-- 生成真实可运行的 React Web 应用，而不是静态截图。
-- 在 Visual Studio 中查看实时构建事件和应用预览。
-- 支持至少一次自然语言增量修改。
-- 保存项目、Session、运行记录和版本。
-- 支持同一用户拥有多个 Session，并能恢复其中任意一个。
-- 在调用 LLM 前校验用户、方案和剩余配额。
-- 将生成结果发布为可公开访问的 HTTPS 地址。
+- 真实 LLM 调用，不使用预设文本替代 Blueprint 或 AppSpec。
+- 结构化 Blueprint 与 AppSpec，所有模型输出都必须经过 Pydantic 校验。
+- 用户确认 Blueprint 后才能创建 Build Job。
+- 固定 React 模板、固定依赖和固定构建命令。
+- 构建脱离 HTTP 请求生命周期，通过持久化异步 Job 执行。
+- React Visual Studio 通过 SSE 查看 LLM、构建和验证事件。
+- PostgreSQL 持久化用户、项目、Session、Run、Job、版本、配额和附件元数据。
+- Railway Volume 保存附件、项目工作区和构建产物。
+- 同一用户拥有多个 Session，所有 Session 共享账户配额。
+- 公开 Preview、显式 Publish、Update 与 Unpublish。
 
-### 2.2 V1 不实现
+### 2.2 V1 明确不实现
 
-- 面向公网开放任意 Shell、系统路径或网络访问。
-- 为每个远程任务创建独立虚拟机或 Kubernetes 沙箱。
-- 任意技术栈和任意后端应用生成。
-- 真实多 Agent 并行协作；Planner、Designer、Engineer、QA 在 V1 中是阶段语义。
-- 完整 Stripe 结算。V1 建立 Plan、Subscription 和 Usage Ledger 模型并执行配额，订阅状态可由种子数据或管理接口设置。
-- 高可用、多区域和水平扩容。
+- Terminal CLI 或本地仓库执行。
+- SQLite 与 PostgreSQL 同步。
+- `npm install`、动态依赖或模型生成的 Shell 命令。
+- 任意技术栈、任意文件结构或任意后端生成。
+- 公网多租户任意代码执行沙箱。
+- 模型选择器和真实多 Agent 并行。
+- 生成应用内部的数据库、认证、支付和订单系统。
+- Stripe 真实支付、Wallet、充值和发票。
 
-## 3. 核心工作流
+## 3. 产品执行链路
 
 ```text
 User Prompt
     |
     v
-Authenticate User -----> Load Plan and Remaining Quota
-    |                              |
-    |                         insufficient
-    |                              v
-    |                         Reject Request
-    v
-Reserve Quota
+Authenticate User
     |
     v
-LLM -> Blueprint (validated Pydantic model)
+Create Project + Session
     |
+    v
+Reserve LLM Quota
+    |
+    v
+LLM -> Blueprint -> Pydantic Validation
+    |                    |
+    |                    `-- invalid -> bounded retry -> run.failed
     v
 User Edit / Approve
     |
     v
-LLM -> AppSpec + File Change Plan
+Reserve LLM Quota
     |
     v
-Controlled Tools -> Write Workspace -> npm build
-    |                                      |
-    |                                 build failed
-    |                                      v
-    |                              repair or report error
-    v
-Preview Ready -> Visual Studio iframe
+LLM -> AppSpec -> Pydantic Validation
     |
     v
-Follow-up Change -> New Run -> New Version
+Create Build Job -> Return 202
     |
     v
-Publish -> Public URL
+Worker Lease Job
+    |
+    v
+Renderer -> Fixed React Template -> npm run build
+    |
+    +-- failed -> build.failed -> run.failed
+    |
+    v
+ValidationReport -> Preview Ready
+    |
+    v
+User Follow-up -> New AppSpec -> New Build Job -> New Version
+    |
+    v
+User Explicitly Publishes Selected Version
+    |
+    v
+Public HTTPS URL
 ```
 
-一次 LLM 调用的配额处理必须遵循：
-
-```text
-verify session
-    -> reserve estimated quota in a database transaction
-    -> call model
-    -> read actual token usage
-    -> settle actual usage and release unused reservation
-    -> release reservation on failure
-```
-
-不能在 LLM 返回后才检查配额，否则并发 Session 可以同时透支同一账户。
+`publish` 不属于 Agent Loop。Agent Run 在生成通过校验的 Preview Version 后结束；发布是用户显式调用平台 API 的独立状态机。
 
 ## 4. 组件设计
 
-### 4.1 Terminal CLI
-
-技术：Python、Typer、Rich。
-
-职责：
-
-- 创建或打开项目工作区。
-- 输入 Prompt、显示流式输出和构建状态。
-- 展示 Blueprint 摘要并接受确认、修改或取消。
-- 继续最近 Session，或按 Session ID 恢复。
-- 启动本地 Agent Daemon 和 Visual Studio。
-- 将命令转换成与 Web Studio 相同的应用层请求。
-
-目标命令形态：
-
-```text
-another-atom
-another-atom "build a product catalog"
-another-atom --continue
-another-atom --resume <session-id>
-another-atom studio
-```
-
-具体参数在 CLI 实现阶段确认，架构不依赖参数名称。
-
-### 4.2 Visual Studio
+### 4.1 React Visual Studio
 
 技术：React、TypeScript、Vite。
 
 职责：
 
-- 提供 Prompt Composer 作为终端之外的等价入口。
-- 展示和编辑 Blueprint。
-- 展示 Agent Run、阶段状态、工具事件和错误。
-- 通过 iframe 加载生成应用。
-- 提供桌面与移动预览、版本列表和发布状态。
-- 发送增量修改、审批、取消和恢复命令。
+- Prompt Composer 与附件选择。
+- Blueprint 展示、编辑、确认和拒绝。
+- 构建阶段、工具事件、错误和重试入口。
+- iframe 应用预览及 Desktop/Mobile 尺寸切换。
+- Follow-up 修改、版本选择、Restore 和 Resolve。
+- Publish、Update 与 Unpublish。
 
-Visual Studio 不直接访问数据库、LLM 或工作区文件，所有操作通过 FastAPI 完成。
+Visual Studio 不直接访问 LLM、数据库、Volume 或工作区文件。
 
-### 4.3 Python API / Local Daemon
+### 4.2 FastAPI Application Service
 
-技术：FastAPI、Pydantic、Uvicorn。
+技术：FastAPI、Pydantic、SQLAlchemy、Alembic、Uvicorn。
 
 职责：
 
-- 为 CLI 和 Visual Studio 提供统一应用接口。
-- 校验身份、Session、项目归属和请求参数。
-- 启动 Agent Run 并维护状态机。
-- 将运行事件以 SSE 推送给前端。
-- 托管生产构建后的 Visual Studio 静态文件。
-- 在 Cloud Demo Mode 中托管生成应用的静态构建结果。
+- 平台用户身份与资源归属校验。
+- Project、Session、Run、Attachment、Version 和 Deployment API。
+- Plan、Quota Account 和 Usage Ledger。
+- 启动 LLM Run 与创建 Build Job。
+- 将持久化事件通过 SSE 推送给浏览器。
+- 托管 Visual Studio 和生成应用的静态构建结果。
 
-Local Mode 默认只监听 `127.0.0.1`，不暴露到局域网。
+API 只负责创建异步任务和返回状态，不在请求协程中执行 `npm run build`。
 
-### 4.4 Agent Runtime
+### 4.3 LLM Orchestrator
 
 技术：OpenAI Agents SDK、Pydantic Structured Output。
 
-V1 使用单一主 Agent，通过明确阶段完成任务，不在首版引入复杂 Agent Graph：
+V1 使用单一主 Agent，并将 Planner、Designer、Engineer、QA 作为阶段语义，不实现多个 Agent 并行运行。
 
 ```text
-understand -> blueprint -> approval -> plan changes
-           -> execute tools -> validate -> publish
+understand -> blueprint -> user approval -> app_spec -> hand off to build
 ```
 
-Agents SDK 负责：
+LLM 只允许输出领域协议：
 
-- Agent Loop。
-- LLM Tool Calling。
-- 结构化输出。
-- 模型会话上下文。
-- Run Hooks、Usage 和 Trace。
-- 审批后的中断恢复。
+- `Blueprint`
+- `VisualSpec`
+- `AppSpec`
+- `RevisionSpec`
 
-业务系统仍然负责：
+LLM 不直接拥有 Shell、文件系统或 Publish Tool。Agents SDK 用于模型调用、结构化输出、Run Hooks、Usage 和 Trace；业务 Session、配额和状态仍由应用数据库管理。
 
-- 用户与 Session 归属。
-- Project、Run、Version 和 Deployment 状态。
-- 配额预占与结算。
-- 工作区和 Shell 权限。
-- SSE 事件协议。
+### 4.4 阶段产物契约
 
-Agents SDK 的 Session 不能替代业务数据库。
+前端可以展示 Planner、Designer、Engineer、QA，但每个阶段必须绑定可检查产物：
 
-如果后续明确要求 OpenAI、Anthropic、Gemini 多供应商平等切换，再评估 PydanticAI；V1 不为尚未确认的多模型需求增加框架层。
+| 阶段名称 | 实际执行 | 必须产生的产物 |
+| --- | --- | --- |
+| Planner | 主 Agent 规范化需求 | `Blueprint` |
+| Designer | 主 Agent 生成视觉约束 | `VisualSpec` |
+| Engineer | 主 Agent 生成应用结构 | `AppSpec`，随后创建 `BuildJob` |
+| QA | 确定性验证器检查构建结果 | `ValidationReport` |
 
-### 4.5 Tool Layer
+界面不得使用“并行协作”“多个模型共同工作”等文案。阶段时间线表达的是单 Agent 与确定性工具的处理阶段。
 
-V1 工具集合：
+### 4.5 Deterministic Renderer
 
-- `inspect_workspace`：读取目录结构和允许的文本文件。
-- `write_files`：按变更计划创建或覆盖项目文件。
-- `apply_patch`：对现有文件执行受控增量修改。
-- `run_build`：只执行预定义构建命令。
-- `start_preview`：本地模式启动开发预览。
-- `publish_build`：发布生产构建产物。
-- `git_snapshot`：记录版本快照，可在 V1 后半段实现。
+Renderer 是 V1 安全边界的核心：
 
-工具必须执行以下公共检查：
+- 只接受通过 schema 校验的 AppSpec。
+- 只写入当前项目工作区。
+- 只修改模板声明允许的配置、内容和资产文件。
+- 依赖在 Docker 镜像构建阶段预装。
+- 运行时禁止 `npm install` 和 `package.json` 依赖变更。
+- 构建命令固定为平台配置，不接受模型提供的命令字符串。
+- 同一个 AppSpec 必须产生语义一致的项目结构。
 
-- 解析后的路径必须位于当前项目工作区内。
-- 命令必须来自允许列表，不能直接执行模型返回的任意字符串。
-- 子进程必须设置超时、输出上限和退出回收。
-- 每次工具调用必须产生 started、completed 或 failed 事件。
-- 破坏性操作必须要求用户审批。
+V1 的自然语言修改先生成新的 RevisionSpec/AppSpec，再由 Renderer 重新物化。模型不直接 patch 任意源码。
 
-### 4.6 Project Workspace 与 Preview
+### 4.6 Build Job Runner
 
-工作区是生成应用的事实来源：
+构建必须异步执行：
 
 ```text
-data/workspaces/{user_id}/{project_id}/
-├── package.json
-├── src/
-├── public/
-├── dist/
-└── .another-atom/
-    ├── blueprint.json
-    ├── app-spec.json
-    └── project.json
+POST build request
+      |
+      v
+insert build_jobs(status=queued)
+      |
+      v
+HTTP 202 + build_job_id
+      |
+      v
+background worker leases job
+      |
+      v
+render -> build -> validate -> persist result
 ```
 
-Local Mode：
+V1 使用一个 Railway Web Service 内的持久化后台 Worker：
 
-- 使用 `npm run dev` 启动动态端口。
-- Python 通过 `preview.ready` 事件返回 URL。
-- Visual Studio iframe 加载该 localhost URL。
+- `MAX_CONCURRENT_BUILDS=1` 作为初始值。
+- 使用 PostgreSQL lease 防止同一 Job 重复执行。
+- 服务重启后重新领取 queued 或 lease 过期的 Job。
+- 使用异步子进程执行固定构建命令。
+- 每个 Job 设置可配置超时、输出上限和工作区磁盘上限。
+- 禁止启用多个 Uvicorn Worker 后各自无协调地消费任务。
 
-Cloud Demo Mode：
+部署前必须使用目标 Railway 规格完成并发 1 的内存和构建耗时压测。未通过时不能提高并发；具体实例内存必须由压测结果决定，当前文档不预设数值。
 
-- 不为每个项目暴露随机公网端口。
-- 执行 `npm run build` 生成 `dist`。
-- FastAPI 通过 `/preview/{project_id}/{version}/` 提供静态结果。
-- V1 生成应用如果需要数据持久化，调用受控平台 API，不能自行启动任意后端。
-
-## 5. Python 与 JavaScript 通信
+## 5. JavaScript 与 Python 通信
 
 V1 使用 **REST + SSE + OpenAPI**，不使用 WebSocket。
 
 ```text
 React Studio ---- REST ----> FastAPI
-React Studio <---- SSE ----- FastAPI / Agent Events
-React Studio ---- iframe --> Generated App
+React Studio <---- SSE ----- Run / Build / Validation Events
+React Studio ---- iframe --> Generated Preview
 ```
 
-REST 负责命令和查询：
+核心 API：
 
 ```text
+POST /api/projects
+POST /api/projects/{project_id}/attachments
 POST /api/sessions
 GET  /api/sessions/{session_id}
 POST /api/sessions/{session_id}/messages
 GET  /api/sessions/{session_id}/events
 POST /api/runs/{run_id}/approve
 POST /api/runs/{run_id}/cancel
+POST /api/builds/{build_id}/retry
 GET  /api/projects/{project_id}/versions
 POST /api/projects/{project_id}/publish
+POST /api/projects/{project_id}/unpublish
 ```
 
-SSE 负责服务端单向事件推送：
+FastAPI 的 Pydantic 模型是 API Contract 的事实来源。前端通过 OpenAPI 生成 TypeScript 类型，不手工维护第二份 Blueprint、AppSpec、Event 或 Error 定义。
+
+### 5.1 事件协议
 
 ```json
 {
   "event_id": "evt_123",
+  "project_id": "project_123",
   "session_id": "session_123",
   "run_id": "run_123",
-  "type": "tool.started",
-  "timestamp": "2026-07-10T12:00:00Z",
+  "type": "build.started",
+  "timestamp": "2026-07-11T00:00:00Z",
   "payload": {
-    "tool": "write_files"
+    "build_id": "build_123"
   }
 }
 ```
 
-核心事件类型：
+核心事件：
 
 ```text
 run.started
 llm.streaming
 blueprint.generated
 approval.required
-tool.started
-tool.completed
+app_spec.generated
+build.queued
+build.started
+build.failed
+validation.issue_detected
+validation.completed
 preview.ready
 run.failed
 run.completed
+deployment.started
+deployment.completed
+deployment.failed
 ```
 
-Pydantic 模型是 API Contract 的事实来源。FastAPI 生成 OpenAPI，前端通过 `openapi-typescript` 生成 TypeScript 类型，避免手工维护两份 Blueprint、Session 和 Event 定义。
+事件先写入 `run_events`，再推送 SSE。浏览器断线重连后按 `event_id` 补取，不能只依赖内存广播。
 
-## 6. 数据与 Session 设计
+## 6. 状态模型
 
-### 6.1 存储分工
+### 6.1 Agent Run
 
-Local Mode：
+```text
+Created -> GeneratingBlueprint -> AwaitingApproval
+              |                       |
+              v                       v
+            Failed              GeneratingAppSpec
+                                        |
+                                        v
+                                  BuildQueued
+                                        |
+                                 build callback
+                                        v
+                              Completed / Failed
+```
 
-- 项目文件：本地文件系统。
-- Session、Run、Event、Version 索引：SQLite。
-- 登录、Plan、共享配额和云端 Usage Ledger：云端 PostgreSQL。
+### 6.2 Build Job
 
-Cloud Demo Mode：
+```text
+Queued -> Leased -> Rendering -> Building -> Validating -> Succeeded
+   ^         |           |           |            |
+   |         +-----------+-----------+------------+--> Failed
+   |
+manual retry creates a new attempt
+```
 
-- 用户、项目、Session、Run、版本元数据：PostgreSQL。
-- 项目工作区与构建结果：Railway Persistent Volume。
-- LLM 密钥：Railway 环境变量，只在服务端读取。
+### 6.3 Publish
 
-### 6.2 核心关系
+```text
+Unpublished -> Publishing -> Live -> Updating -> Live
+                    |                    |
+                    v                    v
+                  Failed               Failed
+
+Live -> Unpublishing -> Unpublished
+```
+
+Build 成功不会自动发布。Publish 必须携带用户选择的 `version_id`。
+
+## 7. 数据设计
+
+### 7.1 存储分工
+
+PostgreSQL：
+
+- 用户、Plan、Subscription、Quota 和 Usage Ledger。
+- Project、Session、AgentRun、RunEvent 和 BuildJob。
+- Attachment 元数据、ProjectVersion 和 Deployment。
+
+Railway Persistent Volume：
+
+- 上传附件。
+- 每个项目的受控工作区。
+- 构建日志和 `dist` 产物。
+- 发布版本的不可变静态快照。
+
+### 7.2 核心关系
 
 ```text
 User
-  | 1
   |---- n Project
-  |         | 1
+  |         |---- n Attachment
   |         |---- n Session
-  |         |          | 1
-  |         |          |---- n AgentRun
-  |         |                     |---- n RunEvent
-  |         |
+  |         |          `---- n AgentRun ---- n RunEvent
+  |         |                                  |
+  |         |                                  `---- n BuildJob
   |         |---- n ProjectVersion
   |         `---- n Deployment
   |
   |---- 1 Subscription ---- 1 Plan
+  |---- 1 QuotaAccount
   `---- n UsageLedger
 ```
 
-核心表：
+### 7.3 核心表
 
-- `users`：用户身份和状态。
-- `plans`：方案、周期配额和功能边界。
-- `subscriptions`：用户当前方案和有效期。
-- `quota_accounts`：可用、预占和已消费额度。
+- `users`：平台用户身份和状态。
+- `plans`：周期配额与功能边界。
+- `subscriptions`：当前方案、有效期和状态；V1 可由种子数据或管理操作设置。
+- `quota_accounts`：可用、预占和已结算额度。
 - `usage_ledger`：每次预占、结算和释放记录。
-- `projects`：项目名称、工作区和当前版本。
-- `sessions`：同一项目下可恢复的对话上下文。
-- `agent_runs`：一次用户指令对应的运行。
-- `run_events`：面向 CLI 和 Studio 的事件流。
-- `project_versions`：Blueprint、AppSpec 和构建产物版本。
-- `deployments`：公开 URL、版本和发布状态。
+- `projects`：项目名称、状态和当前版本。
+- `sessions`：项目下可恢复的模型上下文。
+- `agent_runs`：一次需求或修改对应的 LLM 运行。
+- `run_events`：可重放的 SSE 事件。
+- `build_jobs`：异步构建状态、lease、attempt 和错误。
+- `attachments`：附件元数据和 Volume 路径。
+- `project_versions`：Blueprint、VisualSpec、AppSpec、ValidationReport 和构建产物引用。
+- `deployments`：公开 URL、所选版本和发布状态。
 
-SQLite 和 PostgreSQL 使用相同领域模型，但不要求 V1 自动双向同步全部本地项目。
+### 7.4 attachments
 
-## 7. 身份、配额与订阅
+建议字段：
 
-### 7.1 身份
+```text
+id
+user_id
+project_id
+session_id
+file_name
+mime_type
+size_bytes
+storage_path
+status
+created_at
+deleted_at
+```
 
-- Cloud Demo 通过 Web 登录获得 Session/JWT。
-- Local CLI 通过设备登录或 Personal Token 获得账户身份；具体登录交互在实现阶段确定。
-- 每个 API 请求校验 `user_id` 与目标 Project/Session 的归属。
+上传流程先创建 metadata，再写入 Volume，最后将状态改为 ready。Blueprint 只能引用 ready 附件。删除操作采用软删除并异步清理文件，避免数据库已删除但文件操作失败后无法追踪。
 
-### 7.2 多 Session
+### 7.5 build_jobs
 
-- 一个用户可以同时拥有多个项目和多个 Session。
-- `session_id` 是上下文恢复标识，不是用户身份。
-- 每次 Agent Run 同时绑定 `user_id`、`project_id` 和 `session_id`。
-- 同一账户下的所有 Session 共享订阅配额。
+建议字段：
 
-### 7.3 订阅
+```text
+id
+project_id
+session_id
+run_id
+version_id
+status
+attempt
+lease_owner
+lease_expires_at
+started_at
+finished_at
+error_code
+log_path
+```
 
-V1 建立 Free/Demo Plan 与付费 Plan 的数据结构，但不要求接入真实支付：
+重试创建新 attempt，保留失败日志，不覆盖上一轮记录。
+
+## 8. 配额与订阅
+
+V1 的 Plan 与配额是真实平台能力，但支付不是。
 
 ```text
 Plan -> Subscription -> Quota Account -> Usage Ledger
 ```
 
-以后接入 Stripe 时，Webhook 只负责更新 Subscription，不直接修改 Agent Session。Agent 在每次运行前读取统一的 Quota Account。
+每次模型请求，包括结构化输出重试，都独立执行：
 
-## 8. 部署设计
+```text
+verify user and session
+    -> reserve estimated quota in a database transaction
+    -> call LLM
+    -> read actual usage
+    -> settle actual usage
+    -> release unused reservation
+```
 
-### 8.1 Railway 拓扑
+调用失败也必须记录 Ledger 并释放未使用预占。不能在模型返回后才检查配额，否则同一账户的并发 Session 可以透支。
+
+V1 不接 Stripe。未来 Stripe Webhook 只更新 Subscription，不直接修改 Session 或历史 Ledger。
+
+## 9. 错误与重试契约
+
+### 9.1 LLM 错误
+
+- Provider 超时、限流或可重试 5xx：最多 3 次总尝试，采用退避等待。
+- Pydantic 结构校验失败：将校验错误作为修正上下文，最多 3 次总尝试。
+- 每次实际 Provider 调用分别预占和结算用量。
+- 达到上限后，Agent Run 进入 `Failed`，发送 `run.failed`。
+- 错误码至少区分 `LLM_PROVIDER_ERROR`、`INVALID_MODEL_OUTPUT` 和 `QUOTA_EXCEEDED`。
+
+### 9.2 Build 错误
+
+- 编译、资源或超时错误先写入 `build.failed`，随后将聚合 Run 标记为 Failed，错误阶段为 BUILD。
+- 固定输入导致的编译失败不自动重复执行，因为相同输入不会产生不同结果。
+- Worker 被终止或 lease 过期时允许自动重新领取一次；这属于执行恢复，不是构建逻辑重试。
+- 用户点击 Retry 后创建新的 attempt，并保留原日志。
+- 错误码至少区分 `RENDER_FAILED`、`BUILD_FAILED`、`BUILD_TIMEOUT`、`RESOURCE_LIMIT`。
+
+### 9.3 Resolve 与真实构建失败
+
+PRD 中的预设路由错误不是 Build Error：
+
+```text
+真实构建错误
+build.failed -> run.failed -> Retry Build
+
+预设应用问题
+validation.issue_detected -> User Resolve
+    -> deterministic RevisionSpec
+    -> new BuildJob
+    -> ProjectVersion(source=Resolve)
+```
+
+两条路径共用事件和版本基础设施，但使用不同状态与文案，不能把预设问题包装成 LLM 自动修复了真实编译错误。
+
+## 10. 安全边界
+
+V1 的模型没有任意执行权限。必须满足：
+
+- AppSpec、RevisionSpec 和附件引用全部经过 schema 与资源归属校验。
+- 工作区固定为 `/data/workspaces/{user_id}/{project_id}/`。
+- Renderer 只写模板允许目录。
+- 运行时禁止安装依赖、修改依赖清单和执行任意 Shell。
+- 构建子进程使用固定命令、超时、输出和磁盘上限。
+- 云端用户不能读取其他用户的附件、工作区、日志或 Preview。
+- LLM API Key 只存在于 Railway 服务端环境变量。
+- Preview 响应设置隔离策略，不允许生成应用访问平台管理 API。
+- 发布前检查文件类型、总体积和入口文件。
+- 配额预占使用数据库事务。
+
+如果未来开放任意代码、依赖安装或网络访问，必须引入每次运行独立的容器或虚拟机沙箱，不能在当前共享容器中逐项放宽。
+
+## 11. Railway 部署
 
 ```text
 GitHub 仓库
@@ -444,91 +531,69 @@ GitHub 仓库
 │  Docker Web Service                    │
 │  · Python / FastAPI                    │
 │  · OpenAI Agents SDK                   │
-│  · Node.js / npm                       │
+│  · Bounded Build Worker                │
+│  · Node.js / 预装固定依赖               │
 │  · React Studio 静态文件                │
-│  · Agent 工具执行                       │
+│  · Preview / Publish                   │
 │                                        │
 │  对外提供一个 HTTPS 域名：               │
 │  /                  Visual Studio       │
 │  /api/*             FastAPI             │
 │  /events/*          SSE                 │
-│  /preview/{id}/*    生成应用             │
+│  /preview/{id}/*    预览版本             │
+│  /apps/{id}/*       已发布版本           │
 │                                        │
 │  Persistent Volume                     │
-│  · 项目工作区                           │
-│  · 生成文件                             │
+│  · 附件 / 项目工作区 / dist / 日志       │
 │                                        │
-│  PostgreSQL                            │
-│  · 用户 / Session / 配额 / 用量 / 订阅   │
+│  PostgreSQL Service                    │
+│  · 用户 / Session / 配额 / Job / 版本    │
 └───────────────────┬────────────────────┘
                     |
                     v
               OpenAI / 其他 LLM
 ```
 
-Web Service 只暴露一个 Railway HTTP 端口：
+### 11.1 Docker
 
-```text
-/                         React Visual Studio
-/api/*                    FastAPI REST
-/api/sessions/*/events    SSE
-/preview/*                Generated static builds
-```
+镜像构建阶段：
 
-### 8.2 Docker 构建
+1. 安装固定 Node.js 依赖并构建 React Studio。
+2. 安装 Python API、Agent 和数据库依赖。
+3. 复制固定应用模板和 Renderer。
+4. 不在运行时执行依赖安装。
 
-Docker 镜像需要同时包含 Python Runtime 和 Node.js Runtime：
+启动阶段：
 
-1. 前端阶段安装依赖并构建 React Studio。
-2. Python 阶段安装 API、Agent 和数据库依赖。
-3. 复制 Studio 构建结果和应用模板。
-4. 启动时执行数据库迁移，然后启动 Uvicorn/Gunicorn。
+1. 执行 Alembic migration。
+2. 启动单实例 FastAPI 和持久化 Build Worker。
+3. Worker 从 PostgreSQL 领取 Build Job。
 
-生产数据库使用 Railway PostgreSQL。Railway 的 PostgreSQL 模板是独立、按资源计费的非托管服务；V1 可以使用，但需要配置备份并避免把它描述成免费附赠数据库。
+### 11.2 PostgreSQL 与 Volume
 
-### 8.3 GitHub 的职责
+Railway PostgreSQL 是独立、按资源计费的非托管服务，不是免费附赠数据库。V1 需要配置备份并验证恢复流程。
 
-GitHub 只负责：
+Volume 保存工作区和构建产物，但不能替代 PostgreSQL 元数据。服务重启或重新部署后，数据库与 Volume 中的必要状态必须保持一致。
 
-- 源代码和文档。
-- Pull Request 与版本历史。
-- 触发 Railway 自动部署。
+### 11.3 GitHub
 
-GitHub Pages 不能运行 FastAPI、Agent Runtime、PostgreSQL 或持久工作区，因此不能单独承载 Another Atom。
+GitHub 负责源代码、文档、版本历史和触发 Railway 自动部署。GitHub Pages 只能托管静态内容，不能单独运行 FastAPI、Agent、PostgreSQL 或 Build Worker。
 
-## 9. 安全边界
-
-V1 的主要风险不是 LLM 输出质量，而是模型驱动工具在共享环境中的权限。
-
-必须满足：
-
-- 云端用户只能访问自己的工作区前缀。
-- 不把 LLM API Key 返回给浏览器或生成应用。
-- 所有数据库查询带用户归属条件。
-- Shell 使用固定命令模板与参数校验。
-- 禁止访问宿主机敏感目录、Docker Socket 和其他项目目录。
-- 限制构建时长、并发数、输出大小和磁盘占用。
-- 发布前对生成静态文件执行大小和类型检查。
-- 对配额预占使用数据库事务，避免并发透支。
-
-V1 的共享 Railway 容器只适合受控 Demo。如果产品要开放任意代码、依赖安装和网络访问，必须引入每次运行独立的容器或虚拟机沙箱，不能在当前容器上逐步放宽权限。
-
-## 10. 代码组织
+## 12. 代码组织
 
 ```text
 another-atom/
 ├── another_atom/
 │   ├── api/              FastAPI routes and SSE
-│   ├── agent/            agent definitions and run orchestration
-│   ├── cli/              Typer commands
-│   ├── contracts/        Pydantic API and event models
-│   ├── domain/           projects, sessions, quota, versions
-│   ├── storage/          SQLite/PostgreSQL repositories
-│   └── tools/            workspace, build, preview, publish tools
+│   ├── agent/            LLM orchestration and structured outputs
+│   ├── build/            job leasing, renderer and build runner
+│   ├── contracts/        Pydantic API, AppSpec and event models
+│   ├── domain/           projects, sessions, quota and versions
+│   └── storage/          PostgreSQL repositories and volume paths
 ├── studio/               React Visual Studio
 ├── templates/
-│   └── react-app/        controlled V1 application template
-├── migrations/           database migrations
+│   └── react-app/        fixed dependencies and controlled template
+├── migrations/
 ├── tests/
 ├── docs/
 ├── Dockerfile
@@ -536,40 +601,64 @@ another-atom/
 └── README.zh-CN.md
 ```
 
-领域逻辑不能直接依赖 FastAPI 路由、Typer 命令或具体数据库驱动。CLI 和 Studio 只是同一应用服务的两个适配器。
+Renderer、Build Worker 和领域服务不能直接定义第二套 AppSpec。所有层共享 `contracts` 中的 Pydantic/OpenAPI 协议。
 
-## 11. V1 实施顺序
+## 13. V1 实施顺序
 
-1. 定义 Blueprint、AppSpec、Session、RunEvent 和 Usage 模型。
-2. 建立 FastAPI、SQLite 和基础 REST/SSE。
-3. 接入真实 LLM，完成 Blueprint 结构化生成。
-4. 实现审批状态和 Session 恢复。
-5. 实现受控工作区工具和 React 模板生成。
-6. 启动本地 Preview，并在 Studio iframe 展示。
-7. 实现一次增量修改和 ProjectVersion。
-8. 实现用户、Plan、配额预占和 Usage Ledger。
-9. Docker 化并部署 Railway Web Service、PostgreSQL 和 Volume。
-10. 实现生产构建发布和公开 Preview URL。
+1. 定义 Blueprint、VisualSpec、AppSpec、Event 和 Error Contract。
+2. 建立 PostgreSQL、Alembic 与用户/Project/Session 基础模型。
+3. 实现 Plan、配额预占和 Usage Ledger。
+4. 接入真实 LLM，完成 Blueprint 结构化生成和审批。
+5. 完成 AppSpec 与固定 React Renderer。
+6. 实现 `build_jobs`、单并发 Worker 和持久化事件。
+7. 实现 Visual Studio 的 Blueprint、SSE 和 iframe Preview。
+8. 实现附件、一次 Follow-up 修改和 ProjectVersion。
+9. 实现 Resolve、Restore 和显式 Publish。
+10. Docker 化并部署 Railway Web Service、PostgreSQL 和 Volume。
+11. 在目标 Railway 规格完成内存、构建耗时和重启恢复压测。
 
-## 12. 验收条件
+## 14. V1 验收
 
-- 新用户能通过 CLI 或 Web 输入需求并获得真实 LLM 生成的 Blueprint。
-- 未确认 Blueprint 时不会写入或构建项目。
-- 构建事件可以同时被 CLI 与 Studio 正确消费。
-- 生成应用能真实交互并在刷新后恢复项目状态。
+- 用户能从 Cloud Visual Studio 输入需求并获得真实 LLM 生成的 Blueprint。
+- 未确认 Blueprint 时不会创建 Build Job。
+- AppSpec 不能改变依赖、构建命令或工作区边界。
+- HTTP 创建构建后立即返回，构建由异步 Worker 完成。
+- 同一实例的构建并发不超过配置上限，初始为 1。
 - 用户可以恢复两个不同 Session，且上下文不会串线。
-- 并发请求不能绕过同一账户的配额限制。
-- 云端用户无法读取其他用户工作区。
-- Railway 重启或重新部署后，数据库和挂载卷中的必要数据仍然存在。
-- 发布后得到可从公网打开的 HTTPS 地址。
-- LLM、构建或发布失败时，Run 进入明确失败状态并释放未使用配额。
+- 并发模型调用不能绕过同一账户配额。
+- 附件元数据与 Volume 文件状态一致。
+- Build Error 与预设 Resolve 问题使用不同事件和状态。
+- 用户明确选择版本后才能 Publish。
+- Railway 重启后 queued Job、项目、版本和发布结果可以恢复。
+- 部署后获得可公开测试的 HTTPS 地址。
 
-## 13. 待实施阶段确认
+## 15. P1：CC 式本地执行
 
-以下细节不影响当前架构，但需要在实现时用测试结果确定：
+P1 的长期方向是类似 Claude Code 的本地 Agent Runtime：
 
-- CLI 的最终安装方式与设备登录交互。
-- V1 选用的具体 OpenAI 模型和单次配额换算规则。
-- Railway 实例所需的最低内存；当前不能仅凭设计文档准确估算。
-- 生成应用的数据持久化范围是平台 API 还是仅限 Demo 数据模型。
-- 是否在 V1 接入 Git 快照，或只保存应用层 ProjectVersion。
+```text
+Terminal CLI
+     |
+     v
+Local Python Agent Runtime
+     |
+     ├── 读取和修改本地项目文件
+     ├── 执行受控 Shell / Git / npm
+     ├── SQLite Session 与版本索引
+     └── 启动 localhost Dev Server
+                    |
+                    v
+             Local Visual Studio
+
+Local Runtime ---- HTTPS ----> Cloud Auth / Quota / LLM Gateway
+```
+
+P1 必须重新设计：
+
+- Python/Node 安装与跨平台打包。
+- 本地权限审批和工作区信任模型。
+- 本地进程、端口和 Dev Server 生命周期。
+- SQLite 项目如何上传、同步或发布到云端。
+- 本地项目与 Cloud Project 的冲突处理。
+
+在这些协议确定前，V1 README 和产品界面不得声称已经支持本地仓库执行。
