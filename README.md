@@ -8,7 +8,7 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** A runnable V1 vertical slice is implemented with a Mock LLM Provider. Local application generation, preview, editing, versioning, publishing routes, persistence, quota, and automated tests are available. Real LLM integration and the Railway public deployment are not complete.
+> **Current status:** A runnable V1 vertical slice is implemented with Ollama Cloud and Mock providers. DeepSeek V4 Pro is the default real model, with V4 Flash selectable per Run. Local generation, preview, editing, versioning, publishing routes, persistence, quota, and automated tests are available. Railway public deployment is not complete.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
@@ -16,8 +16,8 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
-| **V1** | Deliver one complete, publicly testable product-building flow | Product Manager, Designer, Engineer, and QA run in a fixed sequence | Local vertical slice implemented; hardening and cloud deployment remain |
-| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Leader coordinates Product Manager, Architect, Designer, Engineer, and QA agents | Implement after V1 |
+| **V1** | Deliver one complete, publicly testable product-building flow | Team Leader, Product Manager, Architect, Engineer, and Data Analyst run in a fixed sequence | Local vertical slice implemented; hardening and cloud deployment remain |
+| **V2** | Add autonomous collaboration, dynamic delegation, rework, and arbitration | Team Leader coordinates Product Manager, Architect, Engineer, and Data Analyst agents | Implement after V1 |
 
 The project is implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 starts after V1 passes cloud acceptance.
 
@@ -26,9 +26,9 @@ The project is implemented in **V1 -> V2** order. V1 is the current development 
 1. The user describes a product and can attach reference files.
 2. Product Manager creates a **Blueprint**, an editable product plan containing pages, modules, visual direction, and data needs.
 3. The user reviews and approves the Blueprint. Building cannot start without this approval.
-4. Designer produces a **VisualSpec**, the structured visual and interaction rules.
-5. Engineer produces an **AppSpec**, the machine-validated instructions used to create the application.
-6. The platform builds the React application inside a restricted environment, and QA checks routes and core interactions.
+4. Architect produces an **ArchitectureSpec** covering routes, data boundaries, visual tokens, and interaction structure.
+5. Engineer produces an **AppSpec** and owns deterministic build and interaction validation.
+6. Data Analyst checks catalog data completeness and explains the immutable engineering validation evidence.
 7. The user previews the result, requests changes, restores an earlier version, exports project data, and publishes a selected version.
 
 ### A. Application Generation and Development
@@ -37,6 +37,9 @@ The project is implemented in **V1 -> V2** order. V1 is the current development 
 
 ```text
 User prompt
+    |
+    v
+[Team Leader] -> fixed orchestration
     |
     v
 [Product Manager]
@@ -54,7 +57,7 @@ User review and approval
 Approved Blueprint
     |
     v
-[Designer] -> VisualSpec
+[Architect] -> ArchitectureSpec
     |
     v
 [Engineer] -> AppSpec
@@ -66,10 +69,10 @@ Platform-controlled React build
 #### Step 3: Validate Quality
 
 ```text
-Build result
+Build result -> deterministic engineering ValidationReport
     |
     v
-[QA] -> ValidationReport / QAReview
+[Data Analyst] -> DataReview
     |
     v
 Interactive preview
@@ -113,8 +116,8 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 ### 2. Confirm: Agree on the Target Before Building
 
 - **What you see:** Product Manager turns the request into an editable Blueprint covering the project name, pages, modules, visual direction, and data needs.
-- **How the system decides:** The current Mock Provider deterministically classifies the request as `supported`, `adapted`, or `unsupported`; every result still passes the same schema validation required by the future real LLM Provider.
-- **How work proceeds:** Designer, Engineer, and QA produce VisualSpec, AppSpec, and QAReview only after user approval. A stage cannot claim completion without approval and a real artifact.
+- **How the system decides:** Ollama Cloud or the deterministic Mock Provider classifies the request as `supported`, `adapted`, or `unsupported`; every result must pass the same Pydantic validation before it can change Run state.
+- **How work proceeds:** Architect, Engineer, and Data Analyst produce ArchitectureSpec, AppSpec, and DataReview only after user approval. A stage cannot claim completion without approval and a real artifact.
 - **Failure path:** After bounded model failures, the Project and input remain intact. The user can Retry, revise the request, or continue from a non-AI Starter Blueprint.
 
 ### 3. Build: See the Process and Use the Result
@@ -135,6 +138,7 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 
 - **State survives:** PostgreSQL stores users, projects, sessions, quota, build jobs, events, and versions, with recovery after Railway process restarts.
 - **Usage stays bounded:** Plans and the Usage Ledger reserve quota before an LLM call and settle afterward; concurrent sessions cannot bypass account limits.
+- **Quota is application-local:** Another Atom's demo units count Provider requests for product control and are not shared with Codex usage. Ollama Cloud account limits remain an independent Provider concern.
 - **Quota exhaustion has an exit:** V1 has no self-service top-up. Projects and existing results remain available for viewing/export while the demo account waits for an operator reset.
 - **One HTTPS entry point:** Railway hosts the web service, asynchronous builds, and published results behind the same domain.
 - **Boundaries stay honest:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
@@ -147,7 +151,7 @@ End-to-end guarantees: persistence | quota | SSE events | recovery | Railway dep
 | --- | --- | --- | --- |
 | **M0 Design baseline** | PRD, architecture, role contracts, and bilingual README | V1/V2 boundaries agree and critical state, data, and error contracts are traceable | Complete |
 | **M1 Cloud foundation** | React workspace, FastAPI, PostgreSQL-compatible models, and Project/Session/Quota state | A project can be created and reopened; persisted jobs recover after restart | Implemented locally |
-| **M2 Generation flow** | Prompt, attachment metadata, Blueprint approval, fixed role sequence, and persisted Build Job | No build before approval; every stage has a schema-validated artifact; failures are visible | Implemented with Mock Provider |
+| **M2 Generation flow** | Prompt, attachment metadata, Blueprint approval, fixed role sequence, per-Run model selection, and persisted Build Job | No build before approval; every stage has a schema-validated artifact; failures are visible | Implemented with Ollama Cloud + Mock |
 | **M3 Studio loop** | Desktop/mobile preview, editing, versions, and Restore | Core routes and interactions work; Build/Edit/Restore create recoverable versions | In progress; Resolve remains |
 | **M4 Publish and hardening** | Publish/Unpublish, stable route, Export, automated tests, and Railway deployment | Main flow and negative paths pass locally; public cloud URL passes acceptance | In progress; Railway deployment remains |
 
@@ -186,17 +190,18 @@ Natural-language requests can be ambiguous or outside V1 scope. Blueprint turns 
 
 ### 2. Collaboration Layer: Roles Handoff Artifacts, Not Roleplay Messages
 
-Product Manager, Designer, Engineer, and QA progressively reduce different kinds of uncertainty:
+Team Leader, Product Manager, Architect, Engineer, and Data Analyst progressively reduce different kinds of uncertainty:
 
 ```text
-Request layer      Prompt       -> Blueprint      decide what to build
-Design layer       Blueprint    -> VisualSpec     constrain presentation and interaction
-Engineering layer  VisualSpec   -> AppSpec        define what the build system creates
-Validation layer   Build Result -> QAReview       verify the result against the contracts
-Delivery layer     QAReview     -> ProjectVersion preserve, restore, and publish the result
+Coordination layer Run state          -> StageDecision     control order, retry, and failure closure
+Product layer      Prompt             -> Blueprint         decide what to build
+Architecture layer Blueprint          -> ArchitectureSpec  define routes, data, and presentation bounds
+Engineering layer  ArchitectureSpec   -> AppSpec + Report  build and validate platform behavior
+Data layer         AppSpec + Report   -> DataReview        check data and explain evidence
+Delivery layer     DataReview         -> ProjectVersion    preserve, restore, and publish the result
 ```
 
-Every handoff is schema-validated, persisted, and inspectable in the interface. A role message without an artifact change does not complete a stage.
+Every specialist handoff is schema-validated, persisted, and inspectable. V1 Team Leader is the deterministic orchestrator and emits auditable StageDecision/progress events rather than a fabricated model conversation.
 
 ### 3. Execution Layer: Models Decide, the Platform Controls Authority
 
@@ -242,7 +247,7 @@ User browser -- HTTPS --> Railway public domain
                          |
              +-----------+----------------+
              | React Visual Studio        |
-             | FastAPI REST + SSE         |----> OpenAI
+             | FastAPI REST + SSE         |----> Ollama Cloud / Mock
              | Sequential role pipeline   |
              | Async Build Worker         |
              | Preview / Published Routes |
@@ -270,7 +275,7 @@ The model cannot install dependencies, change build commands, execute arbitrary 
 - Runtime dependency installation or arbitrary code execution.
 - Arbitrary technology stacks or generated backends.
 - Autonomous or parallel multi-agent collaboration, which is implemented in V2.
-- A model selector.
+- Arbitrary providers or unrestricted model identifiers; V1 exposes only the configured DeepSeek allowlist.
 - Generated-app authentication, database, commerce, or payment systems.
 - Stripe billing, wallet, top-up, or invoicing.
 
@@ -296,12 +301,14 @@ Completed:
 - [x] FastAPI API, SQLAlchemy persistence, quota ledger, events, versions, and publication routes
 - [x] React Studio, interactive controlled renderer, desktop/mobile preview, editing, and restore
 - [x] Mock role Pipeline with schema validation and bounded failure paths
+- [x] Ollama Cloud Provider, DeepSeek model selector, Provider usage ledger, and bounded retry
+- [x] Persistent single-concurrency Build Worker with database lease recovery
 - [x] Unit/integration tests, including five consecutive Golden Path runs
 - [x] Dockerfile and Railway configuration
 
 Not completed:
 
-- [ ] Real LLM Provider and real model usage settlement
+- [ ] Per-project source materialization and `npm run build`; the current generated app is a validated AppSpec rendered by the shared React runtime
 - [ ] Resolve workflow, project rename/delete, and attachment file upload
 - [ ] Railway deployment and public URL
 - [ ] V2 sandbox/model ADRs, load-tested budgets, and security baseline confirmation
@@ -322,7 +329,7 @@ Not completed:
 | Completeness | Golden Path, negative paths, persistence recovery, public Preview/Publish, and automated test results |
 | Engineering judgment | Technology choices, contracts, asynchronous builds, quota transactions, security boundaries, and explicit trade-offs |
 | User experience | Blueprint approval, live state, interactive Preview, recoverable versions, and actionable errors |
-| Innovation | Blueprint/VisualSpec/AppSpec artifact chain, controlled role handoff, and versioned publishing loop |
+| Innovation | Blueprint/ArchitectureSpec/AppSpec artifact chain, controlled role handoff, and versioned publishing loop |
 | Deliverability | GitHub source, bilingual README, reproducible run steps, Railway URL, and known boundaries |
 
 ## Links

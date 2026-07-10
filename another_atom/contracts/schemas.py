@@ -21,11 +21,11 @@ class SupportLevel(StrEnum):
 class RunStatus(StrEnum):
     PRODUCT_RUNNING = "product_running"
     AWAITING_APPROVAL = "awaiting_approval"
-    DESIGNER_RUNNING = "designer_running"
+    ARCHITECT_RUNNING = "architect_running"
     ENGINEER_RUNNING = "engineer_running"
     BUILD_QUEUED = "build_queued"
     BUILDING = "building"
-    QA_RUNNING = "qa_running"
+    DATA_RUNNING = "data_running"
     COMPLETED = "completed"
     COMPLETED_DEGRADED = "completed_degraded"
     NEEDS_INPUT = "needs_input"
@@ -52,10 +52,10 @@ class ProjectStatus(StrEnum):
 
 class ArtifactType(StrEnum):
     BLUEPRINT = "blueprint"
-    VISUAL_SPEC = "visual_spec"
+    ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
     VALIDATION_REPORT = "validation_report"
-    QA_REVIEW = "qa_review"
+    DATA_REVIEW = "data_review"
 
 
 class VersionSource(StrEnum):
@@ -100,8 +100,11 @@ class Blueprint(BaseModel):
         return value
 
 
-class VisualSpec(BaseModel):
+class ArchitectureSpec(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
+    architecture_summary: str = Field(min_length=1, max_length=300)
+    page_strategy: list[str] = Field(min_length=1, max_length=8)
+    data_entities: list[str] = Field(min_length=1, max_length=8)
     primary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     accent_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
@@ -153,18 +156,20 @@ class ValidationReport(BaseModel):
     checks: list[ValidationCheck]
 
 
-class QAReview(BaseModel):
+class DataReview(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     summary: str
-    mandatory_checks: list[str]
+    data_checks: list[str]
+    engineering_checks: list[str]
     warnings: list[str] = Field(default_factory=list)
     suggested_actions: list[Literal["edit", "resolve", "retry", "accept"]]
-    qa_mode: Literal["agent_review", "deterministic_only"] = "agent_review"
+    analyst_mode: Literal["agent_review", "deterministic_only"] = "agent_review"
 
 
 class RunCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     mode: Mode = Mode.TEAM
+    model: str | None = Field(default=None, min_length=1, max_length=100)
     attachments: list[AttachmentMeta] = Field(default_factory=list, max_length=5)
 
     @field_validator("prompt")
@@ -203,13 +208,14 @@ class RunView(BaseModel):
     project_id: str
     session_id: str
     mode: Mode
+    model: str
     status: RunStatus
     current_stage: str
     blueprint: Blueprint | None = None
-    visual_spec: VisualSpec | None = None
+    architecture_spec: ArchitectureSpec | None = None
     app_spec: AppSpec | None = None
     validation_report: ValidationReport | None = None
-    qa_review: QAReview | None = None
+    data_review: DataReview | None = None
     build_job_id: str | None = None
     version_id: str | None = None
     error_code: str | None = None
@@ -268,6 +274,18 @@ class HealthView(BaseModel):
     status: Literal["ok"] = "ok"
     llm_provider: str
     database: str
+
+
+class ModelOption(BaseModel):
+    id: str
+    label: str
+    usage: Literal["medium", "extra_high", "local"]
+
+
+class ModelsView(BaseModel):
+    provider: str
+    default_model: str
+    models: list[ModelOption]
 
 
 class ErrorResponse(BaseModel):

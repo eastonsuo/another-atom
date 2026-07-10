@@ -3,29 +3,33 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from another_atom.agent.orchestrator import Orchestrator
-from another_atom.api.dependencies import get_current_user, get_run_executor
+from another_atom.api.dependencies import get_current_user, get_job_dispatcher
+from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    ArchitectureSpec,
     ArtifactType,
     Blueprint,
     BlueprintApproval,
     BuildStatus,
+    DataReview,
     DeploymentView,
     EventView,
     HealthView,
     Mode,
+    ModelOption,
+    ModelsView,
     ProjectStatus,
     ProjectView,
     PublicationStrategy,
     PublishRequest,
-    QAReview,
     QuotaView,
     RevisionRequest,
     RunCreate,
@@ -35,12 +39,10 @@ from another_atom.contracts.schemas import (
     ValidationReport,
     VersionSource,
     VersionView,
-    VisualSpec,
 )
 from another_atom.domain.artifacts import get_artifact, save_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
-from another_atom.domain.quota import reserve_quota
 from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
     Approval,
@@ -78,7 +80,12 @@ def _artifact_model(db: Session, run_id: str, kind: ArtifactType, model):
 
 
 def _run_view(db: Session, run: Run) -> RunView:
-    build_job = db.scalar(select(BuildJob).where(BuildJob.run_id == run.id))
+    build_job = db.scalar(
+        select(BuildJob)
+        .where(BuildJob.run_id == run.id)
+        .order_by(BuildJob.created_at.desc())
+        .limit(1)
+    )
     version = db.scalar(
         select(ProjectVersion)
         .where(ProjectVersion.run_id == run.id)
@@ -89,15 +96,18 @@ def _run_view(db: Session, run: Run) -> RunView:
         project_id=run.project_id,
         session_id=run.session_id,
         mode=Mode(run.mode),
+        model=run.model,
         status=RunStatus(run.status),
         current_stage=run.current_stage,
         blueprint=_artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint),
-        visual_spec=_artifact_model(db, run.id, ArtifactType.VISUAL_SPEC, VisualSpec),
+        architecture_spec=_artifact_model(
+            db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
+        ),
         app_spec=_artifact_model(db, run.id, ArtifactType.APP_SPEC, AppSpec),
         validation_report=_artifact_model(
             db, run.id, ArtifactType.VALIDATION_REPORT, ValidationReport
         ),
-        qa_review=_artifact_model(db, run.id, ArtifactType.QA_REVIEW, QAReview),
+        data_review=_artifact_model(db, run.id, ArtifactType.DATA_REVIEW, DataReview),
         build_job_id=build_job.id if build_job else None,
         version_id=version.id if version else None,
         error_code=run.error_code,
@@ -139,12 +149,35 @@ def quota(user: User = Depends(get_current_user)) -> QuotaView:
     )
 
 
+@router.get("/models", response_model=ModelsView)
+def models() -> ModelsView:
+    settings = get_settings()
+    if settings.llm_provider == "ollama":
+        return ModelsView(
+            provider="ollama",
+            default_model=settings.ollama_model,
+            models=[
+                ModelOption(id="deepseek-v4-pro", label="DeepSeek V4 Pro", usage="extra_high"),
+                ModelOption(id="deepseek-v4-flash", label="DeepSeek V4 Flash", usage="medium"),
+            ],
+        )
+    return ModelsView(
+        provider="mock",
+        default_model="mock",
+        models=[ModelOption(id="mock", label="Mock LLM", usage="local")],
+    )
+
+
 @router.post("/runs", response_model=RunView, status_code=status.HTTP_201_CREATED)
 def create_run(
     request: RunCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RunView:
+    model_config = models()
+    selected_model = request.model or model_config.default_model
+    if selected_model not in {option.id for option in model_config.models}:
+        raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
     project = Project(
         user_id=user.id,
         name="Untitled project",
@@ -162,6 +195,7 @@ def create_run(
         session_id=project_session.id,
         user_id=user.id,
         mode=request.mode.value,
+        model=selected_model,
         status=RunStatus.PRODUCT_RUNNING.value,
         current_stage="product_manager",
         prompt=request.prompt,
@@ -177,7 +211,6 @@ def create_run(
                 media_type=attachment.content_type,
             )
         )
-    reserve_quota(db, user.id, run, 1)
     db.commit()
     Orchestrator(db).create_blueprint(run)
     db.refresh(run)
@@ -201,12 +234,13 @@ def get_run(
 def approve_blueprint(
     run_id: str,
     approval: BlueprintApproval,
-    background_tasks: BackgroundTasks,
-    run_executor: Callable[[str], None] = Depends(get_run_executor),
+    job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RunView:
-    run = _owned_run(db, run_id, user.id)
+    run = db.scalar(select(Run).where(Run.id == run_id, Run.user_id == user.id).with_for_update())
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
     if run.status != RunStatus.AWAITING_APPROVAL.value:
         raise AppError(
             "APPROVAL_NOT_ALLOWED", "This run is not waiting for Blueprint approval", 409
@@ -225,12 +259,11 @@ def approve_blueprint(
             payload=approval.blueprint.model_dump(mode="json"),
         )
     )
-    remaining_units = 3 if run.mode == Mode.TEAM.value else 2
-    reserve_quota(db, user.id, run, remaining_units)
     run.status = RunStatus.BUILD_QUEUED.value
     run.current_stage = "build_queue"
     job = BuildJob(run_id=run.id, project_id=run.project_id, status=BuildStatus.QUEUED.value)
     db.add(job)
+    db.flush()
     record_event(
         db,
         run.id,
@@ -247,7 +280,7 @@ def approve_blueprint(
         payload={"build_job_id": job.id},
     )
     db.commit()
-    background_tasks.add_task(run_executor, run.id)
+    job_dispatcher(job.id)
     db.refresh(run)
     return _run_view(db, run)
 
@@ -292,8 +325,9 @@ def stream_events(
     async def generate() -> AsyncIterator[str]:
         nonlocal cursor
         idle_after_terminal = 0
-        while True:
-            with SessionLocal() as event_db:
+        with SessionLocal() as event_db:
+            while True:
+                event_db.expire_all()
                 events = event_db.scalars(
                     select(RunEvent)
                     .where(RunEvent.run_id == run_id, RunEvent.id > cursor)
@@ -315,12 +349,13 @@ def stream_events(
                     RunStatus.CANCELLED.value,
                     RunStatus.NEEDS_INPUT.value,
                 }
-            if terminal and not events:
-                idle_after_terminal += 1
-                if idle_after_terminal >= 2:
-                    break
-            yield ": keep-alive\n\n"
-            await asyncio.sleep(0.5)
+                event_db.rollback()
+                if terminal and not events:
+                    idle_after_terminal += 1
+                    if idle_after_terminal >= 2:
+                        break
+                yield ": keep-alive\n\n"
+                await asyncio.sleep(0.5)
 
     return StreamingResponse(
         generate(),
@@ -405,8 +440,16 @@ def _version_view(version: ProjectVersion) -> VersionView:
 
 
 @router.get("/previews/{version_id}", response_model=AppSpec)
-def preview(version_id: str, db: Session = Depends(get_db)) -> AppSpec:
-    version = db.get(ProjectVersion, version_id)
+def preview(
+    version_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AppSpec:
+    version = db.scalar(
+        select(ProjectVersion)
+        .join(Project, Project.id == ProjectVersion.project_id)
+        .where(ProjectVersion.id == version_id, Project.user_id == user.id)
+    )
     if version is None:
         raise AppError("VERSION_NOT_FOUND", "Preview version was not found", 404)
     return AppSpec.model_validate(version.app_spec)
@@ -427,9 +470,13 @@ def revise_project(
     updates = revision.model_dump(exclude_none=True)
     if not updates:
         raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
-    app_spec = app_spec.model_copy(update=updates)
-    validation = ValidationReport.model_validate(current.validation_report)
-    qa_review = QAReview.model_validate(current.qa_review)
+    app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
+    validation = validate_app_spec(app_spec, project.prompt)
+    if not validation.passed:
+        raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
+    data_review = DataReview.model_validate(current.data_review).model_copy(
+        update={"engineering_checks": [check.label for check in validation.checks]}
+    )
     latest_number = db.scalar(
         select(func.max(ProjectVersion.version_number)).where(
             ProjectVersion.project_id == project.id
@@ -442,12 +489,19 @@ def revise_project(
         source=VersionSource.EDIT.value,
         app_spec=app_spec.model_dump(mode="json"),
         validation_report=validation.model_dump(mode="json"),
-        qa_review=qa_review.model_dump(mode="json"),
+        data_review=data_review.model_dump(mode="json"),
     )
     db.add(version)
     db.flush()
     project.latest_version_id = version.id
     _advance_latest_deployment(db, project.id, version.id)
+    _record_project_event(
+        db,
+        project.id,
+        "version.created",
+        "A validated edit version was created",
+        {"version_id": version.id, "source": VersionSource.EDIT.value},
+    )
     db.commit()
     db.refresh(version)
     return _version_view(version)
@@ -468,6 +522,10 @@ def restore_version(
     )
     if source_version is None:
         raise AppError("VERSION_NOT_FOUND", "Restore version was not found", 404)
+    restored_app_spec = AppSpec.model_validate(source_version.app_spec)
+    validation = validate_app_spec(restored_app_spec, project.prompt)
+    if not validation.passed:
+        raise AppError("RESTORE_VALIDATION_FAILED", "The selected version failed validation", 422)
     latest_number = db.scalar(
         select(func.max(ProjectVersion.version_number)).where(
             ProjectVersion.project_id == project.id
@@ -479,13 +537,20 @@ def restore_version(
         version_number=(latest_number or 0) + 1,
         source=VersionSource.RESTORE.value,
         app_spec=source_version.app_spec,
-        validation_report=source_version.validation_report,
-        qa_review=source_version.qa_review,
+        validation_report=validation.model_dump(mode="json"),
+        data_review=source_version.data_review,
     )
     db.add(restored)
     db.flush()
     project.latest_version_id = restored.id
     _advance_latest_deployment(db, project.id, restored.id)
+    _record_project_event(
+        db,
+        project.id,
+        "version.restored",
+        "A validated restore version was created",
+        {"version_id": restored.id, "source_version_id": source_version.id},
+    )
     db.commit()
     db.refresh(restored)
     return _version_view(restored)
@@ -501,6 +566,20 @@ def _advance_latest_deployment(db: Session, project_id: str, version_id: str) ->
     )
     if deployment:
         deployment.version_id = version_id
+
+
+def _record_project_event(
+    db: Session,
+    project_id: str,
+    event_type: str,
+    message: str,
+    payload: dict,
+) -> None:
+    run = db.scalar(
+        select(Run).where(Run.project_id == project_id).order_by(Run.created_at.desc()).limit(1)
+    )
+    if run:
+        record_event(db, run.id, event_type, message, stage="delivery", payload=payload)
 
 
 @router.post("/projects/{project_id}/publish", response_model=DeploymentView)
@@ -533,6 +612,13 @@ def publish_project(
         deployment.version_id = version.id
         deployment.active = True
     project.status = ProjectStatus.LIVE.value
+    _record_project_event(
+        db,
+        project.id,
+        "deployment.published",
+        "A project version was published",
+        {"version_id": version.id, "strategy": request.strategy.value},
+    )
     db.commit()
     db.refresh(deployment)
     view = _deployment_view(deployment)
@@ -551,6 +637,13 @@ def unpublish_project(
     if deployment:
         deployment.active = False
     project.status = ProjectStatus.READY.value
+    _record_project_event(
+        db,
+        project.id,
+        "deployment.unpublished",
+        "The public deployment was disabled",
+        {},
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

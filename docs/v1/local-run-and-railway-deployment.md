@@ -1,6 +1,6 @@
 # Another Atom V1 本地运行与 Railway 部署
 
-本文只描述当前仓库已经实现的 V1 纵切版本。当前默认使用 **Mock LLM Provider**；项目、Session、角色产物、配额、事件、版本和发布流程仍真实运行并持久化。
+本文只描述当前仓库已经实现的 V1 纵切版本。仓库默认使用 Mock Provider；配置 `OLLAMA_API_KEY` 和 `LLM_PROVIDER=ollama` 后使用 Ollama Cloud，默认模型为 DeepSeek V4 Pro。项目、Session、角色产物、配额、事件、版本和发布流程真实运行并持久化。
 
 ## 1. 当前可运行范围
 
@@ -8,7 +8,7 @@
 
 - Home Prompt Composer、Engineer/Team 模式和附件元数据；
 - Blueprint 生成、范围三态判断和用户确认门；
-- Product Manager、Designer、Engineer、QA 固定顺序 Pipeline；
+- Team Leader、Product Manager、Architect、Engineer、Data Analyst 固定顺序 Pipeline；
 - AppSpec 驱动的受控 React Renderer；
 - SSE 事件、Desktop/Mobile 预览、结构化编辑；
 - Build/Edit/Restore 版本历史；
@@ -17,7 +17,7 @@
 
 尚未实现：
 
-- 真实 OpenAI LLM Provider；
+- Ollama Cloud 的真实 token 用量结算（当前仍使用演示单位账本）；
 - Resolve 修复入口、项目重命名/删除和附件文件上传；
 - Railway 公网实例和真实域名；
 - V2 自主多 Agent。
@@ -62,10 +62,10 @@ uv run uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 ### 2.4 本地试用路径
 
 1. 在 Home 输入商品展示站需求，或选择页面下方示例 Prompt。
-2. 选择 `Team`，点击右侧构建按钮。
-3. 检查 Mock Product Manager 生成的 Blueprint；必要时修改项目名或视觉方向。
+2. 选择 `Team` 和当前可用模型，点击右侧构建按钮。模型在 Run 创建后固定，不受后续切换影响。
+3. 检查 Product Manager 生成的 Blueprint；必要时修改项目名或视觉方向。
 4. 点击 `Approve & build`。未确认前不会创建 Build Job。
-5. 在左侧查看 Designer、Engineer、Renderer、QA 的真实阶段事件。
+5. 在左侧查看 Team Leader、Product Manager、Architect、Engineer、Renderer、Data Analyst 的真实阶段事件。
 6. 构建完成后切换 Desktop/Mobile，进入生成站点的 Home、Catalog 和 Product 页面。
 7. 在 `Edit` 修改标题、正文或主色并保存；确认版本列表新增一项。
 8. 在 `Versions` 恢复旧版本；Restore 会创建新版本，不覆盖历史。
@@ -85,7 +85,7 @@ Build a catalog with login and payment
 
 结果应为 `adapted`，Blueprint 会列出被舍弃的交易能力。
 
-测试环境还保留显式失败标记：`[fail:llm]`、`[fail:build]`、`[fail:qa]`。它们只用于验收错误状态，不是用户功能。
+Mock 测试环境还保留显式失败标记：`[fail:llm]`、`[fail:build]`、`[fail:data]`。它们只用于验收错误状态，不是用户功能。
 
 ## 3. 运行测试
 
@@ -116,12 +116,16 @@ npm run build
 | 变量 | 本地默认值 | Railway 建议值 | 用途 |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | `sqlite:///./data/another_atom.db` | `${{Postgres.DATABASE_URL}}` | SQLAlchemy 数据库连接 |
-| `LLM_PROVIDER` | `mock` | `mock` | 当前只能使用 Mock Provider |
+| `LLM_PROVIDER` | `mock` | `ollama` | 选择 Mock 或 Ollama Cloud Provider |
+| `OLLAMA_API_KEY` | 空 | Railway Secret | Ollama Cloud Bearer Key；禁止提交到 Git |
+| `OLLAMA_HOST` | `https://ollama.com` | 相同 | Ollama Cloud API Host |
+| `OLLAMA_MODEL` | `deepseek-v4-pro` | 相同 | 新 Run 的默认模型 |
+| `OLLAMA_TIMEOUT_SECONDS` | `120` | `120` | 单次模型请求超时 |
 | `DEMO_QUOTA_UNITS` | `100` | `100` 或按演示需要调整 | 每个新账户的演示配额 |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Railway 分配的 `https://...up.railway.app` | 生成公开访问地址 |
 | `ENVIRONMENT` | `development` | `production` | 运行环境标识 |
 
-不要设置不存在的 OpenAI Key 来伪装真实 LLM。接入真实 Provider 时，应先实现 Provider、超时/重试和 Usage 结算，再新增密钥。
+`.env` 已被 Git 忽略；仓库只提交 `.env.example`。Ollama Cloud 当前不提供服务端 Structured Outputs，因此响应会经过本地 Pydantic 校验；失败时先带校验错误修复一次，再进入阶段级有限重试。
 
 ## 5. Railway 部署
 
@@ -151,7 +155,11 @@ Railway 会自动检测根目录中大写命名的 `Dockerfile`。参考：[Rail
 
 ```text
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-LLM_PROVIDER=mock
+LLM_PROVIDER=ollama
+OLLAMA_API_KEY=<Railway Secret>
+OLLAMA_HOST=https://ollama.com
+OLLAMA_MODEL=deepseek-v4-pro
+OLLAMA_TIMEOUT_SECONDS=120
 DEMO_QUOTA_UNITS=100
 ENVIRONMENT=production
 ```
@@ -172,7 +180,7 @@ PUBLIC_BASE_URL=https://another-atom-production.up.railway.app
 
 ### 5.4 Volume 是否需要
 
-当前 Railway 部署使用 PostgreSQL 保存核心状态，Mock V1 只保存附件元数据，因此 **Volume 不是当前启动的硬依赖**。
+当前 Railway 部署使用 PostgreSQL 保存核心状态，V1 只保存附件元数据，因此 **Volume 不是当前启动的硬依赖**。
 
 若希望保留 SQLite 兜底文件，或后续实现附件/构建文件存储，可给 Web Service 添加 Volume，挂载到：
 

@@ -246,7 +246,7 @@ Requested -> Provisioning -> Ready -> Running -> Collecting -> Destroyed
 - Sandbox 使用随机 ID，不暴露宿主机路径。
 - 默认无网络、无平台数据库凭证、无长期 Secret。
 - Secret 由 Gateway 按 Tool 临时注入，Tool 完成后撤销。
-- QA 只读快照不能申请写 Tool。
+- Data Analyst 只读快照不能申请写 Tool。
 - Sandbox 销毁失败是平台安全错误，阻止同 Worker 继续领取新任务并触发告警。
 
 ### 7.3 Provider 决策门
@@ -376,7 +376,7 @@ GitHub
 4. 拆分 Web 与 Agent Worker，接入 Object Storage。
 5. 完成父/子预算原子预占、部分失败补偿和并发测试。
 6. 选择 Sandbox Provider，完成 Tool Gateway、隔离和销毁测试。
-7. 上线 Engineer/QA Tool，再开启单条 Architect/Designer 并行路径。
+7. 上线 Engineer/Data Analyst Tool，再开启单条 Architect/Data Analyst 数据准备并行路径。
 8. 实现 Rework、Arbitration、收敛和 Human-in-the-loop。
 9. 完成 V1 回归、V2 Golden Path、故障恢复、安全和容量测试。
 
@@ -388,6 +388,6 @@ GitHub
 - 多 Agent 不共享可写工作区，跨用户/Project/Task Artifact、Secret 和 Context 泄漏为 0。
 - ToolRequest 未通过 Policy/Approval 时不能执行；Agent 不能直接获得宿主 Shell。
 - Sandbox 超时、取消、失败和销毁路径均有 Evidence、资源结算和告警。
-- mandatory Evidence 不能被 Leader/QA 改写；ProjectVersion 只引用通过门禁的 Artifact。
+- mandatory Evidence 不能被 Leader/Data Analyst 改写；ProjectVersion 只引用通过门禁的 Artifact。
 - V1 Version/Publish/公开 URL 回归通过，V2 不自动 Publish。
 - V2 Golden Path 5/5，通过重启、并行部分失败、预算耗尽和 SSE 重连测试。

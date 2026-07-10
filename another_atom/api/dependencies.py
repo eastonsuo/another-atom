@@ -3,7 +3,6 @@ from collections.abc import Callable
 from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
-from another_atom.agent.orchestrator import execute_run_background
 from another_atom.config import get_settings
 from another_atom.storage.database import get_db
 from another_atom.storage.models import User
@@ -27,5 +26,6 @@ def get_current_user(
     return user
 
 
-def get_run_executor() -> Callable[[str], None]:
-    return execute_run_background
+def get_job_dispatcher() -> Callable[[str], None]:
+    # The durable worker polls PostgreSQL. This hook only lets tests wake it synchronously.
+    return lambda _job_id: None

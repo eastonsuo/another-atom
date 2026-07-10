@@ -126,9 +126,9 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .atom-logo:hover { animation: logo-hop .5s ease; }
 .atom-dot { position: absolute; z-index: 3; width: 7px; height: 7px; border: 1.5px solid var(--ink); border-radius: 50%; }
 .dot-product { top: 1px; left: 15px; background: var(--coral); }
-.dot-designer { right: 0; top: 15px; background: var(--yellow); }
+.dot-architect { right: 0; top: 15px; background: var(--yellow); }
 .dot-engineer { bottom: 1px; left: 15px; background: var(--mint); }
-.dot-qa { left: 0; top: 15px; background: var(--violet); }
+.dot-data { left: 0; top: 15px; background: var(--violet); }
 
 .new-project {
   height: 42px;
@@ -158,6 +158,8 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   background: rgba(255, 250, 240, .94);
 }
 .studio-topbar strong { font-family: "Fredoka", sans-serif; font-size: 16px; }
+.topbar-status { display: flex; align-items: center; gap: 9px; }
+.model-badge { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1.5px solid var(--ink); border-radius: 5px; background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); font-size: 10px; font-weight: 900; }
 .status-pill { border: 1.5px solid var(--ink); background: #fff; box-shadow: 2px 2px 0 var(--ink); font-weight: 800; }
 
 .composer-view { width: min(940px, calc(100% - 48px)); padding-top: 32px; }
@@ -210,8 +212,9 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   background: var(--avatar-color);
   box-shadow: 2px 3px 0 var(--ink);
 }
-.role-product { --avatar-color: var(--coral); }.role-designer { --avatar-color: var(--yellow); }
-.role-engineer { --avatar-color: var(--mint); }.role-qa { --avatar-color: var(--violet); }
+.role-leader { --avatar-color: var(--sky); }.role-product { --avatar-color: var(--coral); }
+.role-architect { --avatar-color: var(--yellow); }.role-engineer { --avatar-color: var(--mint); }
+.role-data { --avatar-color: var(--violet); }
 .role-user { --avatar-color: #fff; }.role-renderer { --avatar-color: var(--sky); }
 .avatar-small { width: 34px; height: 34px; box-shadow: 1px 2px 0 var(--ink); }
 .avatar-large { width: 58px; height: 58px; }.avatar-hero { width: 108px; height: 108px; border-width: 3px; box-shadow: 6px 7px 0 var(--ink); }
@@ -224,8 +227,9 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .role-ear { position: absolute; top: 5px; width: 13px; height: 16px; border: 2px solid var(--ink); background: var(--avatar-color); z-index: -1; }
 .ear-left { left: 1px; border-radius: 70% 30% 40% 60%; transform: rotate(-24deg); }.ear-right { right: 1px; border-radius: 30% 70% 60% 40%; transform: rotate(24deg); }
 .role-engineer::after { content: ""; position: absolute; top: 5px; width: 64%; height: 5px; border: 1.5px solid var(--ink); background: #fff; }
-.role-designer::after { content: "✦"; position: absolute; top: -9px; right: -7px; color: var(--coral); font-size: 18px; text-shadow: 1px 1px 0 var(--ink); }
-.role-qa .role-face { border-radius: 45% 45% 55% 55%; }.role-qa::after { content: "✓"; position: absolute; top: -7px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 50%; background: #fff; font-size: 10px; font-weight: 900; }
+.role-leader::after { content: "★"; position: absolute; top: -10px; color: var(--yellow); font-size: 17px; text-shadow: 1px 1px 0 var(--ink); }
+.role-architect::after { content: "✦"; position: absolute; top: -9px; right: -7px; color: var(--coral); font-size: 18px; text-shadow: 1px 1px 0 var(--ink); }
+.role-data .role-face { border-radius: 45% 45% 55% 55%; }.role-data::after { content: "▥"; position: absolute; top: -7px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 4px; background: #fff; font-size: 10px; font-weight: 900; }
 
 .composer-box {
   border: 2px solid var(--ink);
@@ -241,6 +245,8 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .mode-switch { border: 1.5px solid var(--ink); background: #ddd5ff; }
 .mode-switch button { color: #514b64; font-weight: 800; }
 .mode-switch button.active { color: var(--ink); box-shadow: 1px 2px 0 var(--ink); }
+.model-select { height: 34px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; box-shadow: 1px 2px 0 var(--ink); }
+.model-select select { max-width: 170px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 10px; font-weight: 900; cursor: pointer; }
 .submit-prompt { border: 2px solid var(--ink); background: var(--coral); box-shadow: 2px 3px 0 var(--ink); }
 .submit-prompt:hover:not(:disabled) { transform: translate(1px, 1px); box-shadow: 1px 2px 0 var(--ink); }
 .submit-prompt:disabled { border-color: #9d99aa; background: #ddd9e5; box-shadow: none; }
@@ -342,6 +348,9 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   .crew-stage { height: 96px; }
   .avatar-large { width: 48px; height: 48px; }
   .example-prompts { gap: 8px; }
+  .model-select { order: 3; width: 100%; }.model-select select { max-width: none; flex: 1; }
+  .composer-actions { flex-wrap: wrap; }.submit-prompt { margin-left: auto; }
+  .model-badge { display: none; }
   .workspace-process { border-bottom: 2px solid var(--ink); }
   .timeline-item { grid-template-columns: 38px 1fr; min-width: 128px; }
   .blueprint-heading { grid-template-columns: 58px 1fr; }

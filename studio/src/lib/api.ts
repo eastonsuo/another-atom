@@ -4,6 +4,7 @@ import type {
   Blueprint,
   DeploymentView,
   Mode,
+  ModelsView,
   ProjectView,
   QuotaView,
   RunEvent,
@@ -25,10 +26,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createRun: (prompt: string, mode: Mode, attachments: AttachmentMeta[]) =>
+  createRun: (prompt: string, mode: Mode, model: string, attachments: AttachmentMeta[]) =>
     request<RunView>("/api/runs", {
       method: "POST",
-      body: JSON.stringify({ prompt, mode, attachments }),
+      body: JSON.stringify({ prompt, mode, model, attachments }),
     }),
   getRun: (runId: string) => request<RunView>(`/api/runs/${runId}`),
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
@@ -41,6 +42,7 @@ export const api = {
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),
   projects: () => request<ProjectView[]>("/api/projects"),
   quota: () => request<QuotaView>("/api/quota"),
+  models: () => request<ModelsView>("/api/models"),
   versions: (projectId: string) =>
     request<VersionView[]>(`/api/projects/${projectId}/versions`),
   preview: (versionId: string) => request<AppSpec>(`/api/previews/${versionId}`),

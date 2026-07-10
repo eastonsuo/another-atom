@@ -70,6 +70,7 @@ class Run(Base, TimestampMixin):
     )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     mode: Mapped[str] = mapped_column(String(24))
+    model: Mapped[str] = mapped_column(String(100), default="mock")
     status: Mapped[str] = mapped_column(String(32))
     current_stage: Mapped[str] = mapped_column(String(40))
     prompt: Mapped[str] = mapped_column(Text)
@@ -115,6 +116,7 @@ class RunEvent(Base):
 
 class BuildJob(Base, TimestampMixin):
     __tablename__ = "build_jobs"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_build_job_run"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
@@ -124,6 +126,13 @@ class BuildJob(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="queued")
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    log_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class ProjectVersion(Base, TimestampMixin):
@@ -139,7 +148,7 @@ class ProjectVersion(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(24))
     app_spec: Mapped[dict[str, Any]] = mapped_column(JSON)
     validation_report: Mapped[dict[str, Any]] = mapped_column(JSON)
-    qa_review: Mapped[dict[str, Any]] = mapped_column(JSON)
+    data_review: Mapped[dict[str, Any]] = mapped_column("qa_review", JSON)
 
 
 class Deployment(Base, TimestampMixin):
@@ -179,4 +188,7 @@ class UsageLedger(Base):
     stage: Mapped[str] = mapped_column(String(40))
     units: Mapped[int] = mapped_column(Integer)
     entry_type: Mapped[str] = mapped_column(String(24))
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

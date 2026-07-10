@@ -1,10 +1,11 @@
-export type RoleKey = "product" | "designer" | "engineer" | "qa" | "user" | "renderer";
+export type RoleKey = "leader" | "product" | "architect" | "engineer" | "data" | "user" | "renderer";
 
 export const ROLE_META: Record<RoleKey, { label: string; short: string }> = {
+  leader: { label: "Team Leader", short: "TL" },
   product: { label: "Product Manager", short: "PM" },
-  designer: { label: "Designer", short: "DS" },
+  architect: { label: "Architect", short: "AR" },
   engineer: { label: "Engineer", short: "EN" },
-  qa: { label: "QA", short: "QA" },
+  data: { label: "Data Analyst", short: "DA" },
   user: { label: "You", short: "YOU" },
   renderer: { label: "Renderer", short: "RE" },
 };
@@ -12,8 +13,8 @@ export const ROLE_META: Record<RoleKey, { label: string; short: string }> = {
 export function AtomLogo() {
   return <span className="atom-logo" aria-label="Another Atom logo">
     <i className="atom-orbit orbit-one" /><i className="atom-orbit orbit-two" />
-    <i className="atom-dot dot-product" /><i className="atom-dot dot-designer" />
-    <i className="atom-dot dot-engineer" /><i className="atom-dot dot-qa" />
+    <i className="atom-dot dot-product" /><i className="atom-dot dot-architect" />
+    <i className="atom-dot dot-engineer" /><i className="atom-dot dot-data" />
     <b>A</b>
   </span>;
 }

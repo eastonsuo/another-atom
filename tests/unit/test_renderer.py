@@ -6,8 +6,8 @@ from another_atom.contracts.schemas import Mode
 def build_spec():
     provider = MockLLMProvider()
     blueprint = provider.create_blueprint("Build a lamp catalog", Mode.TEAM)
-    visual = provider.create_visual_spec(blueprint)
-    return provider.create_app_spec(blueprint, visual, "Build a lamp catalog")
+    architecture = provider.create_architecture_spec(blueprint)
+    return provider.create_app_spec(blueprint, architecture, "Build a lamp catalog")
 
 
 def test_valid_app_spec_passes_deterministic_checks() -> None:

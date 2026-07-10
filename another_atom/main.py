@@ -7,14 +7,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
 
-from another_atom.agent.orchestrator import execute_run_background
 from another_atom.api.routes import router
+from another_atom.build.worker import worker_loop
 from another_atom.config import get_settings
 from another_atom.domain.errors import AppError
-from another_atom.storage.database import SessionLocal, init_database
-from another_atom.storage.models import BuildJob
+from another_atom.storage.database import init_database
 
 
 def create_app(*, initialize_database: bool = True) -> FastAPI:
@@ -22,8 +20,14 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if initialize_database:
             init_database()
-            await asyncio.to_thread(_recover_interrupted_jobs)
-        yield
+            stop_worker = asyncio.Event()
+            worker_task = asyncio.create_task(worker_loop(stop_worker))
+        try:
+            yield
+        finally:
+            if initialize_database:
+                stop_worker.set()
+                await worker_task
 
     app = FastAPI(title="Another Atom API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -44,16 +48,6 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
     app.include_router(router)
     _mount_studio(app, get_settings().studio_dist)
     return app
-
-
-def _recover_interrupted_jobs() -> None:
-    """Resume persisted jobs after the single-instance V1 service restarts."""
-    with SessionLocal() as db:
-        run_ids = db.scalars(
-            select(BuildJob.run_id).where(BuildJob.status.in_(["queued", "building", "validating"]))
-        ).all()
-    for run_id in run_ids:
-        execute_run_background(run_id)
 
 
 def _mount_studio(app: FastAPI, dist_path: Path) -> None:

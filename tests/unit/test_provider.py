@@ -1,6 +1,7 @@
 import pytest
 
-from another_atom.agent.provider import LLMProviderError, MockLLMProvider
+from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
+from another_atom.config import get_settings
 from another_atom.contracts.schemas import Mode, SupportLevel
 
 
@@ -26,13 +27,45 @@ def test_support_classification(
 def test_mock_failure_hook_is_explicit(provider: MockLLMProvider) -> None:
     with pytest.raises(LLMProviderError):
         provider.create_blueprint("Catalog [fail:llm]", Mode.TEAM)
+    assert provider.take_usage().request_count == 1
 
 
 def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) -> None:
     prompt = "Build a product catalog called Mono Market"
     blueprint = provider.create_blueprint(prompt, Mode.TEAM)
-    visual = provider.create_visual_spec(blueprint)
-    app_spec = provider.create_app_spec(blueprint, visual, prompt)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
     assert {page.route for page in app_spec.pages} >= {"/", "/catalog"}
     assert any(page.route.startswith("/product/") for page in app_spec.pages)
     assert len(app_spec.products) >= 3
+    assert provider.take_usage().request_count == 3
+
+
+def test_ollama_provider_records_response_token_usage(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+    blueprint = MockLLMProvider().create_blueprint("Build a catalog", Mode.TEAM)
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {"content": blueprint.model_dump_json()},
+                "prompt_eval_count": 120,
+                "eval_count": 80,
+            }
+
+    monkeypatch.setattr(
+        "another_atom.agent.provider.httpx.post",
+        lambda *args, **kwargs: Response(),
+    )
+    provider = OllamaCloudProvider(model="deepseek-v4-pro")
+    result = provider.create_blueprint("Build a catalog", Mode.TEAM)
+    usage = provider.take_usage()
+    assert result.project_name == blueprint.project_name
+    assert usage.request_count == 1
+    assert usage.input_tokens == 120
+    assert usage.output_tokens == 80
+    get_settings.cache_clear()

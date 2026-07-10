@@ -27,6 +27,7 @@ import type {
   Mode,
   ProjectView,
   QuotaView,
+  ModelsView,
   RunEvent,
   RunView,
   VersionView,
@@ -56,6 +57,8 @@ function Studio() {
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [versions, setVersions] = useState<VersionView[]>([]);
   const [quota, setQuota] = useState<QuotaView | null>(null);
+  const [models, setModels] = useState<ModelsView | null>(null);
+  const [model, setModel] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
@@ -77,10 +80,21 @@ function Studio() {
     return nextRun;
   }, []);
 
-  useEffect(() => { refreshShell().catch(() => undefined); }, [refreshShell]);
   useEffect(() => {
-    if (!run) return;
-    const source = new EventSource(`/api/runs/${run.run_id}/events`);
+    const loadShell = async () => refreshShell();
+    void loadShell().catch(() => undefined);
+  }, [refreshShell]);
+  useEffect(() => {
+    api.models().then((result) => {
+      setModels(result);
+      setModel((current) => current || result.default_model);
+    }).catch((reason: Error) => setError(reason.message));
+  }, []);
+  const activeRunId = run?.run_id;
+  const activeRunStatus = run?.status;
+  useEffect(() => {
+    if (!activeRunId || !activeRunStatus || TERMINAL.has(activeRunStatus)) return;
+    const source = new EventSource(`/api/runs/${activeRunId}/events`);
     const eventTypes = [
       "stage.started",
       "stage.completed",
@@ -104,7 +118,7 @@ function Studio() {
     };
     eventTypes.forEach((eventType) => source.addEventListener(eventType, receive as EventListener));
     return () => source.close();
-  }, [run?.run_id]);
+  }, [activeRunId, activeRunStatus]);
   useEffect(() => {
     if (!run || TERMINAL.has(run.status) || run.status === "awaiting_approval") return;
     const timer = window.setInterval(() => {
@@ -120,7 +134,7 @@ function Studio() {
     setSubmitting(true);
     setError("");
     try {
-      const created = await api.createRun(prompt, mode, attachments);
+      const created = await api.createRun(prompt, mode, model, attachments);
       setRun(created);
       setEvents(await api.events(created.run_id));
       setVersions([]);
@@ -169,7 +183,7 @@ function Studio() {
             <span className="topbar-context">{run ? "Project workspace" : "Application studio"}</span>
             <strong>{run?.blueprint?.project_name ?? "Another Atom"}</strong>
           </div>
-          {run && <StatusPill status={run.status} />}
+          {run && <div className="topbar-status"><span className="model-badge"><Sparkles size={13} /> {run.model}</span><StatusPill status={run.status} /></div>}
         </header>
         {!run ? (
           <Composer
@@ -177,6 +191,9 @@ function Studio() {
             setPrompt={setPrompt}
             mode={mode}
             setMode={setMode}
+            model={model}
+            setModel={setModel}
+            models={models}
             attachments={attachments}
             setAttachments={setAttachments}
             submitting={submitting}
@@ -185,6 +202,7 @@ function Studio() {
           />
         ) : (
           <Workspace
+            key={run.run_id}
             run={run}
             setRun={setRun}
             events={events}
@@ -253,6 +271,9 @@ function Composer({
   setPrompt,
   mode,
   setMode,
+  model,
+  setModel,
+  models,
   attachments,
   setAttachments,
   submitting,
@@ -263,6 +284,9 @@ function Composer({
   setPrompt: (value: string) => void;
   mode: Mode;
   setMode: (mode: Mode) => void;
+  model: string;
+  setModel: (model: string) => void;
+  models: ModelsView | null;
   attachments: AttachmentMeta[];
   setAttachments: (items: AttachmentMeta[]) => void;
   submitting: boolean;
@@ -284,7 +308,7 @@ function Composer({
         <div className="crew-stage" aria-label="Your build team">
           <span className="crew-spark spark-one" />
           <span className="crew-spark spark-two" />
-          {(["product", "designer", "engineer", "qa"] as RoleKey[]).map((role) => (
+          {(["leader", "product", "architect", "engineer", "data"] as RoleKey[]).map((role) => (
             <div className="crew-member" key={role}>
               <RoleAvatar role={role} size="large" />
               <span>{ROLE_META[role].label}</span>
@@ -315,7 +339,13 @@ function Composer({
             <button className={mode === "engineer" ? "active" : ""} onClick={() => setMode("engineer")} title="Fast, narrow build"><Code2 size={15} /> Engineer</button>
             <button className={mode === "team" ? "active" : ""} onClick={() => setMode("team")} title="Inspectable staged pipeline"><Users size={15} /> Team</button>
           </div>
-          <button className="submit-prompt" disabled={!prompt.trim() || submitting} onClick={createRun} aria-label="Build application" title="Build application">
+          <label className="model-select">
+            <Sparkles size={14} />
+            <select value={model} onChange={(event) => setModel(event.target.value)} aria-label="Language model">
+              {(models?.models ?? []).map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+          <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting} onClick={createRun} aria-label="Build application" title="Build application">
             {submitting ? <LoaderCircle className="spin" size={19} /> : <ArrowUp size={19} />}
           </button>
         </div>
@@ -361,7 +391,6 @@ function Workspace({
   const [approving, setApproving] = useState(false);
   const [blueprint, setBlueprint] = useState<Blueprint | null>(run.blueprint);
   const ready = run.status === "completed" || run.status === "completed_degraded";
-  useEffect(() => setBlueprint(run.blueprint), [run.blueprint]);
 
   const approve = async () => {
     if (!blueprint) return;
@@ -393,6 +422,7 @@ function Workspace({
           <FailedState run={run} />
         ) : ready && run.version_id ? (
           <ResultWorkspace
+            key={run.version_id}
             run={run}
             versions={versions}
             setVersions={setVersions}
@@ -414,10 +444,10 @@ function Workspace({
 
 function Timeline({ run, events }: { run: RunView; events: RunEvent[] }) {
   const stages = run.mode === "team"
-    ? ["product_manager", "blueprint_approval", "designer", "engineer", "build", "qa", "complete"]
+    ? ["team_leader", "product_manager", "blueprint_approval", "architect", "engineer", "build", "data", "complete"]
     : ["product_manager", "blueprint_approval", "engineer", "build", "complete"];
-  const labels: Record<string, string> = { product_manager: "Product Manager", blueprint_approval: "Your approval", designer: "Designer", engineer: "Engineer", build: "Renderer", qa: "QA", complete: "Preview ready", build_queue: "Build queue", scope_review: "Scope review" };
-  const roles: Record<string, RoleKey> = { product_manager: "product", blueprint_approval: "user", designer: "designer", engineer: "engineer", build: "renderer", qa: "qa", complete: "qa" };
+  const labels: Record<string, string> = { team_leader: "Team Leader", product_manager: "Product Manager", blueprint_approval: "Your approval", architect: "Architect", engineer: "Engineer", build: "Renderer", data: "Data Analyst", complete: "Preview ready", build_queue: "Build queue", scope_review: "Scope review" };
+  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", blueprint_approval: "user", architect: "architect", engineer: "engineer", build: "renderer", data: "data", complete: "data" };
   const currentIndex = stages.indexOf(run.current_stage);
   return <div className="timeline">
     {stages.map((stage, index) => {
@@ -459,7 +489,7 @@ function FailedState({ run }: { run: RunView }) {
 }
 
 function BuildingState({ run }: { run: RunView }) {
-  const role: RoleKey = run.current_stage === "designer" ? "designer" : run.current_stage === "qa" ? "qa" : run.current_stage === "build" ? "renderer" : "engineer";
+  const role: RoleKey = run.current_stage === "architect" ? "architect" : run.current_stage === "data" ? "data" : run.current_stage === "build" ? "renderer" : "engineer";
   return <div className="center-state building-cartoon"><div className="working-avatar"><RoleAvatar role={role} size="hero" /><span><LoaderCircle className="spin" /></span></div><h1>{run.current_stage === "build_queue" ? "Build queued" : `${ROLE_META[role].label} is working`}</h1><p>The current stage is persisted. Refreshing this page will not lose the run.</p><div className="build-meter"><span /></div></div>;
 }
 
@@ -471,8 +501,6 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   const [publishing, setPublishing] = useState(false);
   const [deploymentUrl, setDeploymentUrl] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
-  useEffect(() => { if (current) { setTitle(current.app_spec.hero_title); setBody(current.app_spec.hero_body); setColor(current.app_spec.primary_color); } }, [current]);
-
   const save = async () => {
     try {
       const version = await api.revise(run.project_id, { hero_title: title, hero_body: body, primary_color: color });

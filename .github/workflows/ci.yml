@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: uv sync --locked --dev
+      - run: uv run ruff check another_atom tests
+      - run: uv run pytest --cov=another_atom --cov-report=term-missing
+      - run: npm ci
+        working-directory: studio
+      - run: npm run lint
+        working-directory: studio
+      - run: npm run build
+        working-directory: studio

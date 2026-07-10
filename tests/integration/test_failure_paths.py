@@ -28,6 +28,7 @@ def test_llm_failure_retries_then_preserves_project(client: TestClient) -> None:
     assert any(project["id"] == run["project_id"] for project in projects)
     quota = client.get("/api/quota").json()
     assert quota["reserved"] == 0
+    assert quota["used"] == 3
 
 
 def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> None:
@@ -66,3 +67,30 @@ def test_cross_user_project_access_is_denied(client: TestClient) -> None:
     ).json()
     response = client.get(f"/api/projects/{created['project_id']}", headers={"X-User-ID": "user-b"})
     assert response.status_code == 404
+
+
+def test_cross_user_preview_access_is_denied(client: TestClient) -> None:
+    created = client.post(
+        "/api/runs",
+        json={"prompt": "Build a product catalog", "mode": "team"},
+        headers={"X-User-ID": "user-a"},
+    ).json()
+    approved = client.post(
+        f"/api/runs/{created['run_id']}/approve",
+        json={"blueprint": created["blueprint"]},
+        headers={"X-User-ID": "user-a"},
+    ).json()
+    response = client.get(
+        f"/api/previews/{approved['version_id']}",
+        headers={"X-User-ID": "user-b"},
+    )
+    assert response.status_code == 404
+
+
+def test_unavailable_model_is_rejected_before_project_creation(client: TestClient) -> None:
+    response = client.post(
+        "/api/runs",
+        json={"prompt": "Build a product catalog", "mode": "team", "model": "unknown"},
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "MODEL_NOT_ALLOWED"

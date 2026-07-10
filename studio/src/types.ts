@@ -50,12 +50,18 @@ export interface RunView {
   project_id: string;
   session_id: string;
   mode: Mode;
+  model: string;
   status: string;
   current_stage: string;
   blueprint: Blueprint | null;
   app_spec: AppSpec | null;
   validation_report: { passed: boolean; checks: { label: string; status: string }[] } | null;
-  qa_review: { summary: string; warnings: string[]; suggested_actions: string[] } | null;
+  architecture_spec: {
+    architecture_summary: string;
+    page_strategy: string[];
+    data_entities: string[];
+  } | null;
+  data_review: { summary: string; warnings: string[]; suggested_actions: string[] } | null;
   build_job_id: string | null;
   version_id: string | null;
   error_code: string | null;
@@ -106,4 +112,10 @@ export interface QuotaView {
   used: number;
   reserved: number;
   remaining: number;
+}
+
+export interface ModelsView {
+  provider: string;
+  default_model: string;
+  models: { id: string; label: string; usage: "medium" | "extra_high" | "local" }[];
 }

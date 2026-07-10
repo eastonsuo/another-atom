@@ -1,6 +1,9 @@
 from time import perf_counter
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from another_atom.storage.models import UsageLedger
 
 PROMPT = (
     "Build a restrained product catalog called Mono Market for useful home objects. "
@@ -22,11 +25,34 @@ def create_and_approve(client: TestClient, prompt: str = PROMPT, mode: str = "te
 
 
 def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
+    model_config = client.get("/api/models")
+    assert model_config.status_code == 200
+    assert model_config.json()["default_model"] == "mock"
     run = create_and_approve(client)
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True
-    assert run["qa_review"]["warnings"] == []
+    assert run["data_review"]["warnings"] == []
+    assert run["model"] == "mock"
     assert run["version_id"]
+    quota = client.get("/api/quota").json()
+    assert quota["used"] == 4
+    assert quota["reserved"] == 0
+    with client.app.state.testing_session() as db:
+        settles = db.scalars(
+            select(UsageLedger)
+            .where(
+                UsageLedger.run_id == run["run_id"],
+                UsageLedger.entry_type == "settle",
+            )
+            .order_by(UsageLedger.created_at)
+        ).all()
+    assert [entry.stage for entry in settles] == [
+        "product_manager",
+        "architect",
+        "engineer",
+        "data",
+    ]
+    assert [entry.request_count for entry in settles] == [1, 1, 1, 1]
 
     versions = client.get(f"/api/projects/{run['project_id']}/versions")
     assert versions.status_code == 200
