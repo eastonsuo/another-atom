@@ -221,6 +221,7 @@ Stage Context
 
 - Session 保存用户可恢复的交互边界；Run 保存一次构建/修改任务；StageRun 保存一次角色调用。
 - Artifact 使用不可变 ID、版本和 hash 引用，下一阶段不依赖内存对象。
+- 当前单实例实现以每类唯一 Artifact 作为阶段恢复检查点；成功输出与该次 Provider usage 在同一事务提交，Worker 重启后直接复用已提交 Artifact。
 - 错误上下文只保留错误码、失败 check、evidence ref 和截断摘要，不把无限日志送入模型。
 - 每次调用记录 `model`、`prompt_version`、`input_artifact_refs`、`output_artifact_id`、usage 和 attempt。
 - 不持久化或展示模型私有 Chain of Thought；只保存结构化输出、决策摘要和可审计证据。
@@ -258,6 +259,10 @@ Stage Context
 | `publish_version` | Publish Service | 只接受用户显式请求和合法 `version_id` |
 
 V2 如需开放 Tool，应先引入结构化 `ToolRequest`、独立权限策略、审批和运行级沙箱；不能直接把这些 Runtime 操作注册给 V1 Agent。
+
+当前 Validator 不再只检查固定三条路由。它同时核对 Blueprint 声明的页面、受控 `mapped_requirements` 是否有确定性证据、AppSpec 与 ArchitectureSpec 视觉 Token 是否一致，以及主色/强调色相对背景的对比度。无法识别的 mapped requirement 失败而不是默认通过。
+
+当前可运行纵切仍在每次构建前显式审批 Blueprint；审批通过使用状态 CAS 防止重复排队。上文“普通 supported 不重复审批”是 Lead/Risk Policy 完成后的 V1 目标，不是当前代码已经具备的行为。
 
 ## 7. WebIDE、Sandbox 与执行边界
 
@@ -423,6 +428,8 @@ run.completed_degraded
 ## 10. 配额与并发
 
 - 每个实际 Provider 调用单独预占并结算用量，包括 schema retry 和 repair。
+- 成功阶段的 Artifact 与结算同事务提交；非 LLM 异常也必须结算已观测到的实际请求并释放剩余预占，不能把整笔 reservation 记为 used。
+- Worker 恢复只重放尚无 Artifact 的阶段；已提交阶段、已完成 Run 和既有 Build Version 不重复执行或结算。
 - Lead direct 只结算 Lead 调用；Lead team 路径中的四个专业角色顺序执行，因此一个 Run 不产生并行 LLM 预占。
 - 同一账户的多个 Session 共享 Quota Account，预占必须使用数据库事务。
 - `QUOTA_EXCEEDED` 默认不自动重试；Run 保留当前 Artifact 并进入 Needs input，只有下一条定义的 Data Analyst 摘要阶段例外。

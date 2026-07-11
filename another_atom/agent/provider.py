@@ -199,6 +199,8 @@ class MockLLMProvider:
     @staticmethod
     def _raise_if_requested(prompt: str, stage: str) -> None:
         lowered = prompt.lower()
+        if "[fail:platform]" in lowered:
+            raise RuntimeError(f"Mock platform failure requested for {stage}")
         if "[fail:llm]" in lowered or f"[fail:{stage}]" in lowered:
             raise LLMProviderError(f"Mock LLM failure requested for {stage}")
 
@@ -300,7 +302,8 @@ class OllamaCloudProvider:
                 "Turn the user request into the V1 Blueprint. V1 only supports product catalog "
                 "sites with Home, Catalog, and Product pages. Classify support_level honestly as "
                 "supported, adapted, or unsupported. Do not invent backend, auth, or payment "
-                "support."
+                "support. mapped_requirements may only contain these canonical claims: "
+                "Responsive product catalog, Product detail navigation, Editable visual direction."
             ),
             {"request": prompt, "mode": mode.value},
         )

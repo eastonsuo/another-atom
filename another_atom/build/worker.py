@@ -26,38 +26,58 @@ def claim_next_job(
 ) -> str | None:
     now = now_utc()
     with session_factory() as db:
-        job = db.scalar(
-            select(BuildJob)
-            .where(
-                or_(
-                    BuildJob.status == BuildStatus.QUEUED.value,
-                    (
-                        BuildJob.status.in_(
-                            [BuildStatus.BUILDING.value, BuildStatus.VALIDATING.value]
-                        )
-                        & or_(
-                            BuildJob.lease_expires_at.is_(None),
-                            BuildJob.lease_expires_at < now,
-                        )
-                    ),
+        while True:
+            job = db.scalar(
+                select(BuildJob)
+                .where(
+                    or_(
+                        BuildJob.status == BuildStatus.QUEUED.value,
+                        (
+                            BuildJob.status.in_(
+                                [BuildStatus.BUILDING.value, BuildStatus.VALIDATING.value]
+                            )
+                            & or_(
+                                BuildJob.lease_expires_at.is_(None),
+                                BuildJob.lease_expires_at < now,
+                            )
+                        ),
+                    )
                 )
+                .order_by(BuildJob.created_at)
+                .with_for_update(skip_locked=True)
+                .limit(1)
             )
-            .order_by(BuildJob.created_at)
-            .with_for_update(skip_locked=True)
-            .limit(1)
-        )
-        if job is None:
-            return None
-        run = db.get(Run, job.run_id)
-        if run and run.quota_reserved:
-            release_quota(db, run, "worker_recovery")
-        job.status = BuildStatus.BUILDING.value
-        job.lease_owner = worker_id
-        job.lease_expires_at = now + timedelta(seconds=get_settings().worker_lease_seconds)
-        job.started_at = job.started_at or now
-        job.attempt += 1
-        db.commit()
-        return job.id
+            if job is None:
+                return None
+            run = db.get(Run, job.run_id)
+            if run is None or run.status in {
+                RunStatus.COMPLETED.value,
+                RunStatus.COMPLETED_DEGRADED.value,
+                RunStatus.FAILED.value,
+                RunStatus.CANCELLED.value,
+                RunStatus.NEEDS_INPUT.value,
+            }:
+                job.status = (
+                    BuildStatus.SUCCEEDED.value
+                    if run
+                    and run.status
+                    in {RunStatus.COMPLETED.value, RunStatus.COMPLETED_DEGRADED.value}
+                    else BuildStatus.FAILED.value
+                )
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.finished_at = job.finished_at or now
+                db.commit()
+                continue
+            if run.quota_reserved:
+                release_quota(db, run, "worker_recovery")
+            job.status = BuildStatus.BUILDING.value
+            job.lease_owner = worker_id
+            job.lease_expires_at = now + timedelta(seconds=get_settings().worker_lease_seconds)
+            job.started_at = job.started_at or now
+            job.attempt += 1
+            db.commit()
+            return job.id
 
 
 def execute_claimed_job(

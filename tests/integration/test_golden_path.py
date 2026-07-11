@@ -14,7 +14,10 @@ PROMPT = (
 def create_and_approve(client: TestClient, prompt: str = PROMPT, mode: str = "team"):
     created = client.post("/api/runs", json={"prompt": prompt, "mode": mode})
     assert created.status_code == 201, created.text
-    run = created.json()
+    initial = created.json()
+    assert initial["status"] == "product_running"
+    assert initial["blueprint"] is None
+    run = client.get(f"/api/runs/{initial['run_id']}").json()
     assert run["status"] == "awaiting_approval"
     approved = client.post(
         f"/api/runs/{run['run_id']}/approve",
@@ -140,7 +143,8 @@ def test_golden_path_completes_five_out_of_five(client: TestClient) -> None:
         )
         assert created.status_code == 201
         assert perf_counter() - started < 1.0
-        run = created.json()
+        initial = created.json()
+        run = client.get(f"/api/runs/{initial['run_id']}").json()
         initial_events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
         assert initial_events
         assert perf_counter() - started < 2.0

@@ -93,6 +93,7 @@ class Artifact(Base, TimestampMixin):
 
 class Approval(Base, TimestampMixin):
     __tablename__ = "approvals"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_approval_run"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)

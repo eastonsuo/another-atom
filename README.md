@@ -10,6 +10,8 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Current status:** A runnable V1 vertical slice is implemented with Ollama Cloud and Mock providers. DeepSeek V4 Pro is the default real model, with V4 Flash selectable per Run. Local generation, preview, editing, versioning, publishing routes, persistence, quota, and automated tests are available. Railway public deployment is not complete.
 
+> **Current runtime boundary:** The runnable slice is single-instance only. Blueprint generation now runs after `POST /api/runs` through an in-process background task; approval uses a database status CAS; committed stage artifacts, quota settlement, Build Jobs, and build versions are replay-safe across Worker restart. The slice still requires explicit Blueprint approval—risk-only confirmation remains the target design pending Lead/Risk Policy implementation. Production no longer creates arbitrary users from unknown `X-User-ID` values, but the real Session Gateway is still pending, so this header remains a temporary demo identity mechanism rather than production authentication.
+
 > **Approved V1 design expansion, not implemented yet:** username/password Session Gateway with user-level Project isolation; a real Lead Agent that routes each message to `direct` or the complete fixed team; one server-side local Git repository per Project; and an xterm.js + restricted Vim WebIDE backed by an isolated Linux Sandbox Host.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
@@ -224,6 +226,7 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 | One server-side local Git repository per Project | A Project needs durable, inspectable source ownership | ProjectVersion maps to a commit without requiring GitHub OAuth | V1 has no remote, push, pull, or user-machine repository |
 | xterm.js + fixed Vim in a rootless Sandbox | Users need source-level editing without exposing a host shell | Familiar terminal editing with bounded filesystem and resources | Requires a Linux Sandbox Host; it is not a Claude Code-like terminal Agent |
 | Asynchronous Build Job + fixed template and dependencies | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and resource/failure scope stays bounded | Generation is limited by template capability; initial build concurrency is one |
+| One API process + one in-process Worker for the current slice | Local and Railway V1 need durable correctness before horizontal scale | PostgreSQL Job/Artifact checkpoints provide restart recovery without a queue cluster | No horizontal replicas, independent Worker cluster, LISTEN/NOTIFY, or message queue in V1 |
 | Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
 
 See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details. See the [V1 agent design](./docs/v1/agent-design.md) for execution semantics, human-in-the-loop, context, tools, sandbox boundaries, validation, and repair.
@@ -304,6 +307,7 @@ Completed:
 - [x] Mock role Pipeline with schema validation and bounded failure paths
 - [x] Ollama Cloud Provider, DeepSeek model selector, Provider usage ledger, and bounded retry
 - [x] Persistent single-concurrency Build Worker with database lease recovery
+- [x] Approval CAS, restart-safe stage checkpoints, quota release/settlement, owned Preview, asynchronous Blueprint generation, and contract-aware Validator tests
 - [x] Unit/integration tests, including five consecutive Golden Path runs
 - [x] Dockerfile and Railway configuration
 

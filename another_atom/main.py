@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from another_atom.agent.tasks import recover_interrupted_blueprints
 from another_atom.api.routes import router
 from another_atom.build.worker import worker_loop
 from another_atom.config import get_settings
@@ -21,12 +22,16 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
         if initialize_database:
             init_database()
             stop_worker = asyncio.Event()
+            blueprint_recovery_task = asyncio.create_task(
+                asyncio.to_thread(recover_interrupted_blueprints)
+            )
             worker_task = asyncio.create_task(worker_loop(stop_worker))
         try:
             yield
         finally:
             if initialize_database:
                 stop_worker.set()
+                await blueprint_recovery_task
                 await worker_task
 
     app = FastAPI(title="Another Atom API", version="0.1.0", lifespan=lifespan)

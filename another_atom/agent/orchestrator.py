@@ -13,17 +13,27 @@ from another_atom.contracts.schemas import (
     ArtifactType,
     Blueprint,
     BuildStatus,
+    DataReview,
     Mode,
     ProjectStatus,
     RunStatus,
     SupportLevel,
+    ValidationReport,
     VersionSource,
 )
 from another_atom.domain.artifacts import get_artifact, save_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
 from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
-from another_atom.storage.models import BuildJob, Deployment, Project, ProjectVersion, Run
+from another_atom.storage.models import (
+    Artifact,
+    BuildJob,
+    Deployment,
+    Project,
+    ProjectVersion,
+    Run,
+    RunEvent,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -42,32 +52,46 @@ class Orchestrator:
         return self.providers[run.model]
 
     def create_blueprint(self, run: Run) -> Blueprint | None:
+        if run.status in {
+            RunStatus.AWAITING_APPROVAL.value,
+            RunStatus.NEEDS_INPUT.value,
+            RunStatus.BUILD_QUEUED.value,
+            RunStatus.ARCHITECT_RUNNING.value,
+            RunStatus.ENGINEER_RUNNING.value,
+            RunStatus.BUILDING.value,
+            RunStatus.DATA_RUNNING.value,
+            RunStatus.COMPLETED.value,
+            RunStatus.COMPLETED_DEGRADED.value,
+            RunStatus.FAILED.value,
+            RunStatus.CANCELLED.value,
+        }:
+            artifact = get_artifact(self.db, run.id, ArtifactType.BLUEPRINT)
+            return Blueprint.model_validate(artifact.payload) if artifact else None
         run.current_stage = "product_manager"
         run.status = RunStatus.PRODUCT_RUNNING.value
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.started",
             "Product Manager is structuring the request",
-            stage="product_manager",
+            "product_manager",
         )
         try:
-            blueprint = self._with_retries(
+            blueprint, artifact, _ = self._run_agent_stage(
                 run,
                 "product_manager",
+                ArtifactType.BLUEPRINT,
+                Blueprint,
                 lambda: self._provider(run).create_blueprint(run.prompt, Mode(run.mode)),
             )
-            artifact = save_artifact(self.db, run.id, ArtifactType.BLUEPRINT, blueprint)
             project = self.db.get(Project, run.project_id)
             if project:
                 project.name = blueprint.project_name
-            record_event(
-                self.db,
-                run.id,
+            self._record_event_once(
+                run,
                 "artifact.created",
                 "Blueprint is ready for review",
-                stage="product_manager",
-                payload={
+                "product_manager",
+                {
                     "artifact_id": artifact.id,
                     "artifact_type": ArtifactType.BLUEPRINT.value,
                     "support_level": blueprint.support_level.value,
@@ -76,23 +100,21 @@ class Orchestrator:
             if blueprint.support_level == SupportLevel.UNSUPPORTED:
                 run.status = RunStatus.NEEDS_INPUT.value
                 run.current_stage = "scope_review"
-                record_event(
-                    self.db,
-                    run.id,
+                self._record_event_once(
+                    run,
                     "run.needs_input",
                     "The request is outside the V1 catalog scope",
-                    stage="scope_review",
-                    payload={"rewrite_suggestion": blueprint.rewrite_suggestion},
+                    "scope_review",
+                    {"rewrite_suggestion": blueprint.rewrite_suggestion},
                 )
             else:
                 run.status = RunStatus.AWAITING_APPROVAL.value
                 run.current_stage = "blueprint_approval"
-                record_event(
-                    self.db,
-                    run.id,
+                self._record_event_once(
+                    run,
                     "approval.required",
                     "Review and confirm the Blueprint before building",
-                    stage="blueprint_approval",
+                    "blueprint_approval",
                 )
             self.db.commit()
             return blueprint
@@ -102,10 +124,24 @@ class Orchestrator:
         except AppError as exc:
             self._fail_run(run, exc.code, exc.message)
             return None
+        except Exception as exc:
+            self.db.rollback()
+            current = self.db.get(Run, run.id)
+            if current:
+                self._fail_run(current, "BLUEPRINT_FAILED", str(exc))
+            return None
 
     def execute_approved_run(self, run_id: str) -> None:
         run = self.db.get(Run, run_id)
         if run is None:
+            return
+        if run.status not in {
+            RunStatus.BUILD_QUEUED.value,
+            RunStatus.ARCHITECT_RUNNING.value,
+            RunStatus.ENGINEER_RUNNING.value,
+            RunStatus.BUILDING.value,
+            RunStatus.DATA_RUNNING.value,
+        }:
             return
         project = self.db.get(Project, run.project_id)
         blueprint_artifact = get_artifact(self.db, run.id, ArtifactType.BLUEPRINT)
@@ -119,14 +155,17 @@ class Orchestrator:
             if run.mode == Mode.TEAM.value:
                 architecture_spec = self._run_architect(run, blueprint)
             else:
-                architecture_spec = self._with_retries(
+                architecture_spec, _, _ = self._run_agent_stage(
                     run,
                     "architect",
+                    ArtifactType.ARCHITECTURE_SPEC,
+                    ArchitectureSpec,
                     lambda: self._provider(run).create_architecture_spec(blueprint),
                 )
-                save_artifact(self.db, run.id, ArtifactType.ARCHITECTURE_SPEC, architecture_spec)
             app_spec = self._run_engineer(run, blueprint, architecture_spec)
-            validation_report, build_job = self._run_build(run, project, app_spec)
+            validation_report, build_job = self._run_build(
+                run, project, blueprint, architecture_spec, app_spec
+            )
             if not validation_report.passed:
                 build_job.status = BuildStatus.FAILED.value
                 build_job.error_message = "Deterministic validation failed"
@@ -154,13 +193,12 @@ class Orchestrator:
             )
             run.current_stage = "complete"
             project.status = ProjectStatus.READY.value
-            record_event(
-                self.db,
-                run.id,
+            self._record_event_once(
+                run,
                 "run.completed",
                 "Interactive preview is ready",
-                stage="complete",
-                payload={"version_id": version.id, "version_number": version.version_number},
+                "complete",
+                {"version_id": version.id, "version_number": version.version_number},
             )
             self.db.commit()
         except (LLMProviderError, ValueError) as exc:
@@ -171,26 +209,25 @@ class Orchestrator:
     def _run_architect(self, run: Run, blueprint: Blueprint) -> ArchitectureSpec:
         run.status = RunStatus.ARCHITECT_RUNNING.value
         run.current_stage = "architect"
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.started",
             "Architect is defining structure, data boundaries, and visual tokens",
-            stage="architect",
+            "architect",
         )
-        architecture_spec = self._with_retries(
+        architecture_spec, artifact, _ = self._run_agent_stage(
             run,
             "architect",
+            ArtifactType.ARCHITECTURE_SPEC,
+            ArchitectureSpec,
             lambda: self._provider(run).create_architecture_spec(blueprint),
         )
-        artifact = save_artifact(self.db, run.id, ArtifactType.ARCHITECTURE_SPEC, architecture_spec)
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.completed",
             "ArchitectureSpec passed schema validation",
-            stage="architect",
-            payload={"artifact_id": artifact.id},
+            "architect",
+            {"artifact_id": artifact.id},
         )
         self.db.commit()
         return architecture_spec
@@ -200,31 +237,37 @@ class Orchestrator:
     ) -> AppSpec:
         run.status = RunStatus.ENGINEER_RUNNING.value
         run.current_stage = "engineer"
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.started",
             "Engineer is producing the renderer contract",
-            stage="engineer",
+            "engineer",
         )
-        app_spec = self._with_retries(
+        app_spec, artifact, _ = self._run_agent_stage(
             run,
             "engineer",
+            ArtifactType.APP_SPEC,
+            AppSpec,
             lambda: self._provider(run).create_app_spec(blueprint, architecture_spec, run.prompt),
         )
-        artifact = save_artifact(self.db, run.id, ArtifactType.APP_SPEC, app_spec)
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.completed",
             "AppSpec passed schema validation",
-            stage="engineer",
-            payload={"artifact_id": artifact.id},
+            "engineer",
+            {"artifact_id": artifact.id},
         )
         self.db.commit()
         return app_spec
 
-    def _run_build(self, run: Run, project: Project, app_spec: AppSpec):
+    def _run_build(
+        self,
+        run: Run,
+        project: Project,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+    ):
         run.status = RunStatus.BUILDING.value
         run.current_stage = "build"
         build_job = self.db.scalar(
@@ -238,24 +281,31 @@ class Orchestrator:
             self.db.add(build_job)
             self.db.flush()
         build_job.status = BuildStatus.BUILDING.value
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "build.started",
             "Controlled React renderer started",
-            stage="build",
-            payload={"build_job_id": build_job.id},
+            "build",
+            {"build_job_id": build_job.id},
         )
-        validation_report = validate_app_spec(app_spec, run.prompt)
-        save_artifact(self.db, run.id, ArtifactType.VALIDATION_REPORT, validation_report)
+        validation_artifact = get_artifact(self.db, run.id, ArtifactType.VALIDATION_REPORT)
+        if validation_artifact:
+            validation_report = ValidationReport.model_validate(validation_artifact.payload)
+        else:
+            validation_report = validate_app_spec(
+                app_spec,
+                run.prompt,
+                blueprint=blueprint,
+                architecture_spec=architecture_spec,
+            )
+            save_artifact(self.db, run.id, ArtifactType.VALIDATION_REPORT, validation_report)
         build_job.status = BuildStatus.VALIDATING.value
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "validation.completed",
             "Deterministic route, data, and renderer checks completed",
-            stage="build",
-            payload={"passed": validation_report.passed},
+            "build",
+            {"passed": validation_report.passed},
         )
         self.db.commit()
         return validation_report, build_job
@@ -263,26 +313,25 @@ class Orchestrator:
     def _run_data(self, run: Run, app_spec: AppSpec, validation_report):
         run.status = RunStatus.DATA_RUNNING.value
         run.current_stage = "data"
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.started",
             "Data Analyst is checking catalog data and validation evidence",
-            stage="data",
+            "data",
         )
-        data_review = self._with_retries(
+        data_review, artifact, _ = self._run_agent_stage(
             run,
             "data",
+            ArtifactType.DATA_REVIEW,
+            DataReview,
             lambda: self._provider(run).analyze(app_spec, validation_report, run.prompt),
         )
-        artifact = save_artifact(self.db, run.id, ArtifactType.DATA_REVIEW, data_review)
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "stage.completed",
             "DataReview is ready",
-            stage="data",
-            payload={"artifact_id": artifact.id, "warnings": len(data_review.warnings)},
+            "data",
+            {"artifact_id": artifact.id, "warnings": len(data_review.warnings)},
         )
         self.db.commit()
         return data_review
@@ -296,6 +345,16 @@ class Orchestrator:
         data_review: dict,
         source: VersionSource,
     ) -> ProjectVersion:
+        if source == VersionSource.BUILD:
+            existing = self.db.scalar(
+                select(ProjectVersion).where(
+                    ProjectVersion.run_id == run.id,
+                    ProjectVersion.source == VersionSource.BUILD.value,
+                )
+            )
+            if existing:
+                project.latest_version_id = existing.id
+                return existing
         latest_number = self.db.scalar(
             select(func.max(ProjectVersion.version_number)).where(
                 ProjectVersion.project_id == project.id
@@ -324,9 +383,18 @@ class Orchestrator:
             deployment.version_id = version.id
         return version
 
-    def _with_retries(
-        self, run: Run, stage: str, operation: Callable[[], T], max_attempts: int = 3
-    ) -> T:
+    def _run_agent_stage(
+        self,
+        run: Run,
+        stage: str,
+        artifact_type: ArtifactType,
+        model_type: type[T],
+        operation: Callable[[], T],
+        max_attempts: int = 3,
+    ) -> tuple[T, Artifact, bool]:
+        existing = get_artifact(self.db, run.id, artifact_type)
+        if existing:
+            return model_type.model_validate(existing.payload), existing, False
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             provider = self._provider(run)
@@ -335,18 +403,24 @@ class Orchestrator:
             self.db.commit()
             try:
                 result = operation()
+                usage = provider.take_usage()
+                artifact = save_artifact(self.db, run.id, artifact_type, result)
                 settle_quota(
                     self.db,
                     run,
                     stage,
                     reserved_units,
-                    provider.take_usage(),
+                    usage,
                 )
                 self.db.commit()
-                return result
+                return result, artifact, True
             except (LLMProviderError, ValueError) as exc:
                 last_error = exc
                 usage = provider.take_usage()
+                self.db.rollback()
+                run = self.db.get(Run, run.id)
+                if run is None:
+                    raise
                 if usage.request_count:
                     settle_quota(self.db, run, stage, reserved_units, usage)
                 else:
@@ -360,6 +434,17 @@ class Orchestrator:
                     payload={"attempt": attempt, "max_attempts": max_attempts},
                 )
                 self.db.commit()
+            except Exception:
+                usage = provider.take_usage()
+                self.db.rollback()
+                current = self.db.get(Run, run.id)
+                if current:
+                    if usage.request_count:
+                        settle_quota(self.db, current, stage, reserved_units, usage)
+                    else:
+                        release_quota(self.db, current, stage, reserved_units)
+                    self.db.commit()
+                raise
         if last_error is not None:
             raise last_error
         raise LLMProviderError("Agent output failed")
@@ -373,13 +458,39 @@ class Orchestrator:
             project.status = ProjectStatus.READY.value
         elif project:
             project.status = ProjectStatus.DRAFT.value
-        record_event(
-            self.db,
-            run.id,
+        self._record_event_once(
+            run,
             "run.failed",
             message,
-            stage=run.current_stage,
-            payload={"code": code},
+            run.current_stage,
+            {"code": code},
         )
         release_quota(self.db, run, run.current_stage)
         self.db.commit()
+
+    def _record_event_once(
+        self,
+        run: Run,
+        event_type: str,
+        message: str,
+        stage: str,
+        payload: dict | None = None,
+    ) -> None:
+        existing = self.db.scalar(
+            select(RunEvent.id)
+            .where(
+                RunEvent.run_id == run.id,
+                RunEvent.event_type == event_type,
+                RunEvent.stage == stage,
+            )
+            .limit(1)
+        )
+        if existing is None:
+            record_event(
+                self.db,
+                run.id,
+                event_type,
+                message,
+                stage=stage,
+                payload=payload,
+            )

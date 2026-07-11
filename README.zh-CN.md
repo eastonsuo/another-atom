@@ -10,6 +10,8 @@ Another Atom 设计为一个通过自然语言创建网页产品原型的 AI Age
 
 > **当前状态：** 已完成支持 Ollama Cloud 与 Mock Provider 的 V1 本地可运行纵切版本。真实模型默认使用 DeepSeek V4 Pro，每个 Run 可切换 V4 Flash；生成、预览、编辑、版本、发布路由、持久化、配额和自动化测试均可运行。Railway 公网部署尚未完成。
 
+> **当前 Runtime 边界：** 可运行纵切版本只支持单实例。Blueprint 已移出 `POST /api/runs` 请求链，由进程内后台任务生成；审批使用数据库状态 CAS；已提交的阶段 Artifact、配额结算、Build Job 和构建版本在 Worker 重启后可幂等恢复。当前纵切仍要求显式审批 Blueprint；只在风险点确认仍是 Lead/Risk Policy 落地后的目标设计。生产环境不再根据未知 `X-User-ID` 自动创建账户，但真实 Session Gateway 尚未实现，因此该请求头仍只是临时 Demo 身份机制，不是生产认证。
+
 > **已确认、尚未落地的 V1 设计扩展：** 用户名密码 Session Gateway 与用户级 Project 隔离；Lead 对每条消息做 `direct/team` 二选一路由；每个 Project 绑定服务端 local Git repository；xterm.js + 受限 Vim WebIDE 运行在独立 Linux Sandbox Host。
 
 > **设计基线：** [V1 工程架构](./docs/v1/architecture-design.md) · [V1 Agent 设计](./docs/v1/agent-design.md)
@@ -224,6 +226,7 @@ V1 验证用户隔离、Lead 路由、固定团队、风险确认、源码编辑
 | 每个 Project 一个服务端本地 Git 仓库 | Project 需要持久、可检查的源码归属 | ProjectVersion 能映射 commit，无需先接 GitHub OAuth | V1 不配置 remote，不支持 push/pull 或用户电脑仓库 |
 | xterm.js + rootless Sandbox 中的固定 Vim | 用户需要源码级编辑，但不能获得宿主机 Shell | 保留终端编辑体验，同时限制文件系统和资源 | 需要 Linux Sandbox Host；不是 Claude Code 式 Terminal Agent |
 | 异步 Build Job + 固定模板和依赖 | 构建不能阻塞 HTTP 请求，也不能执行模型临时生成的命令 | Job 可恢复，资源和失败范围可控制 | 生成范围受模板能力限制，初始构建并发为 1 |
+| 当前纵切使用单 API 进程 + 单进程内 Worker | 本地/Railway V1 先保证持久化正确性，再考虑水平扩展 | PostgreSQL Job/Artifact 检查点无需队列集群也能重启恢复 | V1 不支持水平副本、独立 Worker 集群、LISTEN/NOTIFY 或消息队列 |
 | 真实 Plan/Quota/Ledger，暂不接支付 | 多用户、多 Session 必须共享并正确结算账户额度 | 并发请求不能透支，模型用量可以审计 | V1 不实现 Stripe、Wallet、充值或发票 |
 
 完整组件、状态、数据、安全和部署设计见 [V1 架构设计](./docs/v1/architecture-design.md)；执行范式、Human-in-the-loop、Context、Tool、Sandbox 和验收修复见 [V1 Agent 设计](./docs/v1/agent-design.md)。
@@ -304,6 +307,7 @@ V2 是 V1 之后的下一实施版本，不是可选展示方向。它把 V1 的
 - [x] Mock 角色 Pipeline、Schema 校验和有限失败重试
 - [x] Ollama Cloud Provider、DeepSeek 模型切换、Provider 用量账本和有限重试
 - [x] 带数据库 lease 恢复的单并发持久化 Build Worker
+- [x] 审批 CAS、阶段检查点幂等恢复、配额释放/结算、Preview 归属、异步 Blueprint 和契约化 Validator 测试
 - [x] 单元/集成测试，包括连续五轮 Golden Path
 - [x] Dockerfile 与 Railway 配置
 

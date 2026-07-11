@@ -65,6 +65,24 @@ def init_database(target_engine: Engine | None = None) -> None:
         connection.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_build_job_run_idx ON build_jobs (run_id)")
         )
+        connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_run_idx ON approvals (run_id)")
+        )
+
+    from another_atom.storage.models import User
+
+    bootstrap_session = sessionmaker(bind=database_engine, expire_on_commit=False)
+    with bootstrap_session() as db:
+        if db.get(User, "demo-user") is None:
+            db.add(
+                User(
+                    id="demo-user",
+                    display_name="Demo User",
+                    plan="demo",
+                    quota_limit=get_settings().demo_quota_units,
+                )
+            )
+            db.commit()
 
 
 def get_db() -> Generator[Session, None, None]:

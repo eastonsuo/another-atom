@@ -3,13 +3,16 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from another_atom.agent.orchestrator import Orchestrator
-from another_atom.api.dependencies import get_current_user, get_job_dispatcher
+from another_atom.api.dependencies import (
+    get_blueprint_executor,
+    get_current_user,
+    get_job_dispatcher,
+)
 from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
@@ -171,6 +174,8 @@ def models() -> ModelsView:
 @router.post("/runs", response_model=RunView, status_code=status.HTTP_201_CREATED)
 def create_run(
     request: RunCreate,
+    background_tasks: BackgroundTasks,
+    blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RunView:
@@ -212,8 +217,7 @@ def create_run(
             )
         )
     db.commit()
-    Orchestrator(db).create_blueprint(run)
-    db.refresh(run)
+    background_tasks.add_task(blueprint_executor, run.id)
     return _run_view(db, run)
 
 
@@ -238,17 +242,32 @@ def approve_blueprint(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RunView:
-    run = db.scalar(select(Run).where(Run.id == run_id, Run.user_id == user.id).with_for_update())
-    if run is None:
-        raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
-    if run.status != RunStatus.AWAITING_APPROVAL.value:
-        raise AppError(
-            "APPROVAL_NOT_ALLOWED", "This run is not waiting for Blueprint approval", 409
-        )
     if approval.blueprint.support_level == SupportLevel.UNSUPPORTED:
         raise AppError(
             "UNSUPPORTED_REQUEST", "Unsupported requests cannot enter the build pipeline", 409
         )
+    claimed = db.execute(
+        update(Run)
+        .where(
+            Run.id == run_id,
+            Run.user_id == user.id,
+            Run.status == RunStatus.AWAITING_APPROVAL.value,
+        )
+        .values(status=RunStatus.BUILD_QUEUED.value, current_stage="build_queue")
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        run = db.scalar(select(Run).where(Run.id == run_id, Run.user_id == user.id))
+        if run is None:
+            raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
+        raise AppError(
+            "APPROVAL_NOT_ALLOWED", "This run is not waiting for Blueprint approval", 409
+        )
+    run = db.get(Run, run_id)
+    if run is None:
+        db.rollback()
+        raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
     artifact = save_artifact(db, run.id, ArtifactType.BLUEPRINT, approval.blueprint)
     db.add(
         Approval(
@@ -259,8 +278,6 @@ def approve_blueprint(
             payload=approval.blueprint.model_dump(mode="json"),
         )
     )
-    run.status = RunStatus.BUILD_QUEUED.value
-    run.current_stage = "build_queue"
     job = BuildJob(run_id=run.id, project_id=run.project_id, status=BuildStatus.QUEUED.value)
     db.add(job)
     db.flush()
@@ -471,7 +488,13 @@ def revise_project(
     if not updates:
         raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
     app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
-    validation = validate_app_spec(app_spec, project.prompt)
+    blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+    validation = validate_app_spec(
+        app_spec,
+        project.prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture_spec,
+    )
     if not validation.passed:
         raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
     data_review = DataReview.model_validate(current.data_review).model_copy(
@@ -523,7 +546,13 @@ def restore_version(
     if source_version is None:
         raise AppError("VERSION_NOT_FOUND", "Restore version was not found", 404)
     restored_app_spec = AppSpec.model_validate(source_version.app_spec)
-    validation = validate_app_spec(restored_app_spec, project.prompt)
+    blueprint, architecture_spec = _validation_contracts(db, source_version.run_id)
+    validation = validate_app_spec(
+        restored_app_spec,
+        project.prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture_spec,
+    )
     if not validation.passed:
         raise AppError("RESTORE_VALIDATION_FAILED", "The selected version failed validation", 422)
     latest_number = db.scalar(
@@ -566,6 +595,15 @@ def _advance_latest_deployment(db: Session, project_id: str, version_id: str) ->
     )
     if deployment:
         deployment.version_id = version_id
+
+
+def _validation_contracts(
+    db: Session, run_id: str
+) -> tuple[Blueprint | None, ArchitectureSpec | None]:
+    return (
+        _artifact_model(db, run_id, ArtifactType.BLUEPRINT, Blueprint),
+        _artifact_model(db, run_id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec),
+    )
 
 
 def _record_project_event(
