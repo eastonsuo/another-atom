@@ -4,6 +4,71 @@
 
 > 把产品想法转化为可检查、可修改、可管理版本并可发布的网页原型。
 
+## 先认识几个核心概念
+
+下文会反复出现几个关键词，先用大白话解释一遍：
+
+- **Lead（入口分派）：** 你发的每条消息都先经过 Lead。它判断你是只想询问或澄清——走 `direct`，直接回答且不创建 Project；还是明确要求构建——走 `team`，交给专业团队执行。
+
+- **Blueprint（产品方案）：** Product Manager 把需求整理成的一份可检查方案，写清支持范围、页面、模块和视觉方向。它有三种结论：`supported` 表示受控范围内支持并自动继续；`adapted` 表示需要调整，先展示需求映射和取舍再等待确认；`unsupported` 表示超出范围，在构建前停止。
+
+- **角色接力：** 一次 V1 构建由四个 AI 角色按固定顺序接力。每一步都产出可检查的结构化成果，而不是让多个角色互相闲聊。
+
+  ```text
+  Product Manager -> Architect -> Engineer -> Data Analyst
+      Blueprint    ArchitectureSpec  AppSpec    DataReview
+      产品方案          架构规格        应用规格    数据/校验解读
+  ```
+
+- **版本与发布：** 每次 Build、Edit、Vim Save 和 Restore 都保存为新的 ProjectVersion，并对应一次 Git commit；但是否上线、上线哪个版本，必须由用户显式 Publish/Update，系统不会自动把新改动推到线上。
+
+- **Sandbox（隔离沙箱）：** 真正修改文件、运行 Vim 和执行构建的动作放在独立隔离环境中。Sandbox 只拿到当前 Project 的最小输入，不获得平台数据库凭证和 Provider 密钥，从而把“AI/工具执行”与“平台权限”分开。
+
+## 快速开始（本地运行）
+
+本地运行分为后端 API 和前端 Studio。只验证接口时可以只启动后端；查看完整界面时，需要先构建一次前端产物，再由后端以同域页面提供。
+
+- **前置要求：** Python ≥ 3.12、[uv](https://docs.astral.sh/uv/)、Node.js ≥ 22 和 npm。
+
+- **默认配置：** 本地使用 SQLite 和确定性 Mock Provider，不需要 API Key。Ollama Cloud / DeepSeek 等真实模型是可选配置，详见[本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md)。
+
+### 1. 安装后端依赖
+
+在仓库根目录执行：
+
+```bash
+uv sync --python 3.12
+```
+
+### 2. 构建 Studio 界面（只使用 API 时可跳过）
+
+```bash
+cd studio
+npm install
+npm run build
+cd ..
+```
+
+前端产物会写入 `studio/dist`，后端启动后会自动将其挂载为同域页面。
+
+### 3. 启动后端
+
+```bash
+uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
+```
+
+启动后可以访问：
+
+- **Studio：** [http://127.0.0.1:8000](http://127.0.0.1:8000)
+
+- **健康检查：** [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)，返回 `{"status":"ok", ...}` 即表示后端和数据库可用。
+
+- **API 文档：** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+- **本地数据：** 默认保存在 `data/another_atom.db`；重启后 Project 和版本仍然存在。需要干净数据时，先停止服务，再删除该文件。
+
+- **Vim 边界：** 默认 Mock 流程可完成登录、生成、Preview、结构化 Edit、版本和发布；xterm.js + restricted Vim 还需要单独启动 Linux Sandbox Host、构建 Sandbox 镜像并配置共享密钥。
+
 ## 1. 产品定位
 
 Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工作台。用户可以从一次对话开始，经过需求整理、设计、构建、校验、源码修改、版本管理和显式发布，得到可实际操作和继续迭代的商品目录站。
@@ -20,13 +85,13 @@ Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工
 
 ## 2. 当前边界摘要
 
-> **Agent 边界：** Lead 对每条消息只做 `direct/team` 二选一路由；`team` 固定执行 Product Manager → Architect → Engineer → Data Analyst。`supported` Blueprint 在受控范围和基础预算内自动继续，`adapted` 或新增风险才请求确认。动态角色子集、局部并行、返工仲裁和独立 Agent Context 属于 V2。
->
-> **工程边界：** V1 Control Plane 只面向本地单实例或 Railway 单副本，使用进程内调度、单 Worker 和 PostgreSQL 持久化检查点。浏览器通过统一 Gateway 访问 Control Plane；Vim/Terminal 代理到独立 Linux Sandbox Host。
->
-> **安全边界：** 生产身份来自用户名密码和服务端 Session Cookie，不接受客户端自报 `user_id`；`X-User-ID` 只在测试环境保留。Project、Run、Preview、Git 和 Sandbox Session 都绑定当前用户。
->
-> **交付边界：** Build、Edit、Vim Save 和 Restore 形成新的 ProjectVersion 与 Git commit，但不会自动改变线上发布指针。Publish、Update 和 Unpublish 必须由用户显式触发。
+1. **Agent 边界：** Lead 对每条消息只做 `direct/team` 二选一路由；`team` 固定执行 Product Manager → Architect → Engineer → Data Analyst。`supported` Blueprint 在受控范围和基础预算内自动继续，`adapted` 或新增风险才请求确认。动态角色子集、局部并行、返工仲裁和独立 Agent Context 属于 V2。
+
+2. **工程边界：** V1 Control Plane 只面向本地单实例或 Railway 单副本，使用进程内调度、单 Worker 和 PostgreSQL 持久化检查点。浏览器通过统一 Gateway 访问 Control Plane；Vim/Terminal 代理到独立 Linux Sandbox Host。
+
+3. **安全边界：** 生产身份来自用户名密码和服务端 Session Cookie，不接受客户端自报 `user_id`；`X-User-ID` 只在测试环境保留。Project、Run、Preview、Git 和 Sandbox Session 都绑定当前用户。
+
+4. **交付边界：** Build、Edit、Vim Save 和 Restore 形成新的 ProjectVersion 与 Git commit，但不会自动改变线上发布指针。Publish、Update 和 Unpublish 必须由用户显式触发。
 
 ## 3. 版本规划
 
@@ -62,17 +127,32 @@ Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工
 ## 5. V1 能力地图
 
 ```text
-产品链路：Login -> Lead direct | team -> Blueprint -> Build -> Preview
+产品链路：登录（Login） -> Lead 路由
+                              |-- 直接回答（direct）
+                              `-- 团队构建（team） -> 产品方案（Blueprint）
+                                                      -> 构建（Build）
+                                                      -> 预览（Preview）
 
-协作链路：Product Manager -> Architect -> Engineer -> Data Analyst
-              |                 |            |              |
-          Blueprint    ArchitectureSpec   AppSpec       DataReview
+协作链路：产品经理（Product Manager） -> 架构师（Architect）
+                                         -> 工程师（Engineer）
+                                         -> 数据分析师（Data Analyst）
+             |                              |                  |                  |
+        产品方案                       架构规格           应用规格          数据与质量解读
+       （Blueprint）             （ArchitectureSpec） （AppSpec）       （DataReview）
 
-源码链路：Project -> local Git -> Sandbox worktree -> Vim Save -> commit
+源码链路：项目（Project） -> 本地 Git 仓库（local Git）
+                           -> 沙箱临时工作区（Sandbox worktree）
+                           -> Vim 保存（Vim Save）
+                           -> Git 提交（commit）
 
-版本链路：Build / Edit / Restore -> ProjectVersion -> explicit Publish -> Public URL
+版本链路：构建 / 编辑 / 恢复（Build / Edit / Restore）
+                           -> 项目版本（ProjectVersion）
+                           -> 显式发布（explicit Publish）
+                           -> 公开地址（Public URL）
 
-保障链路：Session isolation | Quota | Job recovery | Validation | Audit events
+保障链路：会话隔离（Session isolation） | 配额（Quota）
+         | 任务恢复（Job recovery） | 确定性校验（Validation）
+         | 审计事件（Audit events）
 ```
 
 - **可检查：** Blueprint、ArchitectureSpec、AppSpec、ValidationReport 和 DataReview 都是持久化 Contract，不依赖不可见的 Agent 私有推理解释结果。
@@ -89,9 +169,9 @@ Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工
 
 Another Atom 的核心不是让多个 Agent 同时说话，而是把多角色协作、结构化 Context、风险驱动的人机协同、源码归属、版本恢复和隔离执行组合成一条可检查、可控制、可交付的产品链。本章描述最终产品应长期保持的设计原则；V1 因范围和部署条件做出的暂时收敛，放在下一章单独说明。
 
-### 6.1 多角色协作由职责和产物证明
+### 6.1 【角色分工】多角色不是一起聊天，而是明确分工
 
-Another Atom 延续 Atoms 的多角色产品表达，但不把角色价值建立在头像、状态动画或聊天消息数量上。每个角色负责消除一种不同的不确定性，并用正式产物完成交接。
+使用多个 Agent，不等于让几个角色围绕同一个问题反复发表意见。Another Atom 延续 Atoms 的多角色设计，但给每个角色分配不同职责：前一个角色完成一项明确工作，并留下可以保存、检查、供下一个角色继续使用的正式结果。这里所说的“产物（Artifact）”，就是 Blueprint、ArchitectureSpec、AppSpec 这类不会随着聊天结束而消失的结构化结果。
 
 - **Lead：** 判断用户是在询问/澄清，还是明确要求系统执行；进入执行后负责协调建议，不直接拥有文件、Shell 或发布权限。
 
@@ -105,39 +185,77 @@ Another Atom 延续 Atoms 的多角色产品表达，但不把角色价值建立
 
 - **关键取舍：** 角色数量服从职责边界，不为制造“多 Agent 感”增加角色。新增角色必须回答它消除了哪类独立不确定性，以及交付什么可验证 Contract。
 
-### 6.2 Context 通过结构化 Contract 交接
+### 6.2 【上下文交接】角色只接收必要信息，结果可以检查和恢复
+
+多 Agent 最直接的做法，是把用户和前面所有角色的完整聊天记录继续传给下一个角色。但随着对话变长，后面的 Agent 会收到大量与当前任务无关的信息：既增加模型成本，也容易混淆已经确认的结论、临时讨论和失败尝试；服务重启后，系统也很难只根据一段聊天判断哪些工作已经真正完成。
+
+Another Atom 选择让每个角色交付一份格式明确、可以保存和校验的成果。下一个角色主要读取已经确认的上游成果，而不是重新理解此前的全部对话：
 
 ```text
-User message -> LeadDecision -> Blueprint -> ArchitectureSpec -> AppSpec
-                                                   |             |
-                                                   `-> ValidationReport -> DataReview
-                                                                          |
-                                                                          v
-                                                                    ProjectVersion
+用户消息
+   |
+   v
+路由决定（LeadDecision）
+   |
+   v
+产品方案（Blueprint）
+   |
+   v
+架构规格（ArchitectureSpec）
+   |
+   v
+应用规格（AppSpec）
+   |
+   v
+校验报告（ValidationReport）
+   |
+   v
+数据与质量解读（DataReview）
+   |
+   v
+项目版本（ProjectVersion）
 ```
 
-Agent Context 不是一段无限增长的共享聊天记录。Runtime 根据当前角色和任务组装最小输入，并通过版本化 Artifact、Evidence 和 Handoff 传递必要信息。
+这里的 Context 指某个角色完成当前任务所需的输入；Contract 指角色必须按约定格式交付的结果。Runtime 根据角色和任务组装最小 Context，并通过可保存的产物（Artifact）、执行证据（Evidence）和交接包（Handoff）传递必要信息。
 
-- **显式输入：** 每个阶段只接收当前任务需要的上游 Contract、用户确认事实、Evidence 和预算摘要，避免无关历史污染判断。
+- **明确输入：** 每个阶段只接收当前任务需要的上游成果、用户确认事实、执行证据（Evidence）和预算摘要，避免无关历史污染判断。
 
-- **显式输出：** Agent 输出必须通过 Pydantic Schema 校验后才能持久化、进入下一阶段或触发 ToolRequest。
+- **明确输出：** Agent 输出必须通过格式校验（Schema Validation）后才能保存、进入下一阶段或请求工具（ToolRequest）。
 
 - **错误归因：** 结构化交接可以区分问题来自需求映射、架构边界、实现结果、Renderer 还是数据解释，而不是把所有失败归为“模型没做好”。
 
 - **恢复能力：** 已提交 Artifact 是恢复检查点；Worker 重启时复用已完成阶段，不依赖恢复某个进程内对话对象。
 
-- **关键取舍：** Context 追求最小、可审计和可重建，而不是最大化信息量。长期记忆只有在具备来源、裁剪、保留和删除规则后才进入 Runtime。
+- **关键取舍：** Context 追求最小、可审计和可重建，而不是把所有历史都塞给模型。长期记忆只有在具备来源、裁剪、保留和删除规则后才进入 Runtime。
 
-### 6.3 Human-in-the-loop 按风险变化介入
+### 6.3 【风险确认】正常构建自动继续，只有风险变化才打断用户
 
-用户明确要求 Build，已经授权系统在受控商品目录范围和基础预算内完成一次构建。因此正常工作不应在每个中间 Artifact 上重复请求确认。
+Human-in-the-loop 指的是：系统可以自动完成已经授权的普通工作，但遇到需要用户承担新成本、接受范围变化或改变线上状态的决定时，必须停下来确认。它不等于每经过一个 Agent、每生成一份中间结果，都要求用户重复点击批准。
+
+用户明确要求构建（Build），已经授权系统在受控商品目录范围和基础预算内完成一次构建。因此正常的 supported 工作可以继续；如果 Product Manager 发现需求需要删减、改写或引入新风险，系统才把决定交还给用户。
 
 ```text
-User message -> LeadDecision
-                 |-- direct -> answer / clarify
-                 `-- team -> Product Manager -> Blueprint -> Risk Policy
-                                                       |-- supported + base budget -> continue
-                                                       `-- adapted / new risk -> Approval
+用户消息（User message）
+   |
+   v
+Lead 判断（LeadDecision）
+   |-- 询问或澄清（direct） -> 直接回答（answer / clarify）
+   |
+   `-- 明确要求构建（team）
+          |
+          v
+      产品经理（Product Manager）
+          |
+          v
+      产品方案（Blueprint）
+          |
+          v
+      风险检查（Risk Policy）
+          |-- 范围受支持 + 基础预算（supported + base budget）
+          |      `-> 自动继续（continue）
+          |
+          `-- 范围调整或新增风险（adapted / new risk）
+                 `-> 请求用户确认（Approval）
 ```
 
 - **正常直通：** `supported` Blueprint 保持在受控商品目录范围和基础预算内，生成后自动进入后续团队，不再重复询问用户是否开始构建。
@@ -150,13 +268,18 @@ User message -> LeadDecision
 
 - **关键取舍：** Human-in-the-loop 应匹配不可逆性、成本扩大和授权变化，而不是匹配 Agent 阶段数量。
 
-### 6.4 Artifact、Git、版本和发布指针相互分离
+### 6.4 【版本与发布】保存新版本，不会自动影响线上版本
+
+AI 生成应用时，实际上会经过几次性质不同的变化：Agent 先产出方案和应用规格，平台再把结果保存为可编辑源码，随后记录历史版本，最后才由用户决定是否上线。如果把这些变化都合并成一个 `completed` 状态，就无法判断“模型只是生成成功”“代码已经保存”还是“新版本已经公开”，也容易出现编辑或 Restore 后意外影响线上版本的问题。
+
+Another Atom 因此把这条链路拆成五个可独立检查的对象：
 
 ```text
-Agent Artifact -> editable source -> Git commit -> ProjectVersion -> Publish pointer
+Agent 产物        可编辑源码        Git 历史         平台版本          线上选择
+Artifact   ->   editable source  -> commit   ->   ProjectVersion  -> Publish pointer
 ```
 
-模型运行成功、源码已经保存、平台形成版本和用户决定上线，是四个不同事实，不能用一个 `completed` 状态替代。
+这条链路表达的是：Agent 产出结果后，平台先保存源码和 Git 历史，再形成用户可见的 ProjectVersion；只有用户显式 Publish/Update，线上版本才会改变。
 
 - **源码事实：** Project Repository 保存可编辑源码 Contract；当前受控 Renderer 使用 `app-spec.json` 作为 Project 的事实源。
 
@@ -168,21 +291,33 @@ Agent Artifact -> editable source -> Git commit -> ProjectVersion -> Publish poi
 
 - **关键取舍：** 可追溯性和可恢复性优先于“永远自动最新”。工作版本与公开版本允许不同步，但这种差异必须在界面中可见。
 
-### 6.5 统一 Gateway 隔离可信控制面与不可信执行面
+### 6.5 【统一权限】API、预览和终端共用一套身份与归属校验
 
-浏览器只连接一个 HTTPS/WSS Gateway，但统一入口不意味着所有能力运行在同一权限边界。身份和业务状态属于可信 Control Plane，文件修改和构建属于独立 Sandbox Runtime。
+Studio 不只有普通 API：它还包含实时事件、私有 Preview 和 Terminal WebSocket。如果这些入口分别连接内部服务、各自实现登录校验，很容易出现“Project API 拒绝了跨用户访问，但 Preview 或 Terminal 忘记校验”的漏洞。Another Atom 让所有私有入口先经过统一网关（Unified Gateway），再由同一套 Session 和 Project owner 规则决定是否放行。
 
-- **统一入口：** REST、SSE、Preview、Public Route 和 Terminal WebSocket 都从同一产品域名进入，浏览器不直接获得 Sandbox Host 地址、内部 token 或宿主机路径。
+- **跨协议身份一致：** 普通接口（REST）、实时事件（SSE）、私有 Preview 和 Terminal 连接（WebSocket）都从同一个服务端 Session 识别当前用户。
 
-- **可信控制面：** Session、资源归属、Risk Policy、配额事务、Job 状态、Repository commit 和 Publish pointer 由 Control Plane 管理。
+- **资源归属一致：** 网关不只判断“是否登录”，还校验 Run、Project、Version 和 Sandbox Session 是否属于当前用户。
 
-- **隔离执行面：** Sandbox 只接收当前 User/Project/Task 的最小输入，在临时 worktree 或快照中运行固定 Tool，不获得平台数据库凭证和 Provider 密钥。
+- **内部服务不可直连：** 浏览器不会直接获得 Sandbox Host 地址、内部 token、数据库地址或宿主机路径，不能绕过 Control Plane 单独调用执行服务。
 
-- **受限 WebIDE：** xterm.js 连接 restricted Vim，而不是登录 Shell；Sandbox 隐藏 `.git`，禁止网络，使用非 root 用户、只读根文件系统、默认 seccomp、丢弃 capabilities 和资源/时限约束。
+- **公开访问单独建模：** Public Route 允许匿名访问，但只能读取用户已经显式发布的版本；它不会复用私有 Preview 的权限语义。
 
-- **关键取舍：** 统一产品体验与执行隔离同时成立。不能为了减少部署组件，把不可信 Tool 放回 Web/API 进程。
+- **关键取舍：** 统一网关增加了代理和连接管理职责，但把多种协议收敛到同一身份边界，减少某个旁路入口漏做 owner 校验的风险。
 
-### 6.6 可恢复 Runtime 是产品 Contract
+### 6.6 【执行隔离】文件工具不能直接接触平台密钥和其他 Project
+
+Vim、文件修改和构建比普通数据查询拥有更高风险：它们会写文件、启动进程，并可能读取运行环境。如果直接放在平台主服务中执行，一次工具错误或越权就可能接触数据库凭证、Provider 密钥和其他用户的 Project。因此，平台主服务只负责授权和记录状态，真正的文件操作交给独立 Sandbox。
+
+- **平台主服务（Control Plane）：** 管理 Session、资源归属、风险确认（Risk Policy）、配额事务、Job 状态、Git commit 和发布指针（Publish pointer），决定某个操作是否被允许。
+
+- **隔离执行环境（Sandbox）：** 只接收当前 User、Project 和 Task 的最小输入，在临时工作区（worktree）或文件快照中运行固定工具，不获得平台数据库凭证和 Provider 密钥。
+
+- **受限 WebIDE：** xterm.js 连接 restricted Vim，而不是登录 Shell；Sandbox 隐藏 `.git`、禁止网络，并使用非 root 用户、只读根文件系统、默认 seccomp、丢弃 capabilities 和资源/时限约束。
+
+- **关键取舍：** Sandbox 增加了一套部署组件和会话管理成本，但不能为了部署简单，把可写文件和启动进程的工具放回 Web/API 主进程。
+
+### 6.7 【运行恢复】状态可恢复，失败不会造成重复结果
 
 用户看到的进度、额度、版本和错误必须对应可持久化事实。无论 Runtime 以后是单实例还是多 Worker，这组不变量都不能改变。
 
@@ -274,78 +409,94 @@ V2 是 V1 验收后的下一实施版本。它不推翻 V1 的 Session、Project
 
 ### 9.1 整体逻辑架构
 
+这张图回答三个问题：用户请求先到哪里，Agent 在哪里调用模型，以及文件修改和构建为什么不会直接发生在平台主服务中。它描述的是最终组件关系；V1 可以把部分组件合并在一个进程里，V2 再按任务量和隔离要求拆成独立服务。
+
 ```text
-User Browser
-  React Studio / Preview / xterm.js
+用户浏览器（User Browser）
+Studio / 预览（Preview）/ 终端界面（xterm.js）
                     |
-                 HTTPS/WSS
+              HTTPS / WSS
                     v
-+-----------------------------------------------------------+
-| Unified Gateway / Control Plane                           |
-| Session + Authorization | Lead + Risk Policy              |
-| Project + Version + Publish | Event + Quota + Audit       |
-| Context + Artifact + Repository | Durable Scheduler       |
-+---------------------------+-------------------------------+
-                            |
-          +-----------------+-------------------+
-          |                 |                   |
-          v                 v                   v
-     PostgreSQL       Artifact Storage      LLM Providers
-  state/lease/budget   evidence/release      structured calls
-          |
-          v
-   Agent Worker Service
-          |
-          v
-      Tool Gateway
-          |
-          v
-   Sandbox Provider / Workers
-  worktree/snapshot/build/test/vim
++-------------------------------------------------------------+
+| 统一入口与平台主服务（Unified Gateway / Control Plane）      |
+|                                                             |
+| 登录与权限（Session / Authorization）                        |
+| Lead 路由与风险确认（Lead / Risk Policy）                    |
+| Project、版本与发布（Project / Version / Publish）           |
+| 事件、配额与审计（Event / Quota / Audit）                    |
++-----------------------------+-------------------------------+
+                              |
+             +----------------+----------------+
+             |                |                |
+             v                v                v
+      状态数据库           产物与源码服务       持久化任务调度
+     （PostgreSQL）     （Artifact / Repository） （Durable Scheduler）
+   状态 / 租约 / 预算     产物 / 证据 / Git               |
+                                                        v
+                                                Agent 执行服务
+                                               （Agent Worker）
+                                                  |         |
+                                                  |         `-> 模型服务
+                                                  |            （LLM Provider）
+                                                  v
+                                               工具网关
+                                             （Tool Gateway）
+                                                  |
+                                                  v
+                                             隔离执行环境
+                                      （Sandbox Provider / Worker）
+                                      文件 / 构建 / 测试 / Vim
 ```
 
-- **Control Plane：** 维护可信身份、资源归属、状态命令、Risk Policy、配额、版本和发布指针，不执行不可信文件 Tool。
+- **平台主服务（Control Plane）：** 接收浏览器请求，维护登录身份、资源归属、风险确认、配额、版本和发布状态。它负责决定“能不能做”，但不亲自运行不可信的文件修改和构建命令。
 
-- **Durable Scheduler：** 持久化 Run、Task、Job、Lease、Attempt、Approval 和 Budget，决定哪些工作可以开始、恢复或停止。
+- **持久化任务调度（Durable Scheduler）：** 保存运行（Run）、任务（Task）、构建作业（Job）、租约（Lease）、尝试次数（Attempt）、审批（Approval）和预算（Budget），据此决定任务何时开始、失败后从哪里继续，以及是否应该停止。
 
-- **Agent Worker：** 为角色组装最小 Context、调用模型、校验结构化输出并保存 Artifact；不直接绕过 Tool Gateway 操作宿主机。
+- **Agent 执行服务（Agent Worker）：** 为当前角色准备最小上下文（Context）、调用模型、校验输出并保存产物（Artifact）。需要改文件或运行构建时，只能请求工具网关，不能直接操作宿主机。
 
-- **Repository Service：** 维护 Project 源码历史、commit/version 映射和受控 worktree，不把宿主机仓库路径暴露给浏览器或模型。
+- **源码仓库服务（Repository Service）：** 维护 Project 的 Git 历史、commit/version 映射和临时工作区（worktree），但不把宿主机真实路径暴露给浏览器或模型。
 
-- **Artifact Storage：** 保存不可变输入、Evidence、Patch、BuildArtifact 和发布快照；V1 可使用单实例持久化存储，V2 使用共享对象存储实现多 Worker 访问。
+- **产物存储（Artifact Storage）：** 保存不可变输入、执行证据（Evidence）、代码修改（Patch）、构建产物（BuildArtifact）和发布快照。V1 可以使用单实例持久化存储，V2 使用共享对象存储供多个 Worker 访问。
 
-- **Tool Gateway：** 根据 User、Project、Run、Task、Agent role、Capability、路径、网络和预算校验 ToolRequest，再为 Sandbox 签发最小临时能力。
+- **工具网关（Tool Gateway）：** 检查当前用户、Project、Run、Task、Agent 角色、文件路径、网络策略和预算，确认工具请求（ToolRequest）没有越权后，才允许 Sandbox 执行。
 
-- **Sandbox Provider：** 提供文件系统、Build、Test、Browser 或 Vim 的隔离执行环境；Sandbox 无权改变业务状态和发布指针。
+- **隔离执行环境（Sandbox Provider）：** 提供文件修改、构建（Build）、测试（Test）、浏览器工具（Browser）或 Vim。Sandbox 只能执行已授权动作，无权修改用户身份、配额、业务状态或线上发布指针。
 
 ### 9.2 Agent 与 Runtime 执行链
 
 ```text
-User Message
+用户消息
     |
     v
-LeadDecision ---- direct ----> Answer / Clarification
+入口判断（LeadDecision） -- 直接处理（direct） --> 回答 / 澄清
     |
-   team
+团队执行（team）
     v
-Blueprint -> Risk Policy -> TaskGraph / Fixed Pipeline
+产品方案（Blueprint） -> 风险策略（Risk Policy）
                               |
                               v
-                  Agent Context + Artifact Handoff
+                   动态任务图 / 固定流水线
+                  （TaskGraph / Fixed Pipeline）
                               |
                               v
-                    ToolRequest -> Sandbox
+            Agent 最小上下文 + 结构化产物交接
+             （Context + Artifact Handoff）
                               |
                               v
-                Validation + Evidence + DataReview
+               工具请求（ToolRequest）-> 隔离环境（Sandbox）
                               |
                               v
-                   Git commit + ProjectVersion
-                              |
-                     explicit Publish/Update
+                 校验 + 执行证据 + 数据解读
+          （Validation + Evidence + DataReview）
                               |
                               v
-                         Public Route
+                 Git 提交 + 项目版本（ProjectVersion）
+                              |
+                              v
+                  用户明确发布 / 更新（Publish / Update）
+                              |
+                              v
+                    公开访问路由（Public Route）
 ```
 
 - **规划与执行分离：** Lead 可以建议 direct、team 或 TaskGraph，但 Runtime 校验角色、依赖、预算、Approval 和 Tool 权限。
@@ -361,39 +512,40 @@ Blueprint -> Risk Policy -> TaskGraph / Fixed Pipeline
 ```text
 平台部署
 
-Developer -- git push --> GitHub
-                           |
-                +----------+-----------+
-                |                      |
-                v                      v
-        Control Plane             Agent Workers
-        Railway / Linux           Railway / Linux
-                |                      |
-                +----------+-----------+
-                           |
-          +----------------+----------------+
-          |                |                |
-          v                v                v
-     PostgreSQL      Artifact Storage   Sandbox Provider
-                                           Linux Host
-                           |
-                           v
-                      LLM Provider
+开发者 -- 推送代码（git push） --> GitHub
+                                  |
+                           部署（Deploy）
+                                  |
+                    +-------------+-------------+
+                    |                           |
+                    v                           v
+              平台主服务                   Agent 执行服务
+           （Control Plane）              （Agent Workers）
+             Railway / Linux               Railway / Linux
+                    |                           |
+          +---------+---------+       +---------+---------+
+          |                   |       |         |         |
+          v                   v       v         v         v
+       状态数据库          产物存储   模型服务   状态/产物   隔离执行服务
+      （PostgreSQL） （Artifact Storage）       读写     （Sandbox Provider）
+                                      （LLM Provider）        Linux Host
 
 用户访问与分享
 
-Browser -- HTTPS/WSS --> Unified Gateway
-                              |
-               +--------------+--------------+
-               |                             |
-               v                             v
-        Authenticated Studio          Published Route
-        Project / Edit / Vim          selected Version
-               |                             |
-               `-- explicit Publish ---------'
-                                             |
-                                             v
-                                      Stable Public URL
+浏览器 -- HTTPS / WSS --> 统一网关（Unified Gateway）
+                               |
+                +--------------+--------------+
+                |                             |
+                v                             v
+          登录后的工作台                  已发布版本路由
+      （Authenticated Studio）          （Published Route）
+       Project / 编辑 / Vim              用户选定的版本
+                |                             |
+                `---- 用户明确发布 ------------'
+                     （explicit Publish）      |
+                                              v
+                                        稳定公开地址
+                                      （Stable Public URL）
 ```
 
 - **统一公网入口：** Browser 只访问 Control Plane 的 HTTPS/WSS 域名；Agent Worker、数据库、对象存储和 Sandbox Provider 不直接向终端用户公开。
