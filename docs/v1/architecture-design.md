@@ -6,6 +6,7 @@
 - 更新日期：2026-07-11
 - 产品文档：[Another Atom V1 产品需求文档](./another-atom-v1-prd.md)
 - Agent 设计：[Another Atom V1 Agent 设计](./agent-design.md)
+- 当前实现：[Another Atom V1 关键设计与实现 Review](./implementation-review.md)
 - 参考分析：[Atoms 参考产品功能分析](../reference/atoms-reference-analysis.md)
 
 ## 1. 技术选型

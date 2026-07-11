@@ -6,6 +6,8 @@
 - 更新日期：2026-07-11
 - 产品文档：[Another Atom V1 产品需求文档](./another-atom-v1-prd.md)
 - 工程架构：[Another Atom V1 架构设计](./architecture-design.md)
+- 当前实现：[Another Atom V1 关键设计与实现 Review](./implementation-review.md)
+- 学习文档：[半 AI Coding 场景下的 Agent Runtime 设计](./semi-ai-coding-agent-runtime.md)
 - V2 演进：[Another Atom V2 Agent 设计](../v2/agent-design.md)
 
 ## 1. 设计结论
