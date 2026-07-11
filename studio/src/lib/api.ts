@@ -9,6 +9,9 @@ import type {
   QuotaView,
   RunEvent,
   RunView,
+  LeadDecisionView,
+  SandboxSessionView,
+  UserView,
   VersionView,
 } from "../types";
 
@@ -26,6 +29,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  me: () => request<UserView>("/api/auth/me"),
+  signup: (username: string, password: string, displayName?: string) =>
+    request<UserView>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ username, password, display_name: displayName || undefined }),
+    }),
+  login: (username: string, password: string) =>
+    request<UserView>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  leadMessage: (message: string, model: string, forceTeam = false) =>
+    request<LeadDecisionView>("/api/lead/messages", {
+      method: "POST",
+      body: JSON.stringify({ message, model, force_team: forceTeam }),
+    }),
   createRun: (prompt: string, mode: Mode, model: string, attachments: AttachmentMeta[]) =>
     request<RunView>("/api/runs", {
       method: "POST",
@@ -63,4 +83,12 @@ export const api = {
     }),
   unpublish: (projectId: string) =>
     request<void>(`/api/projects/${projectId}/unpublish`, { method: "POST" }),
+  openSandbox: (projectId: string) =>
+    request<SandboxSessionView>(`/api/projects/${projectId}/sandbox/sessions`, {
+      method: "POST",
+    }),
+  saveSandbox: (projectId: string, sessionId: string) =>
+    request<VersionView>(`/api/projects/${projectId}/sandbox/sessions/${sessionId}/save`, {
+      method: "POST",
+    }),
 };

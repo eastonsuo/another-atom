@@ -25,10 +25,10 @@ from another_atom.domain.artifacts import get_artifact, save_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
 from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
+from another_atom.repository.service import commit_version
 from another_atom.storage.models import (
     Artifact,
     BuildJob,
-    Deployment,
     Project,
     ProjectVersion,
     Run,
@@ -107,7 +107,7 @@ class Orchestrator:
                     "scope_review",
                     {"rewrite_suggestion": blueprint.rewrite_suggestion},
                 )
-            else:
+            elif blueprint.support_level == SupportLevel.ADAPTED:
                 run.status = RunStatus.AWAITING_APPROVAL.value
                 run.current_stage = "blueprint_approval"
                 self._record_event_once(
@@ -115,6 +115,32 @@ class Orchestrator:
                     "approval.required",
                     "Review and confirm the Blueprint before building",
                     "blueprint_approval",
+                )
+            else:
+                run.status = RunStatus.BUILD_QUEUED.value
+                run.current_stage = "build_queue"
+                build_job = self.db.scalar(select(BuildJob).where(BuildJob.run_id == run.id))
+                if build_job is None:
+                    build_job = BuildJob(
+                        run_id=run.id,
+                        project_id=run.project_id,
+                        status=BuildStatus.QUEUED.value,
+                    )
+                    self.db.add(build_job)
+                    self.db.flush()
+                self._record_event_once(
+                    run,
+                    "build.auto_authorized",
+                    "Supported Blueprint is within the requested scope and base budget",
+                    "blueprint_approval",
+                    {"authorization_source": "explicit_build_request"},
+                )
+                self._record_event_once(
+                    run,
+                    "build.queued",
+                    "Build is queued",
+                    "build_queue",
+                    {"build_job_id": build_job.id},
                 )
             self.db.commit()
             return blueprint
@@ -371,16 +397,14 @@ class Orchestrator:
         )
         self.db.add(version)
         self.db.flush()
-        project.latest_version_id = version.id
-        deployment = self.db.scalar(
-            select(Deployment).where(
-                Deployment.project_id == project.id,
-                Deployment.active.is_(True),
-                Deployment.strategy == "always_latest",
-            )
+        version.git_commit = commit_version(
+            project.id,
+            version.id,
+            version.version_number,
+            source,
+            app_spec,
         )
-        if deployment:
-            deployment.version_id = version.id
+        project.latest_version_id = version.id
         return version
 
     def _run_agent_stage(

@@ -1,17 +1,31 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Cookie,
+    Depends,
+    Header,
+    Query,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+from websockets.asyncio.client import connect as websocket_connect
 
+from another_atom.agent.provider import LLMProviderError, get_llm_provider
 from another_atom.api.dependencies import (
     get_blueprint_executor,
     get_current_user,
     get_job_dispatcher,
+    get_sandbox,
 )
 from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
@@ -19,6 +33,7 @@ from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
     ArtifactType,
+    AuthCredentials,
     Blueprint,
     BlueprintApproval,
     BuildStatus,
@@ -26,6 +41,8 @@ from another_atom.contracts.schemas import (
     DeploymentView,
     EventView,
     HealthView,
+    LeadDecisionView,
+    LeadMessageRequest,
     Mode,
     ModelOption,
     ModelsView,
@@ -38,29 +55,68 @@ from another_atom.contracts.schemas import (
     RunCreate,
     RunStatus,
     RunView,
+    SandboxSessionView,
     SupportLevel,
+    UserView,
     ValidationReport,
     VersionSource,
     VersionView,
 )
 from another_atom.domain.artifacts import get_artifact, save_artifact
+from another_atom.domain.auth import (
+    hash_password,
+    hash_session_token,
+    new_session_token,
+    verify_password,
+)
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
+from another_atom.repository.service import RepositoryError, commit_version, initialize_repository
+from another_atom.sandbox.client import SandboxClient, SandboxUnavailable, get_sandbox_client
 from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
     Approval,
     Attachment,
+    AuthSession,
     BuildJob,
     Deployment,
+    LeadMessage,
     Project,
     ProjectSession,
     ProjectVersion,
     Run,
     RunEvent,
+    SandboxSession,
     User,
+    now_utc,
 )
 
 router = APIRouter(prefix="/api")
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=token,
+        max_age=settings.session_ttl_hours * 3600,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+
+
+def _create_auth_session(db: Session, user: User) -> tuple[AuthSession, str]:
+    settings = get_settings()
+    token = new_session_token()
+    auth_session = AuthSession(
+        user_id=user.id,
+        token_hash=hash_session_token(token),
+        expires_at=now_utc() + timedelta(hours=settings.session_ttl_hours),
+    )
+    db.add(auth_session)
+    return auth_session, token
 
 
 def _owned_run(db: Session, run_id: str, user_id: str) -> Run:
@@ -142,6 +198,78 @@ def health(db: Session = Depends(get_db)) -> HealthView:
     )
 
 
+@router.post("/auth/signup", response_model=UserView, status_code=status.HTTP_201_CREATED)
+def signup(
+    credentials: AuthCredentials,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> UserView:
+    username = credentials.username.lower()
+    if db.scalar(select(User).where(User.username == username)) is not None:
+        raise AppError("USERNAME_TAKEN", "That username is already in use", 409)
+    user = User(
+        username=username,
+        password_hash=hash_password(credentials.password),
+        display_name=credentials.display_name or credentials.username,
+        plan="demo",
+        quota_limit=get_settings().demo_quota_units,
+    )
+    db.add(user)
+    db.flush()
+    _, token = _create_auth_session(db, user)
+    db.commit()
+    _set_session_cookie(response, token)
+    return UserView(id=user.id, username=username, display_name=user.display_name)
+
+
+@router.post("/auth/login", response_model=UserView)
+def login(
+    credentials: AuthCredentials,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> UserView:
+    username = credentials.username.lower()
+    user = db.scalar(select(User).where(User.username == username))
+    if (
+        user is None
+        or user.password_hash is None
+        or not verify_password(credentials.password, user.password_hash)
+    ):
+        raise AppError("INVALID_CREDENTIALS", "Username or password is incorrect", 401)
+    _, token = _create_auth_session(db, user)
+    db.commit()
+    _set_session_cookie(response, token)
+    return UserView(id=user.id, username=username, display_name=user.display_name)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    response: Response,
+    session_token: str | None = Cookie(default=None, alias="another_atom_session"),
+    db: Session = Depends(get_db),
+) -> Response:
+    if session_token:
+        auth_session = db.scalar(
+            select(AuthSession).where(
+                AuthSession.token_hash == hash_session_token(session_token),
+                AuthSession.revoked_at.is_(None),
+            )
+        )
+        if auth_session:
+            auth_session.revoked_at = now_utc()
+            db.commit()
+    response.delete_cookie(get_settings().session_cookie_name, path="/")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.get("/auth/me", response_model=UserView)
+def me(user: User = Depends(get_current_user)) -> UserView:
+    if user.username is None:
+        raise AppError("AUTHENTICATION_REQUIRED", "Sign in to continue", 401)
+    return UserView(id=user.id, username=user.username, display_name=user.display_name)
+
+
 @router.get("/quota", response_model=QuotaView)
 def quota(user: User = Depends(get_current_user)) -> QuotaView:
     return QuotaView(
@@ -149,6 +277,71 @@ def quota(user: User = Depends(get_current_user)) -> QuotaView:
         used=user.quota_used,
         reserved=user.quota_reserved,
         remaining=user.quota_limit - user.quota_used - user.quota_reserved,
+    )
+
+
+@router.post("/lead/messages", response_model=LeadDecisionView)
+def route_lead_message(
+    request: LeadMessageRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> LeadDecisionView:
+    model_config = models()
+    selected_model = request.model or model_config.default_model
+    if selected_model not in {option.id for option in model_config.models}:
+        raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
+    provider = get_llm_provider(model=selected_model)
+    reserved = provider.reservation_units
+    claimed = db.execute(
+        update(User)
+        .where(
+            User.id == user.id,
+            User.quota_used + User.quota_reserved + reserved <= User.quota_limit,
+        )
+        .values(quota_reserved=User.quota_reserved + reserved)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError("QUOTA_EXCEEDED", "Not enough quota for the Lead request", 402)
+    db.commit()
+    try:
+        decision = provider.route_message(request.message, request.force_team)
+        usage = provider.take_usage()
+    except LLMProviderError as exc:
+        db.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(quota_reserved=User.quota_reserved - reserved)
+        )
+        db.commit()
+        raise AppError("LEAD_FAILED", str(exc), 502) from exc
+    actual = min(reserved, usage.request_count)
+    lead_message = LeadMessage(
+        user_id=user.id,
+        content=request.message,
+        route=decision.route.value,
+        response=decision.response,
+        reason=decision.reason,
+        model=selected_model,
+        request_count=usage.request_count,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+    )
+    db.add(lead_message)
+    db.execute(
+        update(User)
+        .where(User.id == user.id)
+        .values(
+            quota_reserved=User.quota_reserved - reserved,
+            quota_used=User.quota_used + actual,
+        )
+    )
+    db.commit()
+    return LeadDecisionView(
+        message_id=lead_message.id,
+        model=selected_model,
+        **decision.model_dump(),
     )
 
 
@@ -192,6 +385,12 @@ def create_run(
     )
     db.add(project)
     db.flush()
+    try:
+        project.repository_path = str(initialize_repository(project.id))
+        project.repository_branch = "main"
+    except RepositoryError as exc:
+        db.rollback()
+        raise AppError("REPOSITORY_INIT_FAILED", str(exc), 500) from exc
     project_session = ProjectSession(project_id=project.id, user_id=user.id)
     db.add(project_session)
     db.flush()
@@ -426,6 +625,8 @@ def _project_view(db: Session, project: Project) -> ProjectView:
         deployment=_deployment_view(deployment),
         created_at=project.created_at,
         updated_at=project.updated_at,
+        repository_ready=project.repository_path is not None,
+        repository_branch=project.repository_branch,
     )
 
 
@@ -453,6 +654,7 @@ def _version_view(version: ProjectVersion) -> VersionView:
         summary=f"{version.source.title()} version {version.version_number}",
         app_spec=AppSpec.model_validate(version.app_spec),
         created_at=version.created_at,
+        git_commit=version.git_commit,
     )
 
 
@@ -516,8 +718,14 @@ def revise_project(
     )
     db.add(version)
     db.flush()
+    version.git_commit = commit_version(
+        project.id,
+        version.id,
+        version.version_number,
+        VersionSource.EDIT,
+        app_spec,
+    )
     project.latest_version_id = version.id
-    _advance_latest_deployment(db, project.id, version.id)
     _record_project_event(
         db,
         project.id,
@@ -571,8 +779,14 @@ def restore_version(
     )
     db.add(restored)
     db.flush()
+    restored.git_commit = commit_version(
+        project.id,
+        restored.id,
+        restored.version_number,
+        VersionSource.RESTORE,
+        restored_app_spec,
+    )
     project.latest_version_id = restored.id
-    _advance_latest_deployment(db, project.id, restored.id)
     _record_project_event(
         db,
         project.id,
@@ -583,18 +797,6 @@ def restore_version(
     db.commit()
     db.refresh(restored)
     return _version_view(restored)
-
-
-def _advance_latest_deployment(db: Session, project_id: str, version_id: str) -> None:
-    deployment = db.scalar(
-        select(Deployment).where(
-            Deployment.project_id == project_id,
-            Deployment.active.is_(True),
-            Deployment.strategy == PublicationStrategy.ALWAYS_LATEST.value,
-        )
-    )
-    if deployment:
-        deployment.version_id = version_id
 
 
 def _validation_contracts(
@@ -726,3 +928,184 @@ def export_project(
             for item in versions
         ],
     }
+
+
+@router.post(
+    "/projects/{project_id}/sandbox/sessions",
+    response_model=SandboxSessionView,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_sandbox(
+    project_id: str,
+    sandbox_factory: Callable[[], SandboxClient] = Depends(get_sandbox),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SandboxSessionView:
+    project = _owned_project(db, project_id, user.id)
+    if project.latest_version_id is None or project.repository_path is None:
+        raise AppError("SANDBOX_NOT_READY", "Build a Project version before opening Vim", 409)
+    sandbox = sandbox_factory()
+    try:
+        remote = sandbox.create(project.id)
+    except SandboxUnavailable as exc:
+        raise AppError("SANDBOX_UNAVAILABLE", str(exc), 503) from exc
+    session = SandboxSession(
+        user_id=user.id,
+        project_id=project.id,
+        remote_session_id=remote.session_id,
+        terminal_token=remote.terminal_token,
+        expires_at=remote.expires_at,
+    )
+    db.add(session)
+    db.commit()
+    return SandboxSessionView(
+        session_id=session.id,
+        project_id=project.id,
+        websocket_path=f"/api/sandbox/sessions/{session.id}/terminal",
+        expires_at=session.expires_at,
+    )
+
+
+def _owned_sandbox_session(db: Session, session_id: str, user_id: str) -> SandboxSession:
+    session = db.scalar(
+        select(SandboxSession).where(
+            SandboxSession.id == session_id,
+            SandboxSession.user_id == user_id,
+            SandboxSession.closed_at.is_(None),
+            SandboxSession.expires_at > now_utc(),
+        )
+    )
+    if session is None:
+        raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
+    return session
+
+
+@router.post(
+    "/projects/{project_id}/sandbox/sessions/{session_id}/save",
+    response_model=VersionView,
+)
+def save_project_sandbox(
+    project_id: str,
+    session_id: str,
+    sandbox_factory: Callable[[], SandboxClient] = Depends(get_sandbox),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> VersionView:
+    project = _owned_project(db, project_id, user.id)
+    session = _owned_sandbox_session(db, session_id, user.id)
+    if session.project_id != project.id:
+        raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
+    sandbox = sandbox_factory()
+    try:
+        app_spec = sandbox.read_app_spec(session.remote_session_id)
+    except SandboxUnavailable as exc:
+        raise AppError("SANDBOX_UNAVAILABLE", str(exc), 503) from exc
+    current = db.get(ProjectVersion, project.latest_version_id)
+    if current is None:
+        raise AppError("VERSION_NOT_FOUND", "Build a version before saving Vim changes", 409)
+    blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+    validation = validate_app_spec(
+        app_spec,
+        project.prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture_spec,
+    )
+    if not validation.passed:
+        raise AppError("SANDBOX_VALIDATION_FAILED", "The edited AppSpec failed validation", 422)
+    latest_number = db.scalar(
+        select(func.max(ProjectVersion.version_number)).where(
+            ProjectVersion.project_id == project.id
+        )
+    )
+    version = ProjectVersion(
+        project_id=project.id,
+        run_id=current.run_id,
+        version_number=(latest_number or 0) + 1,
+        source=VersionSource.EDIT.value,
+        app_spec=app_spec.model_dump(mode="json"),
+        validation_report=validation.model_dump(mode="json"),
+        data_review=current.data_review,
+    )
+    db.add(version)
+    db.flush()
+    version.git_commit = commit_version(
+        project.id,
+        version.id,
+        version.version_number,
+        VersionSource.EDIT,
+        app_spec,
+    )
+    project.latest_version_id = version.id
+    session.closed_at = now_utc()
+    _record_project_event(
+        db,
+        project.id,
+        "version.created",
+        "A validated Vim edit version was created",
+        {"version_id": version.id, "source": "vim"},
+    )
+    db.commit()
+    try:
+        sandbox.close(session.remote_session_id)
+    except SandboxUnavailable:
+        pass
+    return _version_view(version)
+
+
+def _websocket_user(websocket: WebSocket, db: Session) -> User | None:
+    settings = get_settings()
+    token = websocket.cookies.get(settings.session_cookie_name)
+    if token:
+        auth_session = db.scalar(
+            select(AuthSession).where(
+                AuthSession.token_hash == hash_session_token(token),
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now_utc(),
+            )
+        )
+        if auth_session:
+            return db.get(User, auth_session.user_id)
+    if settings.environment == "test":
+        return db.get(User, websocket.headers.get("X-User-ID", "demo-user"))
+    return None
+
+
+@router.websocket("/sandbox/sessions/{session_id}/terminal")
+async def proxy_sandbox_terminal(websocket: WebSocket, session_id: str) -> None:
+    with SessionLocal() as db:
+        user = _websocket_user(websocket, db)
+        if user is None:
+            await websocket.close(code=4401)
+            return
+        try:
+            session = _owned_sandbox_session(db, session_id, user.id)
+            sandbox = get_sandbox_client()
+        except AppError:
+            await websocket.close(code=4404)
+            return
+        remote_url = sandbox.websocket_url(
+            session.remote_session_id,
+            session.terminal_token,
+        )
+    await websocket.accept()
+    try:
+        async with websocket_connect(remote_url, max_size=1_000_000) as remote:
+
+            async def browser_to_host() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("bytes") is not None:
+                        await remote.send(message["bytes"])
+                    elif message.get("text") is not None:
+                        await remote.send(message["text"])
+
+            async def host_to_browser() -> None:
+                async for message in remote:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            await asyncio.gather(browser_to_host(), host_to_browser())
+    except (WebSocketDisconnect, OSError):
+        return

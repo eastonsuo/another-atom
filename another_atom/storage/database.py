@@ -37,10 +37,33 @@ def init_database(target_engine: Engine | None = None) -> None:
     run_columns = {column["name"] for column in database_inspector.get_columns("runs")}
     build_columns = {column["name"] for column in database_inspector.get_columns("build_jobs")}
     ledger_columns = {column["name"] for column in database_inspector.get_columns("usage_ledger")}
+    user_columns = {column["name"] for column in database_inspector.get_columns("users")}
+    project_columns = {column["name"] for column in database_inspector.get_columns("projects")}
+    version_columns = {
+        column["name"] for column in database_inspector.get_columns("project_versions")
+    }
     with database_engine.begin() as connection:
         if "model" not in run_columns:
             connection.execute(
                 text("ALTER TABLE runs ADD COLUMN model VARCHAR(100) DEFAULT 'mock' NOT NULL")
+            )
+        user_additions = {
+            "username": "VARCHAR(80)",
+            "password_hash": "VARCHAR(255)",
+        }
+        for name, column_type in user_additions.items():
+            if name not in user_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {column_type}"))
+        project_additions = {
+            "repository_path": "VARCHAR(500)",
+            "repository_branch": "VARCHAR(80) DEFAULT 'main' NOT NULL",
+        }
+        for name, column_type in project_additions.items():
+            if name not in project_columns:
+                connection.execute(text(f"ALTER TABLE projects ADD COLUMN {name} {column_type}"))
+        if "git_commit" not in version_columns:
+            connection.execute(
+                text("ALTER TABLE project_versions ADD COLUMN git_commit VARCHAR(40)")
             )
         build_additions = {
             "lease_owner": "VARCHAR(120)",
@@ -67,6 +90,9 @@ def init_database(target_engine: Engine | None = None) -> None:
         )
         connection.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_run_idx ON approvals (run_id)")
+        )
+        connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_idx ON users (username)")
         )
 
     from another_atom.storage.models import User

@@ -12,9 +12,7 @@ def _create_run(client: TestClient, payload: dict, headers: dict | None = None) 
 
 
 def test_unsupported_request_stops_before_approval(client: TestClient) -> None:
-    run = _create_run(
-        client, {"prompt": "Build a CRM for a sales organization", "mode": "team"}
-    )
+    run = _create_run(client, {"prompt": "Build a CRM for a sales organization", "mode": "team"})
     assert run["status"] == "needs_input"
     assert run["blueprint"]["support_level"] == "unsupported"
     assert run["version_id"] is None
@@ -50,15 +48,7 @@ def test_non_llm_failure_releases_unsettled_quota(client: TestClient) -> None:
 
 
 def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> None:
-    created = _create_run(
-        client, {"prompt": "Build a catalog [fail:build]", "mode": "team"}
-    )
-    approved = client.post(
-        f"/api/runs/{created['run_id']}/approve",
-        json={"blueprint": created["blueprint"]},
-    )
-    assert approved.status_code == 202
-    run = client.get(f"/api/runs/{created['run_id']}").json()
+    run = _create_run(client, {"prompt": "Build a catalog [fail:build]", "mode": "team"})
     assert run["status"] == "failed"
     assert run["error_code"] == "BUILD_VALIDATION_FAILED"
     assert run["version_id"] is None
@@ -67,8 +57,11 @@ def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> N
 
 def test_blueprint_cannot_be_approved_twice(client: TestClient) -> None:
     created = _create_run(
-        client, {"prompt": "Build a product catalog", "mode": "engineer"}
+        client,
+        {"prompt": "Build a product catalog with login", "mode": "engineer"},
     )
+    assert created["status"] == "awaiting_approval"
+    assert created["blueprint"]["support_level"] == "adapted"
     payload = {"blueprint": created["blueprint"]}
     assert client.post(f"/api/runs/{created['run_id']}/approve", json=payload).status_code == 202
     second = client.post(f"/api/runs/{created['run_id']}/approve", json=payload)
@@ -92,16 +85,35 @@ def test_cross_user_preview_access_is_denied(client: TestClient) -> None:
         {"prompt": "Build a product catalog", "mode": "team"},
         {"X-User-ID": "user-a"},
     )
-    approved = client.post(
-        f"/api/runs/{created['run_id']}/approve",
-        json={"blueprint": created["blueprint"]},
-        headers={"X-User-ID": "user-a"},
-    ).json()
     response = client.get(
-        f"/api/previews/{approved['version_id']}",
+        f"/api/previews/{created['version_id']}",
         headers={"X-User-ID": "user-b"},
     )
     assert response.status_code == 404
+
+
+def test_supported_request_auto_authorizes_build(client: TestClient) -> None:
+    run = _create_run(
+        client,
+        {"prompt": "Build a product catalog", "mode": "team"},
+    )
+    assert run["status"] == "completed"
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    event_types = [event["type"] for event in events]
+    assert "build.auto_authorized" in event_types
+    assert "approval.required" not in event_types
+
+
+def test_adapted_request_waits_for_approval(queued_client: TestClient) -> None:
+    run = _create_run(
+        queued_client,
+        {"prompt": "Build a product catalog with login", "mode": "team"},
+    )
+    assert run["status"] == "awaiting_approval"
+    assert run["blueprint"]["support_level"] == "adapted"
+    assert run["build_job_id"] is None
+    events = queued_client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    assert "approval.required" in [event["type"] for event in events]
 
 
 def test_unavailable_model_is_rejected_before_project_creation(client: TestClient) -> None:
@@ -122,7 +134,7 @@ def test_unknown_user_is_not_created_outside_tests(client: TestClient, monkeypat
             headers={"X-User-ID": "unknown-production-user"},
         )
         assert response.status_code == 401
-        assert response.json()["code"] == "USER_NOT_FOUND"
+        assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
         with client.app.state.testing_session() as db:
             assert db.get(User, "unknown-production-user") is None
     finally:

@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     worker_poll_seconds: float = 0.5
     worker_lease_seconds: int = 600
+    session_cookie_name: str = "another_atom_session"
+    session_ttl_hours: int = 168
+    session_cookie_secure: bool = False
+    project_repository_root: Path = Path("data/project-repositories")
+    sandbox_host_url: str | None = None
+    sandbox_shared_secret: str | None = None
+    sandbox_image: str = "another-atom-vim-sandbox:latest"
+    sandbox_worktree_root: Path = Path("data/sandbox-worktrees")
+    sandbox_session_minutes: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -1,5 +1,6 @@
 export type Mode = "engineer" | "team";
 export type SupportLevel = "supported" | "adapted" | "unsupported";
+export type WorkspaceTab = "preview" | "edit" | "code" | "versions";
 
 export interface AttachmentMeta {
   name: string;
@@ -85,6 +86,7 @@ export interface VersionView {
   summary: string;
   app_spec: AppSpec;
   created_at: string;
+  git_commit: string | null;
 }
 
 export interface DeploymentView {
@@ -105,6 +107,8 @@ export interface ProjectView {
   deployment: DeploymentView | null;
   created_at: string;
   updated_at: string;
+  repository_ready: boolean;
+  repository_branch: string;
 }
 
 export interface QuotaView {
@@ -118,4 +122,25 @@ export interface ModelsView {
   provider: string;
   default_model: string;
   models: { id: string; label: string; usage: "medium" | "extra_high" | "local" }[];
+}
+
+export interface UserView {
+  id: string;
+  username: string;
+  display_name: string;
+}
+
+export interface LeadDecisionView {
+  message_id: string;
+  route: "direct" | "team";
+  response: string;
+  reason: string;
+  model: string;
+}
+
+export interface SandboxSessionView {
+  session_id: string;
+  project_id: string;
+  websocket_path: string;
+  expires_at: string;
 }

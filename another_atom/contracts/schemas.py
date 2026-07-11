@@ -12,6 +12,11 @@ class Mode(StrEnum):
     TEAM = "team"
 
 
+class LeadRoute(StrEnum):
+    DIRECT = "direct"
+    TEAM = "team"
+
+
 class SupportLevel(StrEnum):
     SUPPORTED = "supported"
     ADAPTED = "adapted"
@@ -241,6 +246,7 @@ class VersionView(BaseModel):
     summary: str
     app_spec: AppSpec
     created_at: datetime
+    git_commit: str | None = None
 
 
 class DeploymentView(BaseModel):
@@ -261,6 +267,8 @@ class ProjectView(BaseModel):
     deployment: DeploymentView | None = None
     created_at: datetime
     updated_at: datetime
+    repository_ready: bool = False
+    repository_branch: str = "main"
 
 
 class QuotaView(BaseModel):
@@ -292,6 +300,50 @@ class ErrorResponse(BaseModel):
     code: str
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuthCredentials(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    password: str = Field(min_length=10, max_length=200)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class UserView(BaseModel):
+    id: str
+    username: str
+    display_name: str
+
+
+class LeadMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    force_team: bool = False
+    model: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("message")
+    @classmethod
+    def message_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message cannot be blank")
+        return value
+
+
+class LeadDecision(BaseModel):
+    route: LeadRoute
+    response: str = Field(min_length=1, max_length=800)
+    reason: str = Field(min_length=1, max_length=300)
+
+
+class LeadDecisionView(LeadDecision):
+    message_id: str
+    model: str
+
+
+class SandboxSessionView(BaseModel):
+    session_id: str
+    project_id: str
+    websocket_path: str
+    expires_at: datetime
 
 
 class ORMModel(BaseModel):

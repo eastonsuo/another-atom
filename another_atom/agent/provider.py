@@ -11,6 +11,8 @@ from another_atom.contracts.schemas import (
     ArchitectureSpec,
     Blueprint,
     DataReview,
+    LeadDecision,
+    LeadRoute,
     Mode,
     PageSpec,
     ProductItem,
@@ -37,6 +39,8 @@ class LLMProvider(Protocol):
     reservation_units: int
 
     def take_usage(self) -> ProviderUsage: ...
+
+    def route_message(self, message: str, force_team: bool = False) -> LeadDecision: ...
 
     def create_blueprint(self, prompt: str, mode: Mode) -> Blueprint: ...
 
@@ -87,6 +91,61 @@ class MockLLMProvider:
         "payment",
         "购物车结算",
     }
+
+    _build_terms = {
+        "build",
+        "create",
+        "make",
+        "generate",
+        "构建",
+        "创建",
+        "生成",
+        "做一个",
+    }
+    _inquiry_prefixes = (
+        "what can",
+        "what does",
+        "how does",
+        "how can",
+        "why ",
+        "which ",
+        "能做什么",
+        "支持什么",
+        "为什么",
+        "如何",
+    )
+
+    def route_message(self, message: str, force_team: bool = False) -> LeadDecision:
+        if force_team:
+            return LeadDecision(
+                route=LeadRoute.TEAM,
+                response="I’ll send this request through the fixed product team.",
+                reason="The user explicitly selected Call team.",
+            )
+        self._record_request()
+        self._raise_if_requested(message, "lead")
+        normalized = message.lower()
+        route = (
+            LeadRoute.TEAM
+            if not normalized.startswith(self._inquiry_prefixes)
+            and any(term in normalized for term in self._build_terms)
+            else LeadRoute.DIRECT
+        )
+        if route == LeadRoute.TEAM:
+            return LeadDecision(
+                route=route,
+                response="I’ll send this request through the fixed product team.",
+                reason="The message explicitly asks the system to create or modify a product.",
+            )
+        return LeadDecision(
+            route=route,
+            response=(
+                "V1 can build controlled product catalogs with Home, Catalog, and Product pages. "
+                "Tell me the catalog, products, and visual direction when you want the team "
+                "to build."
+            ),
+            reason="The message is a question or clarification rather than a build instruction.",
+        )
 
     def create_blueprint(self, prompt: str, mode: Mode) -> Blueprint:
         self._record_request()
@@ -286,6 +345,26 @@ class OllamaCloudProvider:
         usage = self._usage
         self._usage = ProviderUsage()
         return usage
+
+    def route_message(self, message: str, force_team: bool = False) -> LeadDecision:
+        if force_team:
+            return LeadDecision(
+                route=LeadRoute.TEAM,
+                response="I’ll send this request through the fixed product team.",
+                reason="The user explicitly selected Call team.",
+            )
+        return self._structured_chat(
+            LeadDecision,
+            "Lead",
+            (
+                "Choose exactly one route. Use team only when the user explicitly asks to build, "
+                "create, generate, revise, or restore a product. Use direct for questions, "
+                "clarification, capability discussion, or ambiguous intent. Direct must not claim "
+                "that files or a Project were created. Team invokes the complete fixed Product "
+                "Manager, Architect, Engineer, and Data Analyst pipeline."
+            ),
+            {"message": message},
+        )
 
     def _record_response_usage(self, body: dict) -> None:
         self._usage = ProviderUsage(

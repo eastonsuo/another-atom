@@ -11,27 +11,22 @@ PROMPT = (
 )
 
 
-def create_and_approve(client: TestClient, prompt: str = PROMPT, mode: str = "team"):
+def create_and_build(client: TestClient, prompt: str = PROMPT, mode: str = "team"):
     created = client.post("/api/runs", json={"prompt": prompt, "mode": mode})
     assert created.status_code == 201, created.text
     initial = created.json()
     assert initial["status"] == "product_running"
     assert initial["blueprint"] is None
     run = client.get(f"/api/runs/{initial['run_id']}").json()
-    assert run["status"] == "awaiting_approval"
-    approved = client.post(
-        f"/api/runs/{run['run_id']}/approve",
-        json={"blueprint": run["blueprint"]},
-    )
-    assert approved.status_code == 202, approved.text
-    return client.get(f"/api/runs/{run['run_id']}").json()
+    assert run["blueprint"]["support_level"] == "supported"
+    return run
 
 
 def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
     model_config = client.get("/api/models")
     assert model_config.status_code == 200
     assert model_config.json()["default_model"] == "mock"
-    run = create_and_approve(client)
+    run = create_and_build(client)
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True
     assert run["data_review"]["warnings"] == []
@@ -76,7 +71,7 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
 
 
 def test_edit_restore_and_export_preserve_version_history(client: TestClient) -> None:
-    run = create_and_approve(client, mode="engineer")
+    run = create_and_build(client, mode="engineer")
     edited = client.post(
         f"/api/projects/{run['project_id']}/revisions",
         json={"hero_title": "Objects with a point of view"},
@@ -105,11 +100,12 @@ def test_edit_restore_and_export_preserve_version_history(client: TestClient) ->
 
 
 def test_events_and_project_state_are_recoverable(client: TestClient) -> None:
-    run = create_and_approve(client)
+    run = create_and_build(client)
     events = client.get(f"/api/runs/{run['run_id']}/events/history")
     assert events.status_code == 200
     event_types = [event["type"] for event in events.json()]
-    assert "approval.required" in event_types
+    assert "build.auto_authorized" in event_types
+    assert "approval.required" not in event_types
     assert "build.queued" in event_types
     assert "validation.completed" in event_types
     assert event_types[-1] == "run.completed"
@@ -120,7 +116,7 @@ def test_events_and_project_state_are_recoverable(client: TestClient) -> None:
 
 
 def test_unpublish_removes_public_access(client: TestClient) -> None:
-    run = create_and_approve(client)
+    run = create_and_build(client)
     deployment = client.post(
         f"/api/projects/{run['project_id']}/publish",
         json={"version_id": run["version_id"], "strategy": "always_latest"},
@@ -148,10 +144,6 @@ def test_golden_path_completes_five_out_of_five(client: TestClient) -> None:
         initial_events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
         assert initial_events
         assert perf_counter() - started < 2.0
-        client.post(
-            f"/api/runs/{run['run_id']}/approve",
-            json={"blueprint": run["blueprint"]},
-        )
         current = client.get(f"/api/runs/{run['run_id']}").json()
         completed += current["status"] == "completed"
     assert completed == 5

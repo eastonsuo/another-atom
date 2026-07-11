@@ -27,11 +27,52 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    username: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True, index=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str] = mapped_column(String(120), default="Demo User")
     plan: Mapped[str] = mapped_column(String(32), default="demo")
     quota_limit: Mapped[int] = mapped_column(Integer, default=100)
     quota_used: Mapped[int] = mapped_column(Integer, default=0)
     quota_reserved: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AuthSession(Base, TimestampMixin):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LeadMessage(Base, TimestampMixin):
+    __tablename__ = "lead_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    route: Mapped[str] = mapped_column(String(20))
+    response: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(300))
+    model: Mapped[str] = mapped_column(String(100))
+    request_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SandboxSession(Base, TimestampMixin):
+    __tablename__ = "sandbox_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    remote_session_id: Mapped[str] = mapped_column(String(80), unique=True)
+    terminal_token: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Project(Base, TimestampMixin):
@@ -44,6 +85,8 @@ class Project(Base, TimestampMixin):
     mode: Mapped[str] = mapped_column(String(24))
     status: Mapped[str] = mapped_column(String(32), default="draft")
     latest_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    repository_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    repository_branch: Mapped[str] = mapped_column(String(80), default="main")
 
 
 class ProjectSession(Base, TimestampMixin):
@@ -150,6 +193,7 @@ class ProjectVersion(Base, TimestampMixin):
     app_spec: Mapped[dict[str, Any]] = mapped_column(JSON)
     validation_report: Mapped[dict[str, Any]] = mapped_column(JSON)
     data_review: Mapped[dict[str, Any]] = mapped_column("qa_review", JSON)
+    git_commit: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
 class Deployment(Base, TimestampMixin):

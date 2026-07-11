@@ -2,7 +2,7 @@ import pytest
 
 from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
 from another_atom.config import get_settings
-from another_atom.contracts.schemas import Mode, SupportLevel
+from another_atom.contracts.schemas import LeadRoute, Mode, SupportLevel
 
 
 @pytest.fixture
@@ -28,6 +28,25 @@ def test_mock_failure_hook_is_explicit(provider: MockLLMProvider) -> None:
     with pytest.raises(LLMProviderError):
         provider.create_blueprint("Catalog [fail:llm]", Mode.TEAM)
     assert provider.take_usage().request_count == 1
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("What can this version build?", LeadRoute.DIRECT),
+        ("Build a catalog for desk lamps", LeadRoute.TEAM),
+        ("请创建一个家居产品目录", LeadRoute.TEAM),
+    ],
+)
+def test_lead_routes_questions_and_build_requests(
+    provider: MockLLMProvider, message: str, expected: LeadRoute
+) -> None:
+    assert provider.route_message(message).route == expected
+
+
+def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) -> None:
+    assert provider.route_message("Maybe a catalog", force_team=True).route == LeadRoute.TEAM
+    assert provider.take_usage().request_count == 0
 
 
 def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) -> None:
