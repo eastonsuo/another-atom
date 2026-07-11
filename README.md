@@ -222,6 +222,7 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 | Decision | Why | Benefit | Cost and boundary |
 | --- | --- | --- | --- |
 | Real LLM + structured contracts + deterministic renderer | Prove real requirement understanding while controlling execution risk in a shared cloud environment | Blueprint/AppSpec respond to input and builds remain verifiable | V1 does not support arbitrary stacks or free-form code execution |
+| Lead routing + risk-driven Approval | The original design required approval for every Blueprint; the evolved design lets Lead distinguish answer/clarify from team execution, then lets supported work proceed within base scope and budget | Keeps one conversational entry while matching confirmation to actual risk instead of every stage | This target is confirmed, but the current slice still implements the original fixed Blueprint gate |
 | Username/password Session Gateway + user-level tenant | Project ownership must be derived from trusted identity, not a caller header | Switching accounts produces testable Project isolation | V1 has no Organization, membership, or shared Project roles |
 | One server-side local Git repository per Project | A Project needs durable, inspectable source ownership | ProjectVersion maps to a commit without requiring GitHub OAuth | V1 has no remote, push, pull, or user-machine repository |
 | xterm.js + fixed Vim in a rootless Sandbox | Users need source-level editing without exposing a host shell | Familiar terminal editing with bounded filesystem and resources | Requires a Linux Sandbox Host; it is not a Claude Code-like terminal Agent |
@@ -241,13 +242,21 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 - Validator checks Blueprint page coverage, canonical mapped-requirement evidence, ArchitectureSpec/AppSpec visual-token alignment, and color contrast.
 - SSE keeps database polling for the single-instance baseline but reuses one read Session per connection.
 
-### Product decision under discussion: should `supported` bypass Blueprint approval?
+### Confirmed design evolution: from a fixed Blueprint gate to Lead + Risk Policy
 
-Current behavior sends every non-`unsupported` Blueprint to `awaiting_approval`. This is defensible while the Blueprint gate is the main pre-build inspection point: users can correct the project name or visual direction before spending the remaining team budget. Its cost is that an explicit **Build application** action is followed by a second confirmation even when the system has not changed the requested scope.
+The original V1 interaction sent every non-`unsupported` Blueprint to `awaiting_approval`. Later design work introduced Lead as the single user-facing role and changed Approval from a mandatory pipeline stage into a risk-driven guardrail:
 
-The proposed rule is: clicking **Build application** authorizes one controlled build within the catalog capability boundary and base budget. A `supported` Blueprint proceeds automatically; `adapted` still pauses because the system has mapped or omitted requirements; `unsupported` stops for clarification. Additional budget, later scope changes, destructive source actions, and public deployment changes continue to require Approval.
+```text
+User message -> LeadDecision
+                 |-- direct -> answer / clarify
+                 `-- team -> Product Manager -> Blueprint -> Risk Policy
+                                                       |-- supported + base budget -> continue
+                                                       `-- adapted / added risk -> Approval
+```
 
-This change does not depend on Lead routing—the current Build button and `POST /api/runs` already express execution intent. The benefit is a shorter supported Golden Path and better alignment between risk and interruption. The cost is losing the current pre-build Blueprint editing window; V1 would keep Blueprint persisted and inspectable, then handle corrections through Edit/Follow-up and new versions. This trade-off should be confirmed before changing the state machine and Studio.
+This evolution is a confirmed design point, not an open product question. It preserves Blueprint as a persisted, inspectable contract while removing redundant confirmation from supported work that stays within the controlled catalog scope and base budget. `adapted`, additional budget, later scope changes, destructive source actions, and public deployment changes still require Approval.
+
+The benefit is a shorter Golden Path and a clearer one-Lead interaction model. The cost is losing the original mandatory pause for pre-build Blueprint editing; V1 handles later corrections through inspectable Artifacts, Edit/Follow-up, and new versions. The current runnable slice still implements the original fixed gate, so changing `supported` to proceed automatically is an implementation gap against the confirmed design, not a pending trade-off.
 
 ### Still required for V1 acceptance
 

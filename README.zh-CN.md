@@ -222,6 +222,7 @@ V1 验证用户隔离、Lead 路由、固定团队、风险确认、源码编辑
 | 取舍 | 为什么这样做 | 得到什么 | 代价与边界 |
 | --- | --- | --- | --- |
 | 真实 LLM + 结构化 Contract + 确定性 Renderer | 既要证明模型真实理解需求，又要控制共享云环境中的执行风险 | Blueprint/AppSpec 会真实受输入影响，构建结果可校验 | V1 不支持任意技术栈或自由代码执行 |
+| Lead 路由 + 风险驱动 Approval | 原始设计要求每个 Blueprint 都审批；演进设计由 Lead 先区分回答/澄清与团队执行，再让受控范围和基础预算内的 supported 工作直通 | 保留单一对话入口，同时让确认只匹配真实风险而不是每个阶段 | 目标设计已经确认，但当前纵切仍实现原始固定 Blueprint Gate |
 | 用户名密码 Session Gateway + 用户级租户 | Project 归属必须来自可信身份，不能依赖客户端请求头 | 切换账号即可验证 Project 隔离 | V1 不实现 Organization、成员关系或共享 Project 权限 |
 | 每个 Project 一个服务端本地 Git 仓库 | Project 需要持久、可检查的源码归属 | ProjectVersion 能映射 commit，无需先接 GitHub OAuth | V1 不配置 remote，不支持 push/pull 或用户电脑仓库 |
 | xterm.js + rootless Sandbox 中的固定 Vim | 用户需要源码级编辑，但不能获得宿主机 Shell | 保留终端编辑体验，同时限制文件系统和资源 | 需要 Linux Sandbox Host；不是 Claude Code 式 Terminal Agent |
@@ -241,13 +242,21 @@ V1 验证用户隔离、Lead 路由、固定团队、风险确认、源码编辑
 - Validator 校验 Blueprint 页面覆盖、受控 mapped requirement 的确定性证据、ArchitectureSpec/AppSpec 视觉 Token 一致性和颜色对比度。
 - SSE 在单实例基线下继续轮询数据库，但每个连接复用一个读取 Session。
 
-### 待讨论的产品取舍：`supported` 是否跳过 Blueprint 审批
+### 已确认的设计演进：从固定 Blueprint Gate 到 Lead + Risk Policy
 
-当前行为是所有非 `unsupported` Blueprint 都进入 `awaiting_approval`。这在 Blueprint Gate 仍是主要构建前检查点时有合理性：用户可以在继续消耗团队预算前修正项目名称或视觉方向。代价是用户已经明确点击 **Build application** 后，只要系统没有改变需求范围，仍要再确认一次。
+原始 V1 交互把所有非 `unsupported` Blueprint 都送入 `awaiting_approval`。后续设计加入 Lead 作为用户唯一面对的角色，并把 Approval 从固定流水线阶段改成风险驱动护栏：
 
-建议规则是：点击 **Build application** 已授权一次受控商品目录范围、基础预算内的构建。`supported` 自动继续；`adapted` 因系统映射或舍弃了需求而继续阻塞确认；`unsupported` 停止并进入澄清。额外预算、后续范围变化、破坏性源码操作和线上变更仍触发 Approval。
+```text
+用户消息 -> LeadDecision
+              |-- direct -> 回答 / 澄清
+              `-- team -> Product Manager -> Blueprint -> Risk Policy
+                                                    |-- supported + 基础预算 -> 继续
+                                                    `-- adapted / 新增风险 -> Approval
+```
 
-这项调整不依赖 Lead 路由，因为当前 Build 按钮和 `POST /api/runs` 已经表达了执行意图。优势是缩短 supported Golden Path，让确认次数与实际风险匹配；代价是失去当前“构建前编辑 Blueprint”的停顿窗口。V1 可以继续持久化并展示 Blueprint，偏差通过 Edit/Follow-up 和新版本纠正。应在修改状态机与 Studio 前先确认这项取舍。
+这是已经确认的设计演进，不是尚未拍板的产品问题。Blueprint 仍然是持久化、可检查的产品 Contract，但受控商品目录范围和基础预算内的 `supported` 工作不再重复确认；`adapted`、额外预算、后续范围变化、破坏性源码操作和线上变更仍触发 Approval。
+
+它的优势是缩短 Golden Path，并形成更清楚的单 Lead 交互；代价是失去原始设计中“构建前必须停下编辑 Blueprint”的窗口。V1 通过可检查 Artifact、Edit/Follow-up 和新版本承接后续纠偏。当前可运行纵切仍实现原始固定 Gate，因此让 `supported` 自动继续属于对已确认设计的实现补齐，不是遗留讨论点。
 
 ### V1 验收前仍必须完成
 
