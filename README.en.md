@@ -22,13 +22,15 @@ Another Atom is designed as an AI agent workspace for creating web product proto
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
-> **Current status:** A runnable V1 vertical slice is implemented with username/password Sessions, user-isolated Projects, real Lead routing, Ollama Cloud and Mock providers, per-Project Git, structured editing, restricted Vim/Sandbox integration, versioning, publishing routes, persistence, quota, and automated tests. Railway public deployment and Linux isolation acceptance are not complete.
+> **Current status:** A runnable V1 vertical slice is implemented with username/password Sessions, user-isolated Projects, real Lead routing, Ollama Cloud and Mock providers, per-Project Git, structured editing, restricted Vim/Sandbox integration, versioning, publishing routes, persistence, quota, and automated tests. Railway single-replica deployment, persistent storage, and public access have been accepted; target Linux Sandbox isolation acceptance remains.
 
 > **Current runtime boundary:** The runnable slice is single-instance only. User requirements may describe any product goal; Product Manager preserves that goal and the team generates self-contained HTML/CSS/JavaScript. Supported offline Web behavior continues automatically, while server auth, payments, persistent writes, external services, native capabilities, or added risk require adaptation or stop before build. Committed stage artifacts, quota settlement, Build Jobs, source commits, and versions remain replay-safe across Worker restart.
 
 > **Provider fallback:** Structured role calls use DeepSeek V4 through Ollama Cloud first, with non-thinking mode for Lead. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API; ordinary HTTP errors do not trigger this fallback. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled. See the [local and Railway guide](./docs/v1/local-run-and-railway-deployment.md#24-配置真实模型与-deepseek-兜底) for configuration.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
+
+> **Delivery summary:** [中文说明](./docs/v1/delivery-summary.md)
 
 ## Version Roadmap
 
@@ -408,7 +410,7 @@ Not completed:
 ## Links
 
 - Source repository: [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
-- Online version: not deployed yet
+- Online version: Railway deployment and public access have been accepted; the service domain is managed by the Railway deployment environment.
 - [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 agent design](./docs/v1/agent-design.md)

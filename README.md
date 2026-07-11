@@ -99,7 +99,7 @@ Another Atom 是一个通过自然语言创建网页应用的 AI Agent 工作台
 
 - **本地状态：** Lead 路由、固定专业团队、风险审批、Session Gateway、用户隔离、Project Git、版本、发布路由和 Sandbox Gateway 已有本地实现与自动化测试。
 
-- **线上状态：** Railway 公网部署和目标 Linux Sandbox Host 的实机安全验收尚未完成，因此当前没有可交付的在线 Demo 地址。
+- **线上状态：** Railway 单副本、SQLite/Project Git 持久化 Volume 和公开访问已完成验收；目标 Linux Sandbox Host 的实机安全验收仍待完成。
 
 ## 2. 当前边界摘要
 
@@ -115,7 +115,7 @@ Another Atom 是一个通过自然语言创建网页应用的 AI Agent 工作台
 
 | 版本 | 产品目标 | Agent 组织方式 | 当前状态 |
 | --- | --- | --- | --- |
-| **V1** | 交付有登录隔离、代码归属、可恢复版本和公开分享能力的完整链路 | Lead 选择 `direct`，或调用完整的 Product Manager → Architect → Engineer → Data Analyst 团队 | 本地纵切已实现；Linux Sandbox 与 Railway 待实机验收 |
+| **V1** | 交付有登录隔离、代码归属、可恢复版本和公开分享能力的完整链路 | Lead 选择 `direct`，或调用完整的 Product Manager → Architect → Engineer → Data Analyst 团队 | Railway 单副本已验收；Linux Sandbox 实机安全验收待完成 |
 | **V2** | 增加动态任务图、角色子集、局部并行、结构化返工和仲裁 | Lead 在 Runtime 约束下动态协调 Product Manager、Architect、Engineer、Data Analyst | 已完成产品、架构与 Agent 设计，待 V1 验收后实施 |
 
 - **实施顺序：** 项目按 V1 → V2 推进。V1 是当前实现与验收基线，V2 是明确计划实施的下一版本，不是泛化的远期愿景。
@@ -610,7 +610,7 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 | **恢复与配额** | 已完成 | Blueprint 后台恢复、Job Lease、阶段 Artifact 复用、实际用量结算、剩余预占释放和并发 Approval 测试通过 |
 | **xterm.js + Sandbox Gateway** | 部分完成 | Studio、Control Plane WSS 代理、独立 Sandbox Host、restricted Vim 镜像和保存版本链已实现；Linux 实机隔离待验收 |
 | **自动化测试** | 已完成 | 当前后端单元/集成测试 73 项通过，包含通用 Web 代码、扫雷交互、离线边界、Golden Path、恢复、并发、身份、Provider 兜底、Git 和 Sandbox 保存 |
-| **Railway 公网部署** | 待完成 | Dockerfile 和 Railway 配置已存在，尚无 SQLite 持久化 Volume 环境下完成验收的公网地址 |
+| **Railway 公网部署** | 已完成 | 单副本、SQLite/Project Git 持久化 Volume 和公开访问已完成实际验收 |
 
 ## 11. 后续验收目标
 
@@ -632,8 +632,6 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **Sandbox 安全｜待完成：** 验证跨用户、跨 Project、`.git`、Secret、宿主网络和容器 Runtime 的不可访问性，并确认异常销毁不会遗留可复用环境。
 
-- **Railway 部署｜待完成：** 以单副本部署 Control Plane，挂载 SQLite/Project Git 持久化 Volume，配置真实 Provider 与 Sandbox Host，记录资源规格和必要环境变量。
-
 - **重启恢复｜待完成：** 在部署环境验证 Blueprint、Build Job、阶段 Artifact、配额和 ProjectVersion 在进程重启后的幂等恢复。
 
 - **浏览器验收｜待完成：** 从两个干净账号验证 Project 隔离，再从无登录浏览器打开明确发布的 Public URL。
@@ -644,7 +642,7 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **源码仓库：** [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 
-- **在线版本：** 尚未部署；完成 Railway 和 Sandbox 实机验收后补充公开地址。
+- **在线版本：** Railway 已部署并完成公开访问验收；具体服务域名由 Railway 部署环境管理。
 
 - **V1 产品：** [V1 产品需求](./docs/v1/another-atom-v1-prd.md)
 
@@ -653,6 +651,8 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 - **V1 Agent：** [V1 Agent 设计](./docs/v1/agent-design.md)
 
 - **V1 部署：** [本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md)
+
+- **V1 简要交付说明：** [查看说明](./docs/v1/delivery-summary.md)
 
 - **V1 Review：** [V1 实现 Review](./review/2026-07-11-v1-implementation-review.md)
 
