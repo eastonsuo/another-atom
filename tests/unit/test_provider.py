@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
@@ -36,6 +37,7 @@ def test_mock_failure_hook_is_explicit(provider: MockLLMProvider) -> None:
         ("What can this version build?", LeadRoute.DIRECT),
         ("Build a catalog for desk lamps", LeadRoute.TEAM),
         ("请创建一个家居产品目录", LeadRoute.TEAM),
+        ("给我一个网页版扫雷", LeadRoute.TEAM),
     ],
 )
 def test_lead_routes_questions_and_build_requests(
@@ -47,6 +49,82 @@ def test_lead_routes_questions_and_build_requests(
 def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) -> None:
     assert provider.route_message("Maybe a catalog", force_team=True).route == LeadRoute.TEAM
     assert provider.take_usage().request_count == 0
+
+
+def test_ollama_lead_disables_thinking(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+
+def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    get_settings.cache_clear()
+    calls: list[tuple[str, dict]] = []
+
+    class DeepSeekResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 8},
+            }
+
+    def fake_post(url, *args, **kwargs):
+        calls.append((url, kwargs.get("json", {})))
+        if "ollama.com" in url:
+            raise httpx.ReadTimeout("primary timed out")
+        return DeepSeekResponse()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    decision = provider.route_message("给我一个网页版扫雷")
+    usage = provider.take_usage()
+
+    assert decision.route == LeadRoute.TEAM
+    assert [url for url, _ in calls] == [
+        "https://ollama.com/api/chat",
+        "https://api.deepseek.com/chat/completions",
+    ]
+    assert calls[1][1]["thinking"] == {"type": "disabled"}
+    assert usage.request_count == 2
+    assert usage.fallback_provider == "deepseek"
+    assert usage.input_tokens == 20
+    assert usage.output_tokens == 8
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {
+                    "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
+                },
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    assert provider.route_message("给我一个网页版扫雷").route == LeadRoute.TEAM
+    assert provider.take_usage().request_count == 1
+    assert captured["think"] is False
+    get_settings.cache_clear()
 
 
 def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) -> None:

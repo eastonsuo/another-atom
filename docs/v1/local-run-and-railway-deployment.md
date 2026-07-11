@@ -117,12 +117,16 @@ npm run build
 
 | 变量 | 本地默认值 | Railway 建议值 | 用途 |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | `sqlite:///./data/another_atom.db` | `${{Postgres.DATABASE_URL}}` | SQLAlchemy 数据库连接 |
+| `DATABASE_URL` | `sqlite:///./data/another_atom.db` | `sqlite:////app/data/another_atom.db` | SQLAlchemy 数据库连接；Railway 文件必须位于持久化 Volume |
 | `LLM_PROVIDER` | `mock` | `ollama` | 选择 Mock 或 Ollama Cloud Provider |
 | `OLLAMA_API_KEY` | 空 | Railway Secret | Ollama Cloud Bearer Key；禁止提交到 Git |
 | `OLLAMA_HOST` | `https://ollama.com` | 相同 | Ollama Cloud API Host |
 | `OLLAMA_MODEL` | `deepseek-v4-pro` | 相同 | 新 Run 的默认模型 |
 | `OLLAMA_TIMEOUT_SECONDS` | `120` | `120` | 单次模型请求超时 |
+| `OLLAMA_LEAD_TIMEOUT_SECONDS` | `60` | `60` | Lead 单次请求的总超时保护 |
+| `OLLAMA_FAILOVER_TIMEOUT_SECONDS` | `30` | `30` | 配置官方兜底后，Ollama 超过该时限触发切换 |
+| `DEEPSEEK_API_KEY` | 空 | Railway Secret（可选） | DeepSeek 官方 API 兜底密钥；禁止提交到 Git |
+| `DEEPSEEK_HOST` | `https://api.deepseek.com` | 相同 | DeepSeek 官方 API Host |
 | `DEMO_QUOTA_UNITS` | `100` | `100` 或按演示需要调整 | 每个新账户的演示配额 |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Railway 分配的 `https://...up.railway.app` | 生成公开访问地址 |
 | `ENVIRONMENT` | `development` | `production` | 运行环境标识 |
@@ -135,7 +139,7 @@ npm run build
 
 - 根目录 `Dockerfile`：构建 React Studio，并运行 FastAPI；
 - `railway.toml`：指定 Dockerfile Builder、`/api/health` 健康检查和失败重启策略；
-- PostgreSQL 驱动和自动建表逻辑。
+- SQLite 自动建表和单副本持久化逻辑。
 
 Railway 会自动检测根目录中大写命名的 `Dockerfile`。参考：[Railway Dockerfile 文档](https://docs.railway.com/builds/dockerfiles)。
 
@@ -144,29 +148,33 @@ Railway 会自动检测根目录中大写命名的 `Dockerfile`。参考：[Rail
 1. 确认代码已经推送到公开或 Railway 有权访问的 GitHub 仓库。
 2. 在 Railway Dashboard 选择 `New Project`。
 3. 选择 `Deploy from GitHub repo`，授权 GitHub 后选择 `another-atom`。
-4. 建议先选择添加变量或暂缓首次部署，先完成 PostgreSQL 配置。
+4. 建议先选择添加变量或暂缓首次部署，先挂载持久化 Volume。
 
 官方入口说明：[Railway Quick Start](https://docs.railway.com/quick-start)。
 
-### 5.2 添加 PostgreSQL
+### 5.2 添加 SQLite 持久化 Volume
 
-1. 在 Project Canvas 点击 `+ New`，选择 `Database -> PostgreSQL`。
-2. 记住 PostgreSQL 服务名；默认通常是 `Postgres`。
-3. 打开 Another Atom Web Service 的 `Variables`。
-4. 添加：
+1. 打开 Another Atom Web Service 的 `Settings -> Volumes`。
+2. 创建 Volume，并将挂载路径设为 `/app/data`。
+3. 保持 Web Service 只有一个副本；多个副本不能共享同一个 SQLite 写入文件。
+4. 打开 `Variables`，添加：
 
 ```text
-DATABASE_URL=${{Postgres.DATABASE_URL}}
+DATABASE_URL=sqlite:////app/data/another_atom.db
 LLM_PROVIDER=ollama
 OLLAMA_API_KEY=<Railway Secret>
 OLLAMA_HOST=https://ollama.com
 OLLAMA_MODEL=deepseek-v4-pro
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_LEAD_TIMEOUT_SECONDS=60
+OLLAMA_FAILOVER_TIMEOUT_SECONDS=30
+DEEPSEEK_API_KEY=<可选的 Railway Secret>
+DEEPSEEK_HOST=https://api.deepseek.com
 DEMO_QUOTA_UNITS=100
 ENVIRONMENT=production
 ```
 
-如果数据库服务名不是 `Postgres`，变量引用中的服务名必须同步修改。Railway PostgreSQL 会提供 `DATABASE_URL` 等连接变量，参考：[Railway PostgreSQL 文档](https://docs.railway.com/databases/postgresql)。
+`DEEPSEEK_API_KEY` 只在需要 Ollama 超时兜底时配置；未配置时不会发起官方 API 请求。Volume 是当前 Railway SQLite 部署的必要条件，否则重新部署或容器迁移后数据库文件可能丢失。参考：[Railway Volumes 文档](https://docs.railway.com/volumes)。
 
 ### 5.3 生成公网域名
 
@@ -180,24 +188,16 @@ PUBLIC_BASE_URL=https://another-atom-production.up.railway.app
 
 4. 变量变更会触发重新部署；部署完成后检查 `/api/health`。
 
-### 5.4 Volume 是否需要
+### 5.4 为什么必须保持单副本
 
-当前 Railway 部署使用 PostgreSQL 保存核心状态，V1 只保存附件元数据，因此 **Volume 不是当前启动的硬依赖**。
-
-若希望保留 SQLite 兜底文件，或后续实现附件/构建文件存储，可给 Web Service 添加 Volume，挂载到：
-
-```text
-/app/data
-```
-
-Railway 容器中的项目目录是 `/app`，相对路径 `./data` 对应 `/app/data`。参考：[Railway Volumes 文档](https://docs.railway.com/volumes)。V1 仍是单实例设计；需要水平扩容前，应把文件迁移到 S3 兼容对象存储，而不是让多个实例依赖单个 Volume。
+SQLite 与本地 Project Git 都依赖当前实例挂载的 `/app/data`。这符合 V1 的 Railway 单副本边界，但不支持水平扩容。升级到多个 API/Worker 副本前，必须把业务状态迁移到 PostgreSQL，把共享 Artifact 迁移到对象存储，并补齐跨实例并发控制。
 
 ### 5.5 首次部署验收
 
 按以下顺序检查：
 
 1. Deployment Logs 出现 Uvicorn 启动成功，且没有数据库连接错误。
-2. `https://<domain>/api/health` 返回 `status: ok` 和 `database: postgresql`。
+2. `https://<domain>/api/health` 返回 `status: ok` 和 `database: sqlite`。
 3. 打开根地址，提交一个 `supported` 商品目录请求，确认 Blueprint 自动进入构建且未出现多余审批。
 4. 刷新页面后重新打开项目，确认 Run、事件和版本仍存在。
 5. Publish 后用无登录的隐身窗口打开 Public URL。
@@ -207,7 +207,7 @@ Railway 容器中的项目目录是 `/app`，相对路径 `./data` 对应 `/app/
 
 ## 6. 当前部署边界
 
-- Railway 账户、PostgreSQL 和实际资源会产生平台用量；本仓库不承诺免费额度。
+- Railway 账户、Volume 和实际资源会产生平台用量；本仓库不承诺免费额度。
 - 当前代码尚未实际创建 Railway Project，因此仓库中没有可填写的在线 Demo URL。
 - Dockerfile 已提供，但本机 Docker daemon 未响应，本轮未完成本地镜像构建验证；Railway 首次 Build Log 仍需人工确认。
 - 当前 Provider 是 Mock；部署成功只能证明产品闭环、状态与 UI 可运行，不能证明真实模型质量。
@@ -219,7 +219,7 @@ Railway 容器中的项目目录是 `/app`，相对路径 `./data` 对应 `/app/
 ```text
 Browser -- HTTPS/SSE/WSS --> Control Plane (Railway or Linux VM)
                                   |
-                                  +--> PostgreSQL
+                                  +--> SQLite + persistent Volume
                                   |
                                   `--> Linux Sandbox Host
                                        local Git / Vim PTY / Build

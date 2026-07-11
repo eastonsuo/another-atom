@@ -23,6 +23,42 @@ from another_atom.contracts.schemas import (
 
 T = TypeVar("T", bound=BaseModel)
 
+_BUILD_TERMS = (
+    "build",
+    "create",
+    "make",
+    "generate",
+    "develop",
+    "构建",
+    "创建",
+    "生成",
+    "开发",
+    "制作",
+    "做一个",
+    "给我一个",
+    "帮我做",
+)
+_INQUIRY_PREFIXES = (
+    "what can",
+    "what does",
+    "how does",
+    "how can",
+    "why ",
+    "which ",
+    "能做什么",
+    "支持什么",
+    "为什么",
+    "如何",
+    "怎么",
+)
+
+
+def _is_explicit_build_request(message: str) -> bool:
+    normalized = " ".join(message.lower().split())
+    return not normalized.startswith(_INQUIRY_PREFIXES) and any(
+        term in normalized for term in _BUILD_TERMS
+    )
+
 
 class LLMProviderError(RuntimeError):
     pass
@@ -33,6 +69,7 @@ class ProviderUsage:
     request_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    fallback_provider: str | None = None
 
 
 class LLMProvider(Protocol):
@@ -95,29 +132,6 @@ class MockLLMProvider:
         "购物车结算",
     }
 
-    _build_terms = {
-        "build",
-        "create",
-        "make",
-        "generate",
-        "构建",
-        "创建",
-        "生成",
-        "做一个",
-    }
-    _inquiry_prefixes = (
-        "what can",
-        "what does",
-        "how does",
-        "how can",
-        "why ",
-        "which ",
-        "能做什么",
-        "支持什么",
-        "为什么",
-        "如何",
-    )
-
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision:
         if force_team:
             return LeadDecision(
@@ -127,21 +141,14 @@ class MockLLMProvider:
             )
         self._record_request()
         self._raise_if_requested(message, "lead")
-        normalized = message.lower()
-        route = (
-            LeadRoute.TEAM
-            if not normalized.startswith(self._inquiry_prefixes)
-            and any(term in normalized for term in self._build_terms)
-            else LeadRoute.DIRECT
-        )
-        if route == LeadRoute.TEAM:
+        if _is_explicit_build_request(message):
             return LeadDecision(
-                route=route,
+                route=LeadRoute.TEAM,
                 response="I’ll send this request through the fixed product team.",
-                reason="The message explicitly asks the system to create or modify a product.",
+                reason="The message explicitly requests a product build.",
             )
         return LeadDecision(
-            route=route,
+            route=LeadRoute.DIRECT,
             response=(
                 "V1 can build controlled product catalogs with Home, Catalog, and Product pages. "
                 "Tell me the catalog, products, and visual direction when you want the team "
@@ -371,6 +378,10 @@ class OllamaCloudProvider:
         self.api_key = settings.ollama_api_key
         self.timeout = settings.ollama_timeout_seconds
         self.lead_timeout = settings.ollama_lead_timeout_seconds
+        self.failover_timeout = settings.ollama_failover_timeout_seconds
+        self.deepseek_api_key = settings.deepseek_api_key
+        self.deepseek_host = settings.deepseek_host.rstrip("/")
+        self.reservation_units = 3 if self.deepseek_api_key else 2
         self._usage = ProviderUsage()
 
     def take_usage(self) -> ProviderUsage:
@@ -397,6 +408,7 @@ class OllamaCloudProvider:
             ),
             {"message": message},
             timeout_seconds=self.lead_timeout,
+            think=False,
         )
 
     def _record_response_usage(self, body: dict) -> None:
@@ -404,6 +416,7 @@ class OllamaCloudProvider:
             request_count=self._usage.request_count,
             input_tokens=self._usage.input_tokens + int(body.get("prompt_eval_count", 0)),
             output_tokens=self._usage.output_tokens + int(body.get("eval_count", 0)),
+            fallback_provider=self._usage.fallback_provider,
         )
 
     def create_blueprint(self, prompt: str, mode: Mode) -> Blueprint:
@@ -486,6 +499,7 @@ class OllamaCloudProvider:
         instruction: str,
         payload: dict,
         timeout_seconds: float | None = None,
+        think: bool | None = None,
     ) -> T:
         schema = contract.model_json_schema()
         messages = [
@@ -506,21 +520,44 @@ class OllamaCloudProvider:
                     request_count=self._usage.request_count + 1,
                     input_tokens=self._usage.input_tokens,
                     output_tokens=self._usage.output_tokens,
+                    fallback_provider=self._usage.fallback_provider,
                 )
-                response = httpx.post(
-                    f"{self.host}/api/chat",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": False,
-                        # Constrain the model to emit strictly valid JSON matching the
-                        # contract. Reasoning-capable models (DeepSeek V4) otherwise emit
-                        # think-text and prose that corrupt free-form JSON extraction.
-                        "format": schema,
-                    },
-                    timeout=timeout_seconds or self.timeout,
-                )
+                request_body = {
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    # Constrain the model to emit strictly valid JSON matching the
+                    # contract. Reasoning-capable models (DeepSeek V4) otherwise emit
+                    # think-text and prose that corrupt free-form JSON extraction.
+                    "format": schema,
+                }
+                if think is not None:
+                    request_body["think"] = think
+                primary_timeout = timeout_seconds or self.timeout
+                if self.deepseek_api_key:
+                    primary_timeout = min(primary_timeout, self.failover_timeout)
+                try:
+                    response = httpx.post(
+                        f"{self.host}/api/chat",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json=request_body,
+                        timeout=primary_timeout,
+                    )
+                except httpx.TimeoutException:
+                    if not self.deepseek_api_key:
+                        raise
+                    self._usage = ProviderUsage(
+                        request_count=self._usage.request_count,
+                        input_tokens=self._usage.input_tokens,
+                        output_tokens=self._usage.output_tokens,
+                        fallback_provider="deepseek",
+                    )
+                    return self._deepseek_structured_chat(
+                        contract,
+                        role,
+                        messages,
+                        think=think,
+                    )
                 response.raise_for_status()
                 body = response.json()
                 self._record_response_usage(body)
@@ -546,6 +583,76 @@ class OllamaCloudProvider:
             raise ValueError("structured response repair did not complete")
         except (httpx.HTTPError, KeyError, TypeError, ValidationError, ValueError) as exc:
             raise LLMProviderError(f"Ollama {role} output failed: {exc}") from exc
+
+    def _deepseek_structured_chat(
+        self,
+        contract: type[T],
+        role: str,
+        messages: list[dict[str, str]],
+        *,
+        think: bool | None,
+    ) -> T:
+        if not self.deepseek_api_key:
+            raise LLMProviderError("DEEPSEEK_API_KEY is required for provider fallback")
+        fallback_messages = [dict(message) for message in messages]
+        try:
+            for attempt in range(2):
+                self._usage = ProviderUsage(
+                    request_count=self._usage.request_count + 1,
+                    input_tokens=self._usage.input_tokens,
+                    output_tokens=self._usage.output_tokens,
+                    fallback_provider="deepseek",
+                )
+                request_body: dict = {
+                    "model": self.model,
+                    "messages": fallback_messages,
+                    "stream": False,
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 4096,
+                    "temperature": 0.2,
+                }
+                if think is not None:
+                    request_body["thinking"] = {
+                        "type": "enabled" if think else "disabled"
+                    }
+                response = httpx.post(
+                    f"{self.deepseek_host}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.deepseek_api_key}"},
+                    json=request_body,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                body = response.json()
+                usage = body.get("usage") or {}
+                self._usage = ProviderUsage(
+                    request_count=self._usage.request_count,
+                    input_tokens=self._usage.input_tokens + int(usage.get("prompt_tokens", 0)),
+                    output_tokens=self._usage.output_tokens
+                    + int(usage.get("completion_tokens", 0)),
+                    fallback_provider="deepseek",
+                )
+                content = body["choices"][0]["message"]["content"]
+                json_content = self._extract_json(content)
+                try:
+                    return contract.model_validate_json(json_content)
+                except ValidationError as exc:
+                    if attempt == 1:
+                        raise
+                    fallback_messages.extend(
+                        [
+                            {"role": "assistant", "content": json_content},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Correct the JSON to satisfy the schema. Return JSON only. "
+                                    f"Validation errors: {exc.errors(include_input=False)}"
+                                ),
+                            },
+                        ]
+                    )
+            raise ValueError("DeepSeek structured response repair did not complete")
+        except (httpx.HTTPError, KeyError, TypeError, ValidationError, ValueError) as exc:
+            raise LLMProviderError(f"DeepSeek official {role} output failed: {exc}") from exc
 
     @staticmethod
     def _message_content(body: dict) -> str:

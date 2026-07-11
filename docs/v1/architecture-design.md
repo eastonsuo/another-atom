@@ -1002,8 +1002,8 @@ another-atom/
 ├── tests/
 ├── docs/
 ├── Dockerfile
-├── README.md
-└── README.zh-CN.md
+├── README.md                 # 默认中文
+└── README.en.md              # English
 ```
 
 Renderer、Build Worker 和领域服务不能直接定义第二套 AppSpec。所有层共享 `contracts` 中的 Pydantic/OpenAPI 协议。

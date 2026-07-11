@@ -138,6 +138,8 @@ const ZH: Record<string, string> = {
   "Lead is producing a direct/team decision": "Lead 正在生成 direct/team 路由决策",
   "Project and Run logs start after this step completes.": "此步骤完成后才会创建 Project，并接入 Run 日志。",
   "Model response is slower than usual.": "模型响应比平时慢，仍在等待服务端返回。",
+  "Ollama timed out. Switching provider to DeepSeek official API…": "Ollama 响应超时，服务商切换中：DeepSeek 官方 API……",
+  "Provider fallback completed: {provider}.": "服务商切换完成：{provider}。",
   "seconds": "秒",
   "Lead routed this message to {route}.": "Lead 将消息路由到 {route}。",
   "No build run was created because Lead answered directly.": "Lead 已直接回答，没有创建构建任务。",
@@ -182,8 +184,8 @@ const ZH: Record<string, string> = {
   "Latest": "最新",
   "persisted event": "条持久化事件",
   "persisted events": "条持久化事件",
-  "Scope needs revision": "等待确认 PM 需求草案",
-  "The team stopped before build because the request needs to be narrowed.": "原始功能超出 V1 构建范围，产品经理已将主题扩展为可构建的商品目录草案。",
+  "Scope needs revision": "等待确认可构建替代方案",
+  "The team stopped before build because the request needs to be narrowed.": "原始产品目标超出 V1 商品目录范围，不能按原请求直接构建。",
   "No build job was created": "确认草案后开始构建",
   "Rewrite": "PM 草案",
   "Waiting for approval": "等待确认",
@@ -219,12 +221,12 @@ const ZH: Record<string, string> = {
   "This records an explicit risk confirmation.": "这会记录一次明确的风险确认。",
   "Confirm & build": "确认并构建",
   "Product Manager feedback": "产品经理反馈",
-  "The Product Manager preserved your idea and expanded it into a buildable catalog brief.": "产品经理保留了你的原始主题，并扩展成一份当前可以构建的商品目录需求。",
-  "Confirm the generated catalog brief": "确认 PM 生成的需求草案",
-  "Review the draft below. You can confirm it as-is or edit it first.": "请检查下面的草案。你可以直接确认，也可以先修改再继续。",
-  "Generated requirement draft": "PM 生成的需求草案",
-  "Confirm requirement & build": "确认需求并开始构建",
-  "Confirming starts a new build run with this draft.": "确认后将使用这份草案启动新的构建任务。",
+  "The original product cannot be built in V1. Product Manager created a catalog alternative that keeps only its theme.": "原始产品目标无法在 V1 构建。产品经理只保留主题，生成了一个商品目录替代方案。",
+  "Confirm the catalog alternative": "确认商品目录替代方案",
+  "This alternative changes the product type. Accept it only if you want a catalog instead of the original application.": "该方案会改变产品类型。只有当你接受用商品目录替代原应用时才继续。",
+  "Buildable alternative": "可构建替代方案（会改变产品目标）",
+  "Accept alternative & build": "接受替代方案并开始构建",
+  "Confirmation skips Product Manager and continues directly to architecture.": "确认后不会再次调用产品经理，将直接进入架构阶段。",
   "Describe a product catalog with Home, Catalog, and Product pages…": "描述一个包含首页、目录页和商品详情页的商品目录……",
   "Run stopped": "任务已停止",
   "Your project and original request are still saved.": "项目和原始请求仍已保存。",
@@ -301,6 +303,8 @@ const ZH: Record<string, string> = {
   "event.run.needs_input": "需要补充输入",
   "event.run.completed": "任务已完成",
   "event.run.failed": "任务失败",
+  "event.provider.fallback": "服务商已切换",
+  "Ollama timed out; switched to DeepSeek official API": "Ollama 超时，已切换到 DeepSeek 官方 API",
 };
 
 type ActivityEntry = {
@@ -510,6 +514,7 @@ function Studio() {
       "build.queued",
       "build.started",
       "validation.completed",
+      "provider.fallback",
       "run.needs_input",
       "run.completed",
       "run.failed",
@@ -557,6 +562,9 @@ function Studio() {
       const decision = await api.leadMessage(prompt, model, forceTeam);
       window.clearInterval(leadTimer);
       setLeadDecision(decision);
+      if (decision.fallback_provider) {
+        appendActivity(template(language, "Provider fallback completed: {provider}.", { provider: decision.fallback_provider }), "success");
+      }
       appendActivity(template(language, "Lead routed this message to {route}.", { route: routeLabel(language, decision.route) }), "success");
       if (decision.route === "direct") {
         appendActivity(ui(language, "No build run was created because Lead answered directly."), "success");
@@ -814,7 +822,7 @@ function Composer({
           {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
           {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>Lead</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
         </div>
-        <ActivityLog entries={activityLog} active={submitting} elapsed={leadElapsed} language={language} />
+        <ActivityLog entries={activityLog} active={submitting} elapsed={leadElapsed} fallbackProvider={models?.fallback_provider ?? null} language={language} />
       </div>
       <div className="example-prompts">
         <span>{ui(language, "Start with an example")}</span>
@@ -824,7 +832,7 @@ function Composer({
   );
 }
 
-function ActivityLog({ entries, active, elapsed, language }: { entries: ActivityEntry[]; active: boolean; elapsed: number; language: Language }) {
+function ActivityLog({ entries, active, elapsed, fallbackProvider, language }: { entries: ActivityEntry[]; active: boolean; elapsed: number; fallbackProvider: string | null; language: Language }) {
   return <aside className="activity-panel" aria-live="polite">
     <div className="activity-heading">
       <span>{ui(language, "Lead handoff")}</span>
@@ -840,7 +848,9 @@ function ActivityLog({ entries, active, elapsed, language }: { entries: Activity
     {active && <div className="lead-wait-log">
       <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "Lead is producing a direct/team decision")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
       <p>{ui(language, "Project and Run logs start after this step completes.")}</p>
-      {elapsed >= 15 && <small>{ui(language, "Model response is slower than usual.")}</small>}
+      {fallbackProvider && elapsed >= 30
+        ? <small>{ui(language, "Ollama timed out. Switching provider to DeepSeek official API…")}</small>
+        : elapsed >= 15 && <small>{ui(language, "Model response is slower than usual.")}</small>}
     </div>}
   </aside>;
 }
@@ -928,7 +938,7 @@ function Workspace({
           <BuildingState run={run} language={language} />
         )}
       </section>
-      <RepositoryPanel run={run} language={language} />
+      <RepositoryPanel run={run} language={language} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
       <DebugLogPanel run={run} events={events} language={language} />
     </div>
   );
@@ -1062,7 +1072,7 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
     setSubmitting(true);
     setError("");
     try {
-      const created = await api.createRun(revised.trim(), run.mode, run.model, []);
+      const created = await api.confirmAlternative(run.run_id, revised.trim());
       setRun(created);
       await refreshShell();
     } catch (reason) {
@@ -1076,18 +1086,18 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
       <RoleAvatar role="product" size="large" />
       <div>
         <span>{ui(language, "Product Manager feedback")}</span>
-        <h1>{ui(language, "Confirm the generated catalog brief")}</h1>
-        <p>{ui(language, "The Product Manager preserved your idea and expanded it into a buildable catalog brief.")}</p>
+        <h1>{ui(language, "Confirm the catalog alternative")}</h1>
+        <p>{ui(language, "The original product cannot be built in V1. Product Manager created a catalog alternative that keeps only its theme.")}</p>
         <p>{reason}</p>
-        <small><CircleAlert size={14} /> {ui(language, "Review the draft below. You can confirm it as-is or edit it first.")}</small>
+        <small><CircleAlert size={14} /> {ui(language, "This alternative changes the product type. Accept it only if you want a catalog instead of the original application.")}</small>
       </div>
     </div>
     <div className="scope-revise">
-      <label>{ui(language, "Generated requirement draft")}
+      <label>{ui(language, "Buildable alternative")}
         <textarea value={revised} onChange={(event) => setRevised(event.target.value)} placeholder={rewrite || ui(language, "Describe a product catalog with Home, Catalog, and Product pages…")} maxLength={4000} rows={4} autoFocus />
       </label>
-      <p className="scope-hint"><Sparkles size={13} /> {ui(language, "Confirming starts a new build run with this draft.")}</p>
-      <button className="primary-action" disabled={!revised.trim() || submitting} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Confirm requirement & build")}</button>
+      <p className="scope-hint"><Sparkles size={13} /> {ui(language, "Confirmation skips Product Manager and continues directly to architecture.")}</p>
+      <button className="primary-action" disabled={!revised.trim() || submitting} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Accept alternative & build")}</button>
     </div>
   </div>;
 }

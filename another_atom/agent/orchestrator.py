@@ -447,6 +447,15 @@ class Orchestrator:
             try:
                 result = operation()
                 usage = provider.take_usage()
+                if usage.fallback_provider:
+                    record_event(
+                        self.db,
+                        run.id,
+                        "provider.fallback",
+                        "Ollama timed out; switched to DeepSeek official API",
+                        stage=stage,
+                        payload={"provider": usage.fallback_provider},
+                    )
                 artifact = save_artifact(self.db, run.id, artifact_type, result)
                 settle_quota(
                     self.db,

@@ -190,6 +190,18 @@ class BlueprintApproval(BaseModel):
     blueprint: Blueprint
 
 
+class RewriteConfirmation(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Confirmed alternative cannot be blank")
+        return value
+
+
 class RevisionRequest(BaseModel):
     hero_title: str | None = Field(default=None, min_length=1, max_length=120)
     hero_body: str | None = Field(default=None, min_length=1, max_length=300)
@@ -305,6 +317,7 @@ class ModelOption(BaseModel):
 
 class ModelsView(BaseModel):
     provider: str
+    fallback_provider: str | None = None
     default_model: str
     models: list[ModelOption]
 
@@ -350,6 +363,7 @@ class LeadDecision(BaseModel):
 class LeadDecisionView(LeadDecision):
     message_id: str
     model: str
+    fallback_provider: str | None = None
 
 
 class SandboxSessionView(BaseModel):

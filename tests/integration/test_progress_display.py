@@ -152,3 +152,37 @@ def test_out_of_scope_request_stops_at_needs_input_scope_review(client: TestClie
     assert "catalog" in suggestion
     assert "home" in suggestion
     assert "product" in suggestion
+
+
+def test_confirmed_catalog_alternative_skips_second_product_manager_pass(
+    client: TestClient,
+) -> None:
+    source = _create_team_run(client, "Build a CRM for my sales team")
+    assert source["status"] == "needs_input"
+    suggestion = source["blueprint"]["rewrite_suggestion"]
+
+    response = client.post(
+        f"/api/runs/{source['run_id']}/confirm-alternative",
+        json={"prompt": suggestion},
+    )
+    assert response.status_code == 202
+    confirmed = response.json()
+    assert confirmed["run_id"] != source["run_id"]
+    assert confirmed["project_id"] == source["project_id"]
+    assert confirmed["blueprint"]["support_level"] == "supported"
+
+    events = client.get(f"/api/runs/{confirmed['run_id']}/events/history").json()
+    assert not any(
+        event["type"] == "stage.started"
+        and event["payload"].get("stage") == "product_manager"
+        for event in events
+    )
+    assert any(
+        event["type"] == "artifact.created"
+        and "without another Product Manager pass" in event["payload"]["message"]
+        for event in events
+    )
+    assert client.post(
+        f"/api/runs/{source['run_id']}/confirm-alternative",
+        json={"prompt": suggestion},
+    ).status_code == 409

@@ -485,6 +485,7 @@ Lead 的两个路由必须在行为上可区分，而不只是切换标签：
 - Terminal CLI、本地 Agent Runtime、本地工作区和 `localhost` 应用预览。
 - 本地 SQLite 项目恢复，以及本地项目上传或发布到云端的同步协议。
 - Follow-up 消息队列的暂停、排序和立即发送。
+- Project 对话线程持久化：为 Lead 询问/澄清、团队构建和 Follow-up 消息增加 `project_id / run_id / thread_id`，支持按 Project 恢复完整对话历史；账号级、尚未创建 Project 的 direct 询问继续单独保存。
 - Visual Editor 多选。
 - 项目搜索、排序和收藏。
 - Link Only 的访问 token 和过期时间。

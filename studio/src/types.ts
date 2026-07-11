@@ -133,6 +133,7 @@ export interface QuotaView {
 
 export interface ModelsView {
   provider: string;
+  fallback_provider: string | null;
   default_model: string;
   models: { id: string; label: string; usage: "medium" | "extra_high" | "local" }[];
 }
@@ -149,6 +150,7 @@ export interface LeadDecisionView {
   response: string;
   reason: string;
   model: string;
+  fallback_provider: string | null;
 }
 
 export interface SandboxSessionView {

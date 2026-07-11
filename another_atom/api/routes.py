@@ -56,6 +56,7 @@ from another_atom.contracts.schemas import (
     PublishRequest,
     QuotaView,
     RevisionRequest,
+    RewriteConfirmation,
     RunCreate,
     RunStatus,
     RunView,
@@ -378,6 +379,7 @@ def route_lead_message(
     return LeadDecisionView(
         message_id=lead_message.id,
         model=selected_model,
+        fallback_provider=usage.fallback_provider,
         **decision.model_dump(),
     )
 
@@ -400,6 +402,7 @@ def models() -> ModelsView:
     if settings.llm_provider == "ollama":
         return ModelsView(
             provider="ollama",
+            fallback_provider="deepseek" if settings.deepseek_api_key else None,
             default_model=settings.ollama_model,
             models=[
                 ModelOption(id="deepseek-v4-pro", label="DeepSeek V4 Pro", usage="extra_high"),
@@ -408,6 +411,7 @@ def models() -> ModelsView:
         )
     return ModelsView(
         provider="mock",
+        fallback_provider=None,
         default_model="mock",
         models=[ModelOption(id="mock", label="Mock LLM", usage="local")],
     )
@@ -548,6 +552,122 @@ def approve_blueprint(
     job_dispatcher(job.id)
     db.refresh(run)
     return _run_view(db, run)
+
+
+@router.post(
+    "/runs/{run_id}/confirm-alternative",
+    response_model=RunView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def confirm_alternative_blueprint(
+    run_id: str,
+    confirmation: RewriteConfirmation,
+    job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    source_run = _owned_run(db, run_id, user.id)
+    if source_run.status != RunStatus.NEEDS_INPUT.value:
+        raise AppError(
+            "ALTERNATIVE_NOT_ALLOWED", "This run is not waiting for an alternative", 409
+        )
+    source_artifact = get_artifact(db, source_run.id, ArtifactType.BLUEPRINT)
+    if source_artifact is None:
+        raise AppError("MISSING_INPUT", "Source Blueprint could not be loaded", 409)
+    source_blueprint = Blueprint.model_validate(source_artifact.payload)
+    if source_blueprint.support_level != SupportLevel.UNSUPPORTED:
+        raise AppError(
+            "ALTERNATIVE_NOT_ALLOWED", "Only unsupported requests use this confirmation", 409
+        )
+    confirmed_blueprint = source_blueprint.model_copy(
+        update={
+            "support_level": SupportLevel.SUPPORTED,
+            "support_reasons": [
+                "The user explicitly accepted the Product Manager catalog alternative."
+            ],
+            "mapped_requirements": [
+                "Responsive product catalog",
+                "Product detail navigation",
+                "Editable visual direction",
+            ],
+            "rewrite_suggestion": None,
+        }
+    )
+    db.add(
+        Approval(
+            run_id=source_run.id,
+            user_id=user.id,
+            artifact_id=source_artifact.id,
+            approved=True,
+            payload={
+                "confirmation_type": "catalog_alternative",
+                "confirmed_prompt": confirmation.prompt,
+                "blueprint": confirmed_blueprint.model_dump(mode="json"),
+            },
+        )
+    )
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise AppError(
+            "ALTERNATIVE_ALREADY_CONFIRMED", "This alternative was already confirmed", 409
+        ) from exc
+    project_session = ProjectSession(project_id=source_run.project_id, user_id=user.id)
+    db.add(project_session)
+    db.flush()
+    next_run = Run(
+        project_id=source_run.project_id,
+        session_id=project_session.id,
+        user_id=user.id,
+        mode=source_run.mode,
+        model=source_run.model,
+        status=RunStatus.BUILD_QUEUED.value,
+        current_stage="build_queue",
+        prompt=confirmation.prompt,
+    )
+    db.add(next_run)
+    db.flush()
+    artifact = save_artifact(db, next_run.id, ArtifactType.BLUEPRINT, confirmed_blueprint)
+    job = BuildJob(
+        run_id=next_run.id,
+        project_id=next_run.project_id,
+        status=BuildStatus.QUEUED.value,
+    )
+    db.add(job)
+    db.flush()
+    project = db.get(Project, source_run.project_id)
+    if project:
+        project.name = confirmed_blueprint.project_name
+        project.prompt = confirmation.prompt
+    record_event(
+        db,
+        source_run.id,
+        "approval.confirmed",
+        "User accepted the Product Manager catalog alternative",
+        stage="scope_review",
+        payload={"next_run_id": next_run.id},
+    )
+    record_event(
+        db,
+        next_run.id,
+        "artifact.created",
+        "Confirmed Blueprint copied without another Product Manager pass",
+        stage="product_manager",
+        payload={"artifact_id": artifact.id, "source_run_id": source_run.id},
+    )
+    record_event(
+        db,
+        next_run.id,
+        "build.queued",
+        "Confirmed alternative is queued for architecture",
+        stage="build_queue",
+        payload={"build_job_id": job.id},
+    )
+    db.commit()
+    job_dispatcher(job.id)
+    db.refresh(next_run)
+    return _run_view(db, next_run)
 
 
 @router.get("/runs/{run_id}/events/history", response_model=list[EventView])

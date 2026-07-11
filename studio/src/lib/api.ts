@@ -60,6 +60,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ blueprint }),
     }),
+  confirmAlternative: (runId: string, prompt: string) =>
+    request<RunView>(`/api/runs/${runId}/confirm-alternative`, {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
   events: (runId: string) =>
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),
   projects: () => request<ProjectView[]>("/api/projects"),

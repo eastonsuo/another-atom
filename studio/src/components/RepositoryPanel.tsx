@@ -1,11 +1,13 @@
-import { FileJson, FileText, FolderGit2, LoaderCircle, RefreshCw } from "lucide-react";
+import { FileJson, FileText, FolderGit2, LoaderCircle, RefreshCw, TerminalSquare, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { ProjectFileEntry, RunView } from "../types";
+import type { ProjectFileEntry, RunView, VersionView } from "../types";
+import { TerminalPanel } from "./TerminalPanel";
 
 type Language = "zh" | "en";
 
-export function RepositoryPanel({ run, language }: { run: RunView; language: Language }) {
+export function RepositoryPanel({ run, language, onVersionSaved, onError }: { run: RunView; language: Language; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
+  const [active, setActive] = useState<"files" | "terminal" | null>(null);
   const [files, setFiles] = useState<ProjectFileEntry[]>([]);
   const [selected, setSelected] = useState<ProjectFileEntry | null>(null);
   const [content, setContent] = useState("");
@@ -53,7 +55,14 @@ export function RepositoryPanel({ run, language }: { run: RunView; language: Lan
   const repositoryFiles = files.filter((file) => file.source === "repository");
   const artifactFiles = files.filter((file) => file.source === "artifact");
 
-  return <aside className="repository-panel">
+  return <aside className={active ? "workspace-tools open" : "workspace-tools"}>
+    <div className="workspace-tool-rail">
+      <button className={active === "files" ? "active" : ""} onClick={() => setActive((current) => current === "files" ? null : "files")} title={copy(language, "Project files")}><FolderGit2 size={17} /><span>{copy(language, "Files")}</span></button>
+      <button className={active === "terminal" ? "active" : ""} disabled={!run.version_id} onClick={() => setActive((current) => current === "terminal" ? null : "terminal")} title={run.version_id ? copy(language, "Restricted Vim") : copy(language, "Build a version before opening Vim")}><TerminalSquare size={17} /><span>Vim</span></button>
+    </div>
+    {active && <div className="workspace-tool-content">
+      <button className="workspace-tool-close" onClick={() => setActive(null)} aria-label={copy(language, "Close panel")} title={copy(language, "Close panel")}><X size={15} /></button>
+      {active === "files" ? <div className="repository-panel">
     <div className="repository-heading">
       <div><FolderGit2 size={17} /><span><strong>{copy(language, "Project files")}</strong><small>{copy(language, "Live HTTP file list")}</small></span></div>
       <button onClick={() => void refresh()} disabled={loading} title={copy(language, "Refresh files")} aria-label={copy(language, "Refresh files")}>
@@ -68,6 +77,8 @@ export function RepositoryPanel({ run, language }: { run: RunView; language: Lan
       <div><strong>{selected?.path ?? copy(language, "Select a file")}</strong>{selected?.source === "artifact" && <span>{copy(language, "Not committed")}</span>}</div>
       {error ? <p>{error}</p> : selected ? <pre><code>{content}</code></pre> : <p>{copy(language, "No generated files yet")}</p>}
     </div>
+      </div> : <div className="terminal-drawer"><TerminalPanel projectId={run.project_id} language={language} onSaved={onVersionSaved} onError={onError} /></div>}
+    </div>}
   </aside>;
 }
 
@@ -94,6 +105,10 @@ function copy(language: Language, text: string): string {
   if (language === "en") return text;
   return {
     "Project files": "项目文件",
+    "Files": "文件",
+    "Restricted Vim": "受限 Vim",
+    "Build a version before opening Vim": "生成项目版本后才能打开 Vim",
+    "Close panel": "关闭面板",
     "Live HTTP file list": "后台实时文件列表",
     "Refresh files": "刷新文件",
     "Project Repository": "项目代码库",
