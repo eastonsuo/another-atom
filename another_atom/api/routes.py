@@ -6,10 +6,10 @@ from uuid import uuid4
 from fastapi import (
     APIRouter,
     BackgroundTasks,
-    Cookie,
     Depends,
     Header,
     Query,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -17,6 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from websockets.asyncio.client import connect as websocket_connect
 
@@ -215,7 +216,11 @@ def signup(
         quota_limit=get_settings().demo_quota_units,
     )
     db.add(user)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise AppError("USERNAME_TAKEN", "That username is already in use", 409) from exc
     _, token = _create_auth_session(db, user)
     db.commit()
     _set_session_cookie(response, token)
@@ -244,10 +249,11 @@ def login(
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
+    request: Request,
     response: Response,
-    session_token: str | None = Cookie(default=None, alias="another_atom_session"),
     db: Session = Depends(get_db),
 ) -> Response:
+    session_token = request.cookies.get(get_settings().session_cookie_name)
     if session_token:
         auth_session = db.scalar(
             select(AuthSession).where(

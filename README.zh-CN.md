@@ -429,7 +429,7 @@ Browser -- HTTPS/WSS --> Unified Gateway
 | **版本与发布分离** | 已完成 | 新版本和 Restore 不自动移动线上指针；Publish/Update 由显式接口执行 |
 | **恢复与配额** | 已完成 | Blueprint 后台恢复、Job Lease、阶段 Artifact 复用、实际用量结算、剩余预占释放和并发 Approval 测试通过 |
 | **xterm.js + Sandbox Gateway** | 部分完成 | Studio、Control Plane WSS 代理、独立 Sandbox Host、restricted Vim 镜像和保存版本链已实现；Linux 实机隔离待验收 |
-| **自动化测试** | 已完成 | 当前后端单元/集成测试 52 项通过，包含 Golden Path、反路径、恢复、并发、身份、Git 和 Sandbox 保存 |
+| **自动化测试** | 已完成 | 当前后端单元/集成测试 53 项通过，包含 Golden Path、反路径、恢复、并发、身份、Git 和 Sandbox 保存 |
 | **Railway 公网部署** | 待完成 | Dockerfile 和 Railway 配置已存在，尚无 PostgreSQL/持久化存储环境下完成验收的公网地址 |
 
 ## 11. 后续验收目标

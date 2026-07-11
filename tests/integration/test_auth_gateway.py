@@ -54,3 +54,16 @@ def test_two_authenticated_users_cannot_read_each_others_projects(
         assert client.get(f"/api/runs/{created['run_id']}").status_code == 404
     finally:
         get_settings.cache_clear()
+
+
+def test_duplicate_username_returns_conflict(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    try:
+        payload = {"username": "duplicate", "password": "correct-horse-battery-staple"}
+        assert client.post("/api/auth/signup", json=payload).status_code == 201
+        duplicate = client.post("/api/auth/signup", json=payload)
+        assert duplicate.status_code == 409
+        assert duplicate.json()["code"] == "USERNAME_TAKEN"
+    finally:
+        get_settings.cache_clear()

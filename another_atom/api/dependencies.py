@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from fastapi import Cookie, Depends, Header
+from fastapi import Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,11 +14,12 @@ from another_atom.storage.models import AuthSession, User, now_utc
 
 
 def get_current_user(
-    session_token: str | None = Cookie(default=None, alias="another_atom_session"),
+    request: Request,
     x_user_id: str | None = Header(default=None, alias="X-User-ID"),
     db: Session = Depends(get_db),
 ) -> User:
     settings = get_settings()
+    session_token = request.cookies.get(settings.session_cookie_name)
     if session_token:
         auth_session = db.scalar(
             select(AuthSession).where(
