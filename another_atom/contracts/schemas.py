@@ -84,25 +84,25 @@ class AttachmentMeta(BaseModel):
 class Blueprint(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     project_name: str = Field(min_length=1, max_length=80)
-    product_type: Literal["product_catalog"] = "product_catalog"
+    product_type: str = Field(default="web_application", min_length=1, max_length=80)
     support_level: SupportLevel
     support_reasons: list[str] = Field(default_factory=list, max_length=8)
     mapped_requirements: list[str] = Field(default_factory=list, max_length=12)
     omitted_requirements: list[str] = Field(default_factory=list, max_length=12)
     rewrite_suggestion: str | None = Field(default=None, max_length=500)
-    capability_policy_version: Literal["catalog-v1"] = "catalog-v1"
-    pages: list[str] = Field(min_length=1, max_length=5)
-    modules: list[str] = Field(min_length=1, max_length=12)
+    capability_policy_version: Literal["catalog-v1", "web-v1"] = "web-v1"
+    pages: list[str] = Field(min_length=1, max_length=12)
+    modules: list[str] = Field(min_length=1, max_length=20)
     visual_direction: str = Field(min_length=1, max_length=240)
     data_requirements: list[str] = Field(default_factory=list, max_length=8)
 
-    @field_validator("pages")
+    @field_validator("pages", "modules")
     @classmethod
-    def pages_are_supported(cls, value: list[str]) -> list[str]:
-        allowed = {"Home", "Catalog", "Product"}
-        if not set(value).issubset(allowed):
-            raise ValueError("V1 pages must stay within Home, Catalog, and Product")
-        return value
+    def labels_are_not_blank(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("Blueprint page and module labels cannot be blank")
+        return cleaned
 
 
 class ArchitectureSpec(BaseModel):
@@ -128,7 +128,7 @@ class ProductItem(BaseModel):
 
 
 class PageSpec(BaseModel):
-    route: str = Field(pattern=r"^/(?:catalog|product/[a-z0-9-]+)?$")
+    route: str = Field(pattern=r"^/[a-z0-9/_-]*$")
     name: str = Field(min_length=1, max_length=80)
     sections: list[str] = Field(min_length=1, max_length=10)
 
@@ -142,8 +142,11 @@ class AppSpec(BaseModel):
     primary_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     accent_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     background_color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
-    pages: list[PageSpec] = Field(min_length=3, max_length=6)
-    products: list[ProductItem] = Field(min_length=3, max_length=12)
+    pages: list[PageSpec] = Field(min_length=1, max_length=12)
+    products: list[ProductItem] = Field(default_factory=list, max_length=12)
+    html: str = Field(default="", max_length=40_000)
+    css: str = Field(default="", max_length=40_000)
+    javascript: str = Field(default="", max_length=40_000)
 
 
 class ValidationCheck(BaseModel):

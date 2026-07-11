@@ -34,7 +34,8 @@ def initialize_repository(project_id: str) -> Path:
     _git(path, "config", "user.email", "runtime@another-atom.local")
     (path / "README.md").write_text(
         "# Another Atom Project\n\n"
-        "`app-spec.json` is the editable source contract for the controlled V1 renderer.\n",
+        "Generated Web source is stored in `index.html`, `styles.css`, and `app.js`.\n"
+        "`app-spec.json` preserves the versioned Agent contract.\n",
         encoding="utf-8",
     )
     (path / ".gitignore").write_text(".another-atom/worktrees/\n", encoding="utf-8")
@@ -62,6 +63,15 @@ def commit_version(
         json.dumps(app_spec.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    generated_files = ["app-spec.json", ".another-atom/version.json"]
+    if app_spec.html:
+        (path / "index.html").write_text(
+            _web_document(app_spec),
+            encoding="utf-8",
+        )
+        (path / "styles.css").write_text(app_spec.css + "\n", encoding="utf-8")
+        (path / "app.js").write_text(app_spec.javascript + "\n", encoding="utf-8")
+        generated_files.extend(["index.html", "styles.css", "app.js"])
     marker_path.write_text(
         json.dumps(
             {
@@ -74,9 +84,26 @@ def commit_version(
         + "\n",
         encoding="utf-8",
     )
-    _git(path, "add", "app-spec.json", ".another-atom/version.json")
+    _git(path, "add", *generated_files)
     _git(path, "commit", "-m", f"version {version_number}: {source.value}")
     return _git(path, "rev-parse", "HEAD")
+
+
+def _web_document(app_spec: AppSpec) -> str:
+    title = (
+        app_spec.project_name.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return (
+        "<!doctype html>\n"
+        '<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+        f"<title>{title}</title>\n"
+        '<link rel="stylesheet" href="./styles.css">\n</head>\n<body>\n'
+        f"{app_spec.html}\n"
+        '<script src="./app.js"></script>\n</body>\n</html>\n'
+    )
 
 
 def list_repository_files(project_id: str) -> list[tuple[str, int]]:

@@ -1,3 +1,4 @@
+import html as html_lib
 import json
 import re
 from dataclasses import dataclass
@@ -111,14 +112,10 @@ class MockLLMProvider:
         self._usage = ProviderUsage(request_count=self._usage.request_count + 1)
 
     _unsupported_terms = {
-        "crm",
-        "erp",
-        "minesweeper",
-        "扫雷",
-        "社交网络",
-        "即时通讯",
-        "工作流平台",
-        "数据分析后台",
+        "native ios",
+        "native android",
+        "原生 ios",
+        "原生安卓",
     }
     _adapted_terms = {
         "支付",
@@ -130,6 +127,12 @@ class MockLLMProvider:
         "login",
         "payment",
         "购物车结算",
+        "crm",
+        "erp",
+        "社交网络",
+        "即时通讯",
+        "工作流平台",
+        "数据分析后台",
     }
 
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision:
@@ -150,9 +153,9 @@ class MockLLMProvider:
         return LeadDecision(
             route=LeadRoute.DIRECT,
             response=(
-                "V1 can build controlled product catalogs with Home, Catalog, and Product pages. "
-                "Tell me the catalog, products, and visual direction when you want the team "
-                "to build."
+                "Another Atom builds browser-based applications from natural-language requirements. "
+                "Describe the product behavior, content, interactions, and visual direction when "
+                "you want the team to build."
             ),
             reason="The message is a question or clarification rather than a build instruction.",
         )
@@ -169,30 +172,84 @@ class MockLLMProvider:
             support_level = SupportLevel.SUPPORTED
 
         project_name = self._project_name(prompt)
+        is_game = any(term in normalized for term in ("minesweeper", "扫雷", "game", "游戏"))
+        is_catalog = any(
+            term in normalized
+            for term in ("catalog", "storefront", "shop", "store", "商品目录", "商品站", "商店")
+        )
+        product_type = "web_game" if is_game else "product_catalog" if is_catalog else "web_application"
         omitted = (
-            ["V1 does not implement authentication, payment, or transactional backends"]
+            ["Server-side authentication, payment, and persistent backend writes are excluded"]
             if support_level == SupportLevel.ADAPTED
             else []
         )
-        return Blueprint(
-            project_name=project_name,
-            support_level=support_level,
-            support_reasons=[self._support_reason(support_level)],
-            mapped_requirements=[
+        if is_game:
+            mapped = [
+                "Interactive browser game",
+                "Client-side game state",
+                "Responsive controls",
+            ]
+            pages = ["Game"]
+            modules = ["Minefield", "Mine counter", "Timer", "Restart", "Win and loss states"]
+            visual_direction = "Crisp retro game interface with readable grid states"
+            data_requirements = ["Local board state", "Mine positions", "Elapsed time"]
+        elif is_catalog:
+            mapped = [
                 "Responsive product catalog",
                 "Product detail navigation",
                 "Editable visual direction",
-            ],
+            ]
+            pages = ["Home", "Catalog", "Product"]
+            modules = ["Hero", "Featured products", "Catalog grid", "Product detail"]
+            visual_direction = "Editorial commerce with crisp typography and restrained color"
+            data_requirements = ["Controlled sample product data"]
+        else:
+            mapped = ["Browser-based interaction", "Responsive layout", "Local client-side state"]
+            pages = ["Application"]
+            modules = ["Primary workspace", "Controls", "Status feedback"]
+            visual_direction = "Clear application interface with strong interaction feedback"
+            data_requirements = ["Local application state"]
+        return Blueprint(
+            project_name=project_name,
+            product_type=product_type,
+            support_level=support_level,
+            support_reasons=[self._support_reason(support_level)],
+            mapped_requirements=mapped,
             omitted_requirements=omitted,
-            rewrite_suggestion=(self._catalog_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None),
-            pages=["Home", "Catalog", "Product"],
-            modules=["Hero", "Featured products", "Catalog grid", "Product detail"],
-            visual_direction="Editorial commerce with crisp typography and restrained color",
-            data_requirements=["Controlled sample product data"],
+            rewrite_suggestion=(self._web_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None),
+            capability_policy_version="web-v1",
+            pages=pages,
+            modules=modules,
+            visual_direction=visual_direction,
+            data_requirements=data_requirements,
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
         self._record_request()
+        if blueprint.product_type == "web_game":
+            return ArchitectureSpec(
+                architecture_summary="A self-contained browser game with deterministic local state and no backend.",
+                page_strategy=["Single game workspace", "Immediate state feedback"],
+                data_entities=["Cell", "Board", "GameState"],
+                primary_color="#17152B",
+                accent_color="#D94F45",
+                background_color="#FFF7DE",
+                typography="sans",
+                density="compact",
+                style=blueprint.visual_direction,
+            )
+        if blueprint.product_type != "product_catalog":
+            return ArchitectureSpec(
+                architecture_summary="A self-contained responsive Web application using local browser state.",
+                page_strategy=[f"{page} screen" for page in blueprint.pages],
+                data_entities=["ApplicationState", "UserInput"],
+                primary_color="#17152B",
+                accent_color="#D94F45",
+                background_color="#FFF7DE",
+                typography="sans",
+                density="comfortable",
+                style=blueprint.visual_direction,
+            )
         return ArchitectureSpec(
             architecture_summary=(
                 "A three-route catalog rendered from a validated AppSpec with no generated backend."
@@ -212,6 +269,42 @@ class MockLLMProvider:
     ) -> AppSpec:
         self._record_request()
         self._raise_if_requested(prompt, "engineer")
+        if blueprint.product_type == "web_game":
+            html, css, javascript = self._minesweeper_code()
+            return AppSpec(
+                project_name=blueprint.project_name,
+                tagline="Clear the field without triggering a mine",
+                hero_title=blueprint.project_name,
+                hero_body="Reveal safe cells, flag suspected mines, and clear the board.",
+                primary_color=architecture_spec.primary_color,
+                accent_color=architecture_spec.accent_color,
+                background_color=architecture_spec.background_color,
+                pages=[PageSpec(route="/", name="Game", sections=["status", "minefield", "controls"])],
+                html=html,
+                css=css,
+                javascript=javascript,
+            )
+        if blueprint.product_type != "product_catalog":
+            html, css, javascript = self._generic_app_code(blueprint, prompt)
+            return AppSpec(
+                project_name=blueprint.project_name,
+                tagline="Interactive browser application",
+                hero_title=blueprint.project_name,
+                hero_body="A browser-based implementation of the requested workflow.",
+                primary_color=architecture_spec.primary_color,
+                accent_color=architecture_spec.accent_color,
+                background_color=architecture_spec.background_color,
+                pages=[
+                    PageSpec(
+                        route="/",
+                        name=blueprint.pages[0],
+                        sections=[module.casefold().replace(" ", "-")[:40] for module in blueprint.modules[:6]],
+                    )
+                ],
+                html=html,
+                css=css,
+                javascript=javascript,
+            )
         return AppSpec(
             project_name=blueprint.project_name,
             tagline="Objects selected for everyday clarity",
@@ -255,7 +348,11 @@ class MockLLMProvider:
                 f"Analyzed {app_spec.project_name}: deterministic checks "
                 f"{'passed' if validation_report.passed else 'found blocking issues'}."
             ),
-            data_checks=["Product identifiers are unique", "Catalog data is complete"],
+            data_checks=(
+                ["Product identifiers are unique", "Catalog data is complete"]
+                if app_spec.products
+                else ["Application state is local", "Interactive controls have visible feedback"]
+            ),
             engineering_checks=[check.label for check in validation_report.checks],
             warnings=warnings,
             suggested_actions=["edit"] if warnings else ["accept"],
@@ -283,49 +380,68 @@ class MockLLMProvider:
         chinese_match = re.search(r"(?:叫做|名为)\s*([^，。,.]{1,40})", compact)
         if chinese_match:
             return chinese_match.group(1).strip()[:80]
+        if "minesweeper" in compact.casefold() or "扫雷" in compact:
+            return "扫雷游戏" if "扫雷" in compact else "Minesweeper"
+        if compact:
+            return compact[:40].strip(" ，。,.!！?") or "Web Application"
         return "Mono Market"
 
     @staticmethod
     def _support_reason(level: SupportLevel) -> str:
         return {
-            SupportLevel.SUPPORTED: "The request maps to the controlled catalog renderer.",
+            SupportLevel.SUPPORTED: "The request can run as a self-contained browser application.",
             SupportLevel.ADAPTED: (
-                "The catalog can be built after excluding transactional features."
+                "The browser experience can be built after excluding unavailable server capabilities."
             ),
-            SupportLevel.UNSUPPORTED: "The primary workflow is outside the V1 catalog boundary.",
+            SupportLevel.UNSUPPORTED: "The primary workflow requires a non-Web runtime.",
         }[level]
 
     @staticmethod
-    def _catalog_rewrite(prompt: str) -> str:
-        """Create a deterministic, buildable PM draft that preserves the user's theme."""
+    def _minesweeper_code() -> tuple[str, str, str]:
+        html = """<main class="game-shell">
+  <header><div><span class="eyebrow">CLASSIC LOGIC GAME</span><h1>扫雷</h1><p>点击翻开方格，右键插旗，避开所有地雷。</p></div><button id="restart">重新开始</button></header>
+  <section class="game-status" aria-live="polite"><strong>💣 <span id="mines-left">10</span></strong><strong id="message">准备开始</strong><strong>⏱ <span id="timer">0</span>s</strong></section>
+  <section id="board" class="minefield" aria-label="扫雷棋盘"></section>
+</main>"""
+        css = """:root{font-family:Inter,system-ui,sans-serif;color:#17152b;background:#fff7de}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(#ded7ff 1px,transparent 1px);background-size:20px 20px}.game-shell{width:min(94vw,680px);padding:28px;border:3px solid #17152b;border-radius:18px;background:#fffaf0;box-shadow:10px 10px 0 #17152b}header{display:flex;justify-content:space-between;align-items:end;gap:20px}h1{margin:3px 0;font-size:clamp(40px,8vw,72px);line-height:.9}p{margin:10px 0 0;color:#625d72}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.12em;color:#d94f45}button{font:inherit}.game-shell>header button{padding:11px 15px;border:2px solid #17152b;border-radius:8px;background:#ffd45c;box-shadow:3px 3px 0 #17152b;font-weight:900;cursor:pointer}.game-status{display:flex;justify-content:space-between;gap:12px;margin:24px 0 14px;padding:12px 14px;border:2px solid #17152b;border-radius:10px;background:#e8f8f1}.minefield{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;aspect-ratio:1}.cell{display:grid;place-items:center;min-width:0;border:2px solid #17152b;border-radius:6px;background:#ded7ff;color:#17152b;font-weight:900;font-size:clamp(12px,3vw,20px);cursor:pointer;box-shadow:2px 2px 0 #17152b}.cell:hover{transform:translate(-1px,-1px)}.cell.revealed{background:#fff;border-color:#aaa4b8;box-shadow:none;cursor:default}.cell.mine{background:#ff6f61}.cell.flagged{background:#ffd45c}@media(max-width:520px){.game-shell{padding:16px}header{align-items:start;flex-direction:column}.minefield{gap:2px}.cell{border-width:1px;border-radius:3px;box-shadow:1px 1px 0 #17152b}}"""
+        javascript = """const rows=9,cols=9,mineCount=10;let mines=new Set(),revealed=new Set(),flags=new Set(),ended=false,started=false,seconds=0,tick=null;const board=document.querySelector('#board'),message=document.querySelector('#message'),timer=document.querySelector('#timer'),left=document.querySelector('#mines-left');const key=(r,c)=>r*cols+c;function neighbors(i){const r=Math.floor(i/cols),c=i%cols,out=[];for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){const nr=r+dr,nc=c+dc;if((dr||dc)&&nr>=0&&nr<rows&&nc>=0&&nc<cols)out.push(key(nr,nc))}return out}function plant(first){while(mines.size<mineCount){const value=Math.floor(Math.random()*rows*cols);if(value!==first&&!neighbors(first).includes(value))mines.add(value)}}function start(first){if(started)return;started=true;plant(first);message.textContent='进行中';tick=setInterval(()=>{seconds++;timer.textContent=String(seconds)},1000)}function reveal(i){if(ended||flags.has(i)||revealed.has(i))return;start(i);if(mines.has(i)){ended=true;clearInterval(tick);message.textContent='踩到地雷了';mines.forEach(value=>revealed.add(value));render();return}const queue=[i];while(queue.length){const current=queue.shift();if(revealed.has(current)||flags.has(current))continue;revealed.add(current);if(neighbors(current).filter(value=>mines.has(value)).length===0)queue.push(...neighbors(current))}if(revealed.size===rows*cols-mineCount){ended=true;clearInterval(tick);message.textContent='胜利！全部安全方格已清除'}render()}function flag(i){if(ended||revealed.has(i))return;flags.has(i)?flags.delete(i):flags.size<mineCount&&flags.add(i);left.textContent=String(mineCount-flags.size);render()}function render(){board.innerHTML='';for(let i=0;i<rows*cols;i++){const cell=document.createElement('button');cell.className='cell';cell.setAttribute('aria-label',`第${Math.floor(i/cols)+1}行第${i%cols+1}列`);if(flags.has(i)){cell.classList.add('flagged');cell.textContent='⚑'}if(revealed.has(i)){cell.classList.add('revealed');if(mines.has(i)){cell.classList.add('mine');cell.textContent='✹'}else{const count=neighbors(i).filter(value=>mines.has(value)).length;cell.textContent=count?String(count):''}}cell.addEventListener('click',()=>reveal(i));cell.addEventListener('contextmenu',event=>{event.preventDefault();flag(i)});board.appendChild(cell)}}function reset(){clearInterval(tick);mines=new Set();revealed=new Set();flags=new Set();ended=false;started=false;seconds=0;timer.textContent='0';left.textContent=String(mineCount);message.textContent='准备开始';render()}document.querySelector('#restart').addEventListener('click',reset);reset();"""
+        return html, css, javascript
+
+    @staticmethod
+    def _generic_app_code(blueprint: Blueprint, prompt: str) -> tuple[str, str, str]:
+        title = html_lib.escape(blueprint.project_name)
+        modules = "".join(
+            f'<button class="tool" data-tool="{index}"><strong>{html_lib.escape(module)}</strong><span>Open</span></button>'
+            for index, module in enumerate(blueprint.modules)
+        )
+        html = (
+            '<main class="app-shell"><aside><span class="eyebrow">WEB APPLICATION</span>'
+            f"<h1>{title}</h1><p>{html_lib.escape(blueprint.visual_direction)}</p>"
+            '<button id="reset">Reset demo state</button></aside><section class="workspace">'
+            '<header><div><strong>Workspace</strong><span id="status">Ready</span></div></header>'
+            f'<div class="tool-grid">{modules}</div><article id="detail"><h2>Select a feature</h2>'
+            '<p>The generated interface keeps all demo state inside this browser preview.</p></article>'
+            "</section></main>"
+        )
+        css = """:root{font-family:Inter,system-ui,sans-serif;color:#17152b;background:#fff7de}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(#ded7ff 1px,transparent 1px);background-size:20px 20px}.app-shell{min-height:100vh;display:grid;grid-template-columns:minmax(220px,300px) 1fr}aside{padding:36px 28px;border-right:3px solid #17152b;background:#e8f8f1}h1{font-size:clamp(34px,5vw,64px);line-height:.95;margin:8px 0 16px}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.12em;color:#d94f45}p{color:#625d72;line-height:1.6}button{font:inherit}.tool,#reset{border:2px solid #17152b;border-radius:9px;box-shadow:3px 3px 0 #17152b;cursor:pointer}#reset{margin-top:20px;padding:10px 12px;background:#ffd45c;font-weight:800}.workspace{padding:28px}.workspace header{display:flex;justify-content:space-between;padding:16px;border:2px solid #17152b;border-radius:10px;background:#fff}.workspace header div{display:flex;justify-content:space-between;width:100%}.tool-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:20px 0}.tool{min-height:110px;padding:18px;display:flex;flex-direction:column;justify-content:space-between;align-items:start;background:#ded7ff;text-align:left}.tool.active{background:#ff6f61}#detail{min-height:220px;padding:24px;border:2px solid #17152b;border-radius:12px;background:#fff;box-shadow:5px 5px 0 #17152b}@media(max-width:720px){.app-shell{grid-template-columns:1fr}aside{border-right:0;border-bottom:3px solid #17152b}.workspace{padding:16px}}"""
+        javascript = """const tools=[...document.querySelectorAll('.tool')],detail=document.querySelector('#detail'),status=document.querySelector('#status');tools.forEach(tool=>tool.addEventListener('click',()=>{tools.forEach(item=>item.classList.remove('active'));tool.classList.add('active');const name=tool.querySelector('strong').textContent;status.textContent=`${name} active`;detail.innerHTML=`<h2>${name}</h2><p>This interactive module is running with local demo state inside the browser preview.</p><label>Demo input <input placeholder="Type to update state"></label>`}));document.querySelector('#reset').addEventListener('click',()=>{tools.forEach(item=>item.classList.remove('active'));status.textContent='Ready';detail.innerHTML='<h2>Select a feature</h2><p>The generated interface keeps all demo state inside this browser preview.</p>'});"""
+        return html, css, javascript
+
+    @staticmethod
+    def _web_rewrite(prompt: str) -> str:
+        """Create a deterministic Web alternative without changing the product goal."""
         normalized = prompt.lower()
-        if "crm" in normalized:
+        if "camera" in normalized:
             return (
-                "Build a sales productivity product catalog featuring customer-management "
-                "templates, sales dashboards, and team toolkits, with Home, Catalog, and "
-                "Product pages and a clear professional visual style."
+                "Build a browser-based camera interface prototype that preserves the capture "
+                "workflow, gallery, controls, and visual feedback, using local demo media because "
+                "native device integration is outside the current Web Runtime."
             )
-        if "erp" in normalized:
-            return (
-                "Build a business operations toolkit catalog featuring inventory templates, "
-                "planning packs, and finance worksheets, with Home, Catalog, and Product pages."
-            )
-        if "minesweeper" in normalized or "扫雷" in normalized:
-            return (
-                "创建一个扫雷主题商品目录，展示桌游、收藏品和周边商品，包含首页、目录页和"
-                "商品详情页，采用复古像素风格和清晰的商品分类。"
-            )
-        if "社交网络" in normalized:
-            theme = "创作者社区周边商品"
-        elif "即时通讯" in normalized:
-            theme = "沟通主题办公工具"
-        elif "工作流平台" in normalized:
-            theme = "效率模板与自动化工具"
-        elif "数据分析后台" in normalized:
-            theme = "数据分析模板与工具"
-        else:
-            theme = "与原始创意相关的商品"
-        return f"创建一个{theme}目录，包含首页、目录页和商品详情页，并为商品分类、视觉风格和详情展示补充完整内容。"
+        return (
+            "Build a browser-based version of the original product goal. Preserve its core "
+            "workflow and interactions, use local client-side state, and replace only unavailable "
+            "native or server capabilities with explicit demo data."
+        )
 
     @staticmethod
     def _products() -> list[ProductItem]:
@@ -424,18 +540,15 @@ class OllamaCloudProvider:
             Blueprint,
             "Product Manager",
             (
-                "Turn the user request into the V1 Blueprint. V1 only supports product catalog "
-                "sites with Home, Catalog, and Product pages. Classify support_level honestly as "
-                "supported, adapted, or unsupported. Do not invent backend, auth, or payment "
-                "support. mapped_requirements may only contain these canonical claims: "
-                "Responsive product catalog, Product detail navigation, Editable visual direction. "
-                "When the original workflow is unsupported, act as a proactive Product Manager: "
-                "rewrite_suggestion must be a complete build instruction that preserves the "
-                "request's recognizable theme while converting it into the supported catalog "
-                "scope. Expand the catalog concept with concrete product categories, Home, "
-                "Catalog, and Product pages, and a visual direction. Write it in the same language "
-                "as the user. It must be ready for the user to confirm unchanged, not advice asking "
-                "the user to describe or narrow the request."
+                "Turn the request into a Web application Blueprint without changing the user's "
+                "product goal. product_type is a concise free-form label such as web_game, tool, "
+                "dashboard, or product_catalog; never convert a game or tool into a catalog. "
+                "Use supported for self-contained browser behavior using HTML, CSS, and JavaScript. "
+                "Use adapted when the visible Web experience can be built but server-side auth, "
+                "payments, persistent database writes, or external services must be omitted or "
+                "represented with local demo state. Use unsupported only when the primary goal "
+                "cannot be represented as a Web application. Preserve the user's language and "
+                "expand concrete pages, interactions, states, error feedback, and visual direction."
             ),
             {"request": prompt, "mode": mode.value},
         )
@@ -445,11 +558,11 @@ class OllamaCloudProvider:
             ArchitectureSpec,
             "Architect",
             (
-                "Define a controlled three-route React catalog architecture and visual tokens. "
-                "Use only Product and Category data entities and no generated backend. Primary "
+                "Define a self-contained browser architecture for the Blueprint. Use local client "
+                "state and no generated backend, package installation, remote assets, or network "
+                "calls. Describe the requested pages, components, state, and interactions. Primary "
                 "text against background must meet at least 4.5:1 contrast and accent against "
-                "background at least 3:1. Preserve the requested visual theme while choosing "
-                "accessible token values."
+                "background at least 3:1."
             ),
             {"blueprint": blueprint.model_dump(mode="json")},
         )
@@ -461,11 +574,14 @@ class OllamaCloudProvider:
             AppSpec,
             "Engineer",
             (
-                "Produce an AppSpec for the fixed renderer. Include exactly the Home, Catalog, and "
-                "at least one /product/<id> route plus 3-6 complete sample products. Use valid hex "
-                "colors and stable lowercase product ids. Copy primary_color, accent_color, and "
-                "background_color exactly from ArchitectureSpec. Do not output source code or "
-                "shell commands."
+                "Produce a complete self-contained Web AppSpec. html is the semantic body fragment, "
+                "css is all styling, and javascript implements the requested interactions using "
+                "browser APIs. Do not use markdown fences, external URLs, remote assets, fetch, "
+                "WebSocket, dynamic imports, eval, package dependencies, or backend calls. Use only "
+                "inline/local content. The code must work when combined into one sandboxed HTML "
+                "document. Populate pages with route/name/sections metadata matching the experience. "
+                "products is optional and should only be used for an actual catalog. Copy all three "
+                "colors exactly from ArchitectureSpec."
             ),
             {
                 "request": prompt,
@@ -481,7 +597,7 @@ class OllamaCloudProvider:
             DataReview,
             "Data Analyst",
             (
-                "Analyze catalog data completeness and summarize the immutable engineering "
+                "Analyze application state/content completeness and summarize the immutable engineering "
                 "validation. You cannot change failed checks to pass. Separate data_checks from "
                 "engineering_checks."
             ),
@@ -608,7 +724,7 @@ class OllamaCloudProvider:
                     "messages": fallback_messages,
                     "stream": False,
                     "response_format": {"type": "json_object"},
-                    "max_tokens": 4096,
+                    "max_tokens": 8192,
                     "temperature": 0.2,
                 }
                 if think is not None:

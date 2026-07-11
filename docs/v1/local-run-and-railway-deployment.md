@@ -62,30 +62,54 @@ uv run uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 
 本地默认数据库是 `data/another_atom.db`。停止服务后再次启动，已有项目和版本仍会保留。需要干净数据时，先停止服务，再删除该数据库文件。
 
-### 2.4 本地试用路径
+### 2.4 配置真实模型与 DeepSeek 兜底
 
-1. 在 Home 输入商品展示站需求，或选择页面下方示例 Prompt。
+仓库提交的 `.env.example` 只包含空的 Secret 占位符。本地 `.env` 被 Git 忽略，可以按以下方式配置：
+
+```text
+LLM_PROVIDER=ollama
+OLLAMA_API_KEY=<Ollama Cloud Key>
+OLLAMA_HOST=https://ollama.com
+OLLAMA_MODEL=deepseek-v4-flash
+OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_LEAD_TIMEOUT_SECONDS=60
+OLLAMA_FAILOVER_TIMEOUT_SECONDS=30
+DEEPSEEK_API_KEY=<轮换后的 DeepSeek 官方 Key>
+DEEPSEEK_HOST=https://api.deepseek.com
+```
+
+- **正常路径：** 所有结构化角色调用优先使用 Ollama Cloud；Lead 关闭 thinking，减少简单路由的延迟。
+- **触发条件：** 只有 Ollama 请求超过 `OLLAMA_FAILOVER_TIMEOUT_SECONDS` 才切换一次 DeepSeek 官方 API。普通 HTTP 4xx/5xx 或 Schema 校验失败不会伪装成超时兜底。
+- **可见状态：** Lead 等待超过阈值时显示“服务商切换中”；Run 内角色成功切换后持久化 `provider.fallback` 事件。
+- **结算方式：** Ollama 已发起的请求与 DeepSeek 官方请求都计入同一次阶段实际用量；剩余预占仍按阶段结算规则释放。
+- **未配置时：** `DEEPSEEK_API_KEY` 为空则完全禁用官方兜底，Ollama 按原超时和失败路径返回错误。
+
+Key 不得提交到 Git。曾经出现在聊天、日志或截图中的 Key 应先在服务商侧轮换，再写入本地 `.env` 或 Railway Secret。
+
+### 2.5 本地试用路径
+
+1. 在 Home 输入任意产品需求，例如扫雷游戏、计算器、看板或商品目录。
 2. 选择 `Team` 和当前可用模型，点击右侧构建按钮。模型在 Run 创建后固定，不受后续切换影响。
-3. 检查 Product Manager 生成的 Blueprint。`supported` 自动继续；`adapted` 检查映射和舍弃项后点击确认；`unsupported` 检查 PM 生成的商品目录替代草案。该草案会改变产品类型，用户接受或编辑后直接进入 Architect，不再经过第二次 PM 改写。
+3. 检查 Product Manager 生成的 Blueprint。PM 必须保留原始产品目标；`supported` 自动继续，`adapted` 展示不可用的服务端/外部能力并等待确认，`unsupported` 停止构建。用户也可显式要求 PM 重新生成需求草案。
 4. 在左侧查看 Lead、Product Manager、Architect、Engineer、Renderer、Data Analyst 的真实阶段事件。
-5. 构建完成后切换 Desktop/Mobile，进入生成站点的 Home、Catalog 和 Product 页面。
+5. 构建完成后切换 Desktop/Mobile，实际操作生成应用的按钮、状态和页面交互。
 6. 在 `Edit` 修改标题、正文或主色并保存；确认版本列表新增一项。
 7. 在 `Versions` 恢复旧版本；Restore 会创建新版本，不覆盖历史。
 8. 点击 `Publish`，从提示条打开无需登录的公开路由。
 
-V1 只接受商品展示/商品目录结构。可用以下输入检查边界与错误状态：
+V1 接受任意产品需求，但只直接执行自包含浏览器能力。可用以下输入检查边界与错误状态：
 
 ```text
-Build a CRM for a sales team
+Build a native iOS camera app
 ```
 
-结果应为 `unsupported`，原 Run 在构建前停止且不创建 Build Job。界面应展示 Product Manager 根据原主题生成的可构建商品目录草案；用户确认或编辑后，以草案创建新的 Run。
+结果应为 `unsupported`，原 Run 在构建前停止且不创建 Build Job。PM 可以提出保持相机产品目标的浏览器实现草案，但不能改成商品目录。
 
 ```text
-Build a catalog with login and payment
+Build a CRM with real company login and cloud customer data
 ```
 
-结果应为 `adapted`，Blueprint 会列出被舍弃的交易能力。
+结果应为 `adapted`，Blueprint 保留 CRM 产品目标，同时列出真实登录和云端写入等未提供能力。
 
 Mock 测试环境还保留显式失败标记：`[fail:llm]`、`[fail:build]`、`[fail:data]`。它们只用于验收错误状态，不是用户功能。
 
@@ -198,7 +222,7 @@ SQLite 与本地 Project Git 都依赖当前实例挂载的 `/app/data`。这符
 
 1. Deployment Logs 出现 Uvicorn 启动成功，且没有数据库连接错误。
 2. `https://<domain>/api/health` 返回 `status: ok` 和 `database: sqlite`。
-3. 打开根地址，提交一个 `supported` 商品目录请求，确认 Blueprint 自动进入构建且未出现多余审批。
+3. 打开根地址，提交一个 `supported` 纯前端请求，确认 Blueprint 自动进入构建且未出现多余审批。
 4. 刷新页面后重新打开项目，确认 Run、事件和版本仍存在。
 5. Publish 后用无登录的隐身窗口打开 Public URL。
 6. 执行 Unpublish，确认旧 Public URL 返回不可用状态。

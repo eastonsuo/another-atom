@@ -72,6 +72,7 @@ export const api = {
     }),
   events: (runId: string) =>
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),
+  downloadRunLog: (runId: string) => `/api/runs/${runId}/logs/download`,
   projects: () => request<ProjectView[]>("/api/projects"),
   quota: () => request<QuotaView>("/api/quota"),
   models: () => request<ModelsView>("/api/models"),

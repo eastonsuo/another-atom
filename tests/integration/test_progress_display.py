@@ -118,18 +118,18 @@ def test_all_persisted_events_expose_message_and_valid_stage(client: TestClient)
             assert stage in FRONTEND_TEAM_STAGES
 
 
-def test_out_of_scope_request_stops_at_needs_input_scope_review(client: TestClient) -> None:
+def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:
     """An out-of-scope request must settle on needs_input / scope_review.
 
-    Regression guard for the studio freeze bug: a request the V1 catalog cannot
-    build (e.g. a CRM / a game like Minesweeper) used to leave the main
+    Regression guard for the studio freeze bug: a request that requires a native
+    runtime used to leave the main
     workspace stuck on the looping "Engineer is working" animation. The
     frontend only switches to the ScopeStop / needs-input view when the run
     settles on status ``needs_input`` at stage ``scope_review`` (a terminal
     state the polling loop stops on), so we lock that contract here and confirm
     a rewrite suggestion is surfaced for the user to act on.
     """
-    run = _create_team_run(client, "Build a CRM for my sales team")
+    run = _create_team_run(client, "Build a native iOS camera app")
 
     assert run["status"] in FRONTEND_STATUSES
     assert run["status"] == "needs_input"
@@ -145,19 +145,18 @@ def test_out_of_scope_request_stops_at_needs_input_scope_review(client: TestClie
     payload = needs_input_events[-1]["payload"]
     assert payload.get("stage") == "scope_review"
     assert isinstance(payload.get("message"), str) and payload["message"]
-    # The PM draft is what ScopeStop asks the user to confirm; it must be a
-    # concrete, buildable catalog request rather than generic rewrite advice.
+    # The PM draft must preserve the camera goal while proposing a Web runtime.
     assert isinstance(payload.get("rewrite_suggestion"), str) and payload["rewrite_suggestion"]
     suggestion = payload["rewrite_suggestion"].lower()
-    assert "catalog" in suggestion
-    assert "home" in suggestion
-    assert "product" in suggestion
+    assert "browser" in suggestion
+    assert "camera" in suggestion
+    assert "catalog" not in suggestion
 
 
-def test_confirmed_catalog_alternative_skips_second_product_manager_pass(
+def test_confirmed_web_requirement_skips_second_product_manager_pass(
     client: TestClient,
 ) -> None:
-    source = _create_team_run(client, "Build a CRM for my sales team")
+    source = _create_team_run(client, "Build a native iOS camera app")
     assert source["status"] == "needs_input"
     suggestion = source["blueprint"]["rewrite_suggestion"]
 
@@ -188,26 +187,29 @@ def test_confirmed_catalog_alternative_skips_second_product_manager_pass(
     ).status_code == 409
 
 
-def test_catalog_alternative_cannot_be_edited_back_to_original_game(
+def test_minesweeper_is_built_as_an_interactive_web_game(
     client: TestClient,
 ) -> None:
     source = _create_team_run(client, "Build a minesweeper game")
-    assert source["status"] == "needs_input"
-
-    response = client.post(
-        f"/api/runs/{source['run_id']}/confirm-alternative",
-        json={"prompt": "扫雷游戏"},
+    assert source["status"] in {"completed", "completed_degraded"}
+    assert source["blueprint"]["product_type"] == "web_game"
+    assert source["blueprint"]["support_level"] == "supported"
+    assert "minefield" in source["app_spec"]["html"]
+    assert "function reveal" in source["app_spec"]["javascript"]
+    assert source["version_id"]
+    files = client.get(
+        f"/api/projects/{source['project_id']}/files?run_id={source['run_id']}"
+    ).json()
+    repository_paths = {item["path"] for item in files if item["source"] == "repository"}
+    assert {"index.html", "styles.css", "app.js", "app-spec.json"}.issubset(
+        repository_paths
     )
-
-    assert response.status_code == 422
-    assert response.json()["code"] == "ALTERNATIVE_OUT_OF_SCOPE"
-    assert client.get(f"/api/runs/{source['run_id']}").json()["status"] == "needs_input"
 
 
 def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
     client: TestClient,
 ) -> None:
-    source = _create_team_run(client, "Build a minesweeper game")
+    source = _create_team_run(client, "Build a native iOS camera app")
     response = client.post(
         f"/api/runs/{source['run_id']}/regenerate-alternative",
         json={"prompt": "做一个复古像素风扫雷游戏"},
@@ -220,10 +222,12 @@ def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
     regenerated = client.get(f"/api/runs/{regenerated['run_id']}").json()
     assert regenerated["status"] == "needs_input"
     assert regenerated["blueprint"]["support_level"] == "unsupported"
+    assert regenerated["blueprint"]["product_type"] == "web_game"
     assert regenerated["build_job_id"] is None
     suggestion = regenerated["blueprint"]["rewrite_suggestion"]
     assert isinstance(suggestion, str) and suggestion
-    assert "catalog" in suggestion.lower() or "商品" in suggestion
+    assert "web_game" in suggestion.lower() or "扫雷" in suggestion
+    assert "商品" not in suggestion
 
     second_response = client.post(
         f"/api/runs/{regenerated['run_id']}/regenerate-alternative",
@@ -233,3 +237,12 @@ def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
     second = client.get(f"/api/runs/{second_response.json()['run_id']}").json()
     assert second["status"] == "needs_input"
     assert second["build_job_id"] is None
+
+    confirmed = client.post(
+        f"/api/runs/{second['run_id']}/confirm-alternative",
+        json={"prompt": second["blueprint"]["rewrite_suggestion"]},
+    )
+    assert confirmed.status_code == 202
+    built = client.get(f"/api/runs/{confirmed.json()['run_id']}").json()
+    assert built["status"] in {"completed", "completed_degraded"}
+    assert "minefield" in built["app_spec"]["html"]

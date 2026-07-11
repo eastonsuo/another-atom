@@ -16,7 +16,7 @@ def provider() -> MockLLMProvider:
     [
         ("Build a product catalog for lamps", SupportLevel.SUPPORTED),
         ("Build a catalog with login and payment", SupportLevel.ADAPTED),
-        ("Build a CRM for sales teams", SupportLevel.UNSUPPORTED),
+        ("Build a CRM for sales teams", SupportLevel.ADAPTED),
     ],
 )
 def test_support_classification(
@@ -53,6 +53,31 @@ def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) 
 
 def test_ollama_lead_disables_thinking(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {
+                    "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
+                },
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    assert provider.route_message("给我一个网页版扫雷").route == LeadRoute.TEAM
+    assert provider.take_usage().request_count == 1
+    assert captured["think"] is False
     get_settings.cache_clear()
 
 
@@ -100,31 +125,6 @@ def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
     assert usage.input_tokens == 20
     assert usage.output_tokens == 8
     get_settings.cache_clear()
-    captured: dict = {}
-
-    class Response:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "message": {
-                    "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
-                },
-                "prompt_eval_count": 10,
-                "eval_count": 5,
-            }
-
-    def fake_post(*args, **kwargs):
-        captured.update(kwargs.get("json", {}))
-        return Response()
-
-    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
-    provider = OllamaCloudProvider(model="deepseek-v4-flash")
-    assert provider.route_message("给我一个网页版扫雷").route == LeadRoute.TEAM
-    assert provider.take_usage().request_count == 1
-    assert captured["think"] is False
-    get_settings.cache_clear()
 
 
 def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) -> None:
@@ -136,6 +136,22 @@ def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) 
     assert any(page.route.startswith("/product/") for page in app_spec.pages)
     assert len(app_spec.products) >= 3
     assert provider.take_usage().request_count == 3
+
+
+def test_minesweeper_preserves_the_game_goal_and_generates_web_source(
+    provider: MockLLMProvider,
+) -> None:
+    prompt = "给我一个网页版扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
+
+    assert blueprint.support_level == SupportLevel.SUPPORTED
+    assert blueprint.product_type == "web_game"
+    assert blueprint.pages == ["Game"]
+    assert "minefield" in app_spec.html
+    assert "function reveal" in app_spec.javascript
+    assert app_spec.products == []
 
 
 def test_extract_json_handles_reasoning_and_prose() -> None:

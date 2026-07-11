@@ -25,6 +25,7 @@ from another_atom.domain.artifacts import get_artifact, save_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
 from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
+from another_atom.observability import get_logger
 from another_atom.repository.service import commit_version
 from another_atom.storage.models import (
     Artifact,
@@ -36,6 +37,7 @@ from another_atom.storage.models import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+logger = get_logger("orchestrator")
 
 
 class Orchestrator:
@@ -69,6 +71,14 @@ class Orchestrator:
             return Blueprint.model_validate(artifact.payload) if artifact else None
         run.current_stage = "product_manager"
         run.status = RunStatus.PRODUCT_RUNNING.value
+        logger.info(
+            "blueprint_stage_started",
+            extra={
+                "run_id": run.id,
+                "project_id": run.project_id,
+                "stage": "product_manager",
+            },
+        )
         self._record_event_once(
             run,
             "stage.started",
@@ -90,12 +100,20 @@ class Orchestrator:
                 )
             ) is not None
             if regenerate_only:
-                draft = blueprint.rewrite_suggestion or (
-                    f"Create {blueprint.project_name} as a product catalog with "
-                    f"{', '.join(blueprint.pages)} pages and {', '.join(blueprint.modules)} modules. "
-                    f"Visual direction: {blueprint.visual_direction}. "
-                    f"Data requirements: {', '.join(blueprint.data_requirements)}."
-                )
+                if blueprint.rewrite_suggestion:
+                    draft = blueprint.rewrite_suggestion
+                elif any("\u3400" <= character <= "\u9fff" for character in run.prompt):
+                    draft = (
+                        f"构建“{blueprint.project_name}”这一{blueprint.product_type}。"
+                        f"页面：{'、'.join(blueprint.pages)}；功能：{'、'.join(blueprint.modules)}；"
+                        f"视觉方向：{blueprint.visual_direction}。"
+                    )
+                else:
+                    draft = (
+                        f"Build {blueprint.project_name} as a {blueprint.product_type}. "
+                        f"Screens: {', '.join(blueprint.pages)}. Features: {', '.join(blueprint.modules)}. "
+                        f"Visual direction: {blueprint.visual_direction}."
+                    )
                 blueprint = blueprint.model_copy(
                     update={
                         "support_level": SupportLevel.UNSUPPORTED,
@@ -126,7 +144,7 @@ class Orchestrator:
                 self._record_event_once(
                     run,
                     "run.needs_input",
-                    "The request is outside the V1 catalog scope",
+                    "The request needs user review before Web implementation",
                     "scope_review",
                     {"rewrite_suggestion": blueprint.rewrite_suggestion},
                 )
@@ -166,14 +184,30 @@ class Orchestrator:
                     {"build_job_id": build_job.id},
                 )
             self.db.commit()
+            logger.info(
+                "blueprint_stage_completed",
+                extra={"run_id": run.id, "project_id": run.project_id, "status": run.status},
+            )
             return blueprint
         except LLMProviderError as exc:
+            logger.warning(
+                "blueprint_stage_failed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self._fail_run(run, "LLM_OUTPUT_FAILED", str(exc))
             return None
         except AppError as exc:
+            logger.warning(
+                "blueprint_stage_failed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self._fail_run(run, exc.code, exc.message)
             return None
         except Exception as exc:
+            logger.exception(
+                "blueprint_stage_crashed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self.db.rollback()
             current = self.db.get(Run, run.id)
             if current:
@@ -200,6 +234,10 @@ class Orchestrator:
 
         blueprint = Blueprint.model_validate(blueprint_artifact.payload)
         try:
+            logger.info(
+                "build_pipeline_started",
+                extra={"run_id": run.id, "project_id": run.project_id},
+            )
             project.status = ProjectStatus.BUILDING.value
             if run.mode == Mode.TEAM.value:
                 architecture_spec = self._run_architect(run, blueprint)
@@ -223,7 +261,7 @@ class Orchestrator:
                 self._fail_run(
                     run,
                     "BUILD_VALIDATION_FAILED",
-                    "The controlled renderer rejected the generated AppSpec",
+                    "The Web source validator rejected the generated AppSpec",
                 )
                 return
 
@@ -252,9 +290,25 @@ class Orchestrator:
                 {"version_id": version.id, "version_number": version.version_number},
             )
             self.db.commit()
+            logger.info(
+                "build_pipeline_completed",
+                extra={
+                    "run_id": run.id,
+                    "project_id": run.project_id,
+                    "status": run.status,
+                },
+            )
         except (LLMProviderError, ValueError) as exc:
+            logger.warning(
+                "build_pipeline_failed",
+                extra={"run_id": run.id, "stage": run.current_stage},
+            )
             self._fail_run(run, "PIPELINE_FAILED", str(exc))
         except AppError as exc:
+            logger.warning(
+                "build_pipeline_failed",
+                extra={"run_id": run.id, "stage": run.current_stage},
+            )
             self._fail_run(run, exc.code, exc.message)
 
     def _run_architect(self, run: Run, blueprint: Blueprint) -> ArchitectureSpec:
@@ -293,7 +347,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "stage.started",
-            "Engineer is producing the renderer contract",
+            "Engineer is generating the Web source contract",
             "engineer",
         )
         app_spec, artifact, _ = self._run_agent_stage(
@@ -352,7 +406,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "build.started",
-            "Controlled React renderer started",
+            "Web source packaging and sandbox validation started",
             "build",
             {"build_job_id": build_job.id},
         )
@@ -371,7 +425,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "validation.completed",
-            "Deterministic route, data, and renderer checks completed",
+            "Deterministic source, capability, handoff, and visual checks completed",
             "build",
             {"passed": validation_report.passed},
         )
@@ -384,7 +438,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "stage.started",
-            "Data Analyst is checking catalog data and validation evidence",
+            "Data Analyst is checking application state and validation evidence",
             "data",
         )
         data_review, artifact, _ = self._run_agent_stage(
@@ -471,6 +525,14 @@ class Orchestrator:
                 result = operation()
                 usage = provider.take_usage()
                 if usage.fallback_provider:
+                    logger.warning(
+                        "provider_fallback_used",
+                        extra={
+                            "run_id": run.id,
+                            "stage": stage,
+                            "provider": usage.fallback_provider,
+                        },
+                    )
                     record_event(
                         self.db,
                         run.id,
@@ -490,6 +552,10 @@ class Orchestrator:
                 self.db.commit()
                 return result, artifact, True
             except (LLMProviderError, ValueError) as exc:
+                logger.warning(
+                    "agent_stage_attempt_failed",
+                    extra={"run_id": run.id, "stage": stage, "status": f"attempt_{attempt}"},
+                )
                 last_error = exc
                 usage = provider.take_usage()
                 self.db.rollback()
@@ -510,6 +576,7 @@ class Orchestrator:
                 )
                 self.db.commit()
             except Exception:
+                logger.exception("agent_stage_crashed", extra={"run_id": run.id, "stage": stage})
                 usage = provider.take_usage()
                 self.db.rollback()
                 current = self.db.get(Run, run.id)
@@ -525,6 +592,15 @@ class Orchestrator:
         raise LLMProviderError("Agent output failed")
 
     def _fail_run(self, run: Run, code: str, message: str) -> None:
+        logger.error(
+            "run_failed",
+            extra={
+                "run_id": run.id,
+                "project_id": run.project_id,
+                "stage": run.current_stage,
+                "status": code,
+            },
+        )
         run.status = RunStatus.FAILED.value
         run.error_code = code
         run.error_message = message

@@ -13,13 +13,19 @@ from another_atom.api.routes import router
 from another_atom.build.worker import worker_loop
 from another_atom.config import get_settings
 from another_atom.domain.errors import AppError
+from another_atom.observability import configure_logging, get_logger
 from another_atom.storage.database import init_database
+
+logger = get_logger("api")
 
 
 def create_app(*, initialize_database: bool = True) -> FastAPI:
+    configure_logging()
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if initialize_database:
+            logger.info("application_starting", extra={"status": "starting"})
             init_database()
             stop_worker = asyncio.Event()
             blueprint_recovery_task = asyncio.create_task(
@@ -33,6 +39,7 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
                 stop_worker.set()
                 await blueprint_recovery_task
                 await worker_task
+                logger.info("application_stopped", extra={"status": "stopped"})
 
     app = FastAPI(title="Another Atom API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -45,9 +52,19 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
 
     @app.exception_handler(AppError)
     async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
+        if exc.status_code >= 500:
+            logger.warning("application_error", extra={"status": exc.status_code})
         return JSONResponse(
             status_code=exc.status_code,
             content={"code": exc.code, "message": exc.message, "details": {}},
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_error(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled_request_exception")
+        return JSONResponse(
+            status_code=500,
+            content={"code": "INTERNAL_ERROR", "message": "Unexpected server error", "details": {}},
         )
 
     app.include_router(router)

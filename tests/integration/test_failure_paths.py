@@ -12,7 +12,7 @@ def _create_run(client: TestClient, payload: dict, headers: dict | None = None) 
 
 
 def test_unsupported_request_stops_before_approval(client: TestClient) -> None:
-    run = _create_run(client, {"prompt": "Build a CRM for a sales organization", "mode": "team"})
+    run = _create_run(client, {"prompt": "Build a native iOS camera app", "mode": "team"})
     assert run["status"] == "needs_input"
     assert run["blueprint"]["support_level"] == "unsupported"
     assert run["version_id"] is None

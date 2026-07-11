@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -48,9 +49,9 @@ from another_atom.contracts.schemas import (
     Mode,
     ModelOption,
     ModelsView,
-    ProjectStatus,
     ProjectFileContent,
     ProjectFileEntry,
+    ProjectStatus,
     ProjectView,
     PublicationStrategy,
     PublishRequest,
@@ -76,6 +77,7 @@ from another_atom.domain.auth import (
 )
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
+from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
     commit_version,
@@ -104,6 +106,7 @@ from another_atom.storage.models import (
 )
 
 router = APIRouter(prefix="/api")
+logger = get_logger("routes")
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -309,6 +312,7 @@ def route_lead_message(
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
     provider = get_llm_provider(model=selected_model)
+    logger.info("lead_request_started", extra={"provider": provider.name})
     reserved = provider.reservation_units
     claimed = db.execute(
         update(User)
@@ -327,6 +331,7 @@ def route_lead_message(
         decision = provider.route_message(request.message, request.force_team)
         usage = provider.take_usage()
     except LLMProviderError as exc:
+        logger.warning("lead_request_failed", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
         db.add(
@@ -345,6 +350,7 @@ def route_lead_message(
         db.commit()
         raise AppError("LEAD_FAILED", str(exc), 502) from exc
     except Exception as exc:
+        logger.exception("lead_request_platform_failure", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
         db.add(
@@ -372,6 +378,10 @@ def route_lead_message(
         request_count=usage.request_count,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+    )
+    logger.info(
+        "lead_request_completed",
+        extra={"provider": provider.name, "status": decision.route.value},
     )
     db.add(lead_message)
     _settle_lead_quota(db, user.id, reserved, usage.request_count)
@@ -445,6 +455,10 @@ def create_run(
         project.repository_path = str(initialize_repository(project.id))
         project.repository_branch = "main"
     except RepositoryError as exc:
+        logger.exception(
+            "project_repository_initialization_failed",
+            extra={"project_id": project.id},
+        )
         db.rollback()
         raise AppError("REPOSITORY_INIT_FAILED", str(exc), 500) from exc
     project_session = ProjectSession(project_id=project.id, user_id=user.id)
@@ -472,6 +486,10 @@ def create_run(
             )
         )
     db.commit()
+    logger.info(
+        "run_created",
+        extra={"run_id": run.id, "project_id": project.id, "status": run.status},
+    )
     background_tasks.add_task(blueprint_executor, run.id)
     return _run_view(db, run)
 
@@ -582,33 +600,11 @@ def confirm_alternative_blueprint(
         raise AppError(
             "ALTERNATIVE_NOT_ALLOWED", "Only unsupported requests use this confirmation", 409
         )
-    normalized_prompt = confirmation.prompt.casefold()
-    catalog_markers = (
-        "商品",
-        "商城",
-        "商店",
-        "product catalog",
-        "storefront",
-        "catalog site",
-        "product store",
-        "shop",
-    )
-    if not any(marker in normalized_prompt for marker in catalog_markers):
-        raise AppError(
-            "ALTERNATIVE_OUT_OF_SCOPE",
-            "The confirmed alternative must remain a product catalog. V1 cannot build the original game or application type.",
-            422,
-        )
     confirmed_blueprint = source_blueprint.model_copy(
         update={
             "support_level": SupportLevel.SUPPORTED,
             "support_reasons": [
-                "The user explicitly accepted the Product Manager catalog alternative."
-            ],
-            "mapped_requirements": [
-                "Responsive product catalog",
-                "Product detail navigation",
-                "Editable visual direction",
+                "The user explicitly accepted the Product Manager requirement draft."
             ],
             "rewrite_suggestion": None,
         }
@@ -620,7 +616,7 @@ def confirm_alternative_blueprint(
             artifact_id=source_artifact.id,
             approved=True,
             payload={
-                "confirmation_type": "catalog_alternative",
+                "confirmation_type": "requirement_draft",
                 "confirmed_prompt": confirmation.prompt,
                 "blueprint": confirmed_blueprint.model_dump(mode="json"),
             },
@@ -664,7 +660,7 @@ def confirm_alternative_blueprint(
         db,
         source_run.id,
         "approval.confirmed",
-        "User accepted the Product Manager catalog alternative",
+        "User accepted the Product Manager requirement draft",
         stage="scope_review",
         payload={"next_run_id": next_run.id},
     )
@@ -680,7 +676,7 @@ def confirm_alternative_blueprint(
         db,
         next_run.id,
         "build.queued",
-        "Confirmed alternative is queued for architecture",
+        "Confirmed requirement is queued for architecture",
         stage="build_queue",
         payload={"build_job_id": job.id},
     )
@@ -760,6 +756,68 @@ def event_history(
         select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > after).order_by(RunEvent.id)
     ).all()
     return [_event_view(event) for event in events]
+
+
+def _render_run_log(run: Run, events: list[RunEvent]) -> str:
+    """Format persisted Run state and events for a user-owned debug download."""
+    lines = [
+        "Another Atom debug log",
+        f"Generated at: {datetime.now(UTC).isoformat()}",
+        "",
+        f"Run ID: {run.id}",
+        f"Project ID: {run.project_id}",
+        f"Session ID: {run.session_id}",
+        f"Status: {run.status}",
+        f"Current stage: {run.current_stage}",
+        f"Model: {run.model}",
+        f"Created at: {run.created_at.isoformat()}",
+        f"Updated at: {run.updated_at.isoformat()}",
+        f"Error code: {run.error_code or '-'}",
+        f"Error message: {run.error_message or '-'}",
+        "",
+        "Prompt:",
+        run.prompt,
+        "",
+        f"Events ({len(events)}):",
+    ]
+    for event in events:
+        lines.extend(
+            [
+                "",
+                f"[{event.created_at.isoformat()}] #{event.id} {event.event_type}",
+                f"stage: {event.stage or '-'}",
+                f"message: {event.message}",
+                "payload:",
+                json.dumps(
+                    event.payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                ),
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+@router.get("/runs/{run_id}/logs/download")
+def download_run_log(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    run = _owned_run(db, run_id, user.id)
+    events = db.scalars(
+        select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.id)
+    ).all()
+    return Response(
+        content=_render_run_log(run, events),
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="another-atom-run-{run.id}.log"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _event_view(event: RunEvent) -> EventView:
@@ -1027,6 +1085,21 @@ def revise_project(
     updates = revision.model_dump(exclude_none=True)
     if not updates:
         raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
+    if app_spec.html:
+        html = app_spec.html
+        css = app_spec.css
+        if "hero_title" in updates:
+            html = html.replace(app_spec.hero_title, updates["hero_title"])
+        if "hero_body" in updates:
+            html = html.replace(app_spec.hero_body, updates["hero_body"])
+        if "primary_color" in updates:
+            css = re.sub(
+                re.escape(app_spec.primary_color),
+                updates["primary_color"],
+                css,
+                flags=re.IGNORECASE,
+            )
+        updates.update({"html": html, "css": css})
     app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
     blueprint, architecture_spec = _validation_contracts(db, current.run_id)
     validation = validate_app_spec(

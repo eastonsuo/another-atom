@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   Code2,
+  Download,
   ExternalLink,
   History,
   Layers3,
@@ -46,12 +47,12 @@ const LANGUAGE_KEY = "another-atom-language";
 
 const EXAMPLE_PROMPTS: Record<Language, string[]> = {
   zh: [
-    "构建一个名为 Mono Market 的克制风格商品目录，展示精选家居用品，使用编辑感摄影和暖中性色。",
-    "创建一个现代灯具系列商品站，包含首页、目录页和商品详情页，字体利落，强调色用珊瑚色。",
+    "创建一个复古像素风扫雷游戏，包含 9×9 棋盘、10 个地雷、计时、插旗、胜负提示和重新开始。",
+    "创建一个个人任务看板，可以添加任务、切换状态、按优先级筛选，并在浏览器本地保存演示状态。",
   ],
   en: [
-    "Build a restrained product catalog called Mono Market for useful home objects. Use editorial photography and warm neutral colors.",
-    "Create a modern lighting collection with Home, Catalog, and Product pages. Make the typography crisp and the accent color coral.",
+    "Build a retro pixel-style Minesweeper game with a 9×9 board, 10 mines, flags, timer, win/loss feedback, and restart.",
+    "Create a personal task board with task creation, status changes, priority filters, and local browser demo state.",
   ],
 };
 
@@ -156,8 +157,8 @@ const ZH: Record<string, string> = {
   "Mock LLM is active": "Mock LLM 已启用",
   "Your build team": "你的构建团队",
   "Talk to Lead": "和 Lead 对话",
-  "Ask a question, clarify the scope, or explicitly request a product catalog build.": "可以询问、澄清范围，或明确要求构建商品目录。",
-  "A product catalog called Mono Market for carefully selected home objects…": "一个名为 Mono Market 的精选家居商品目录……",
+  "Ask a question, clarify the scope, or explicitly request a Web application build.": "可以询问、澄清范围，或明确要求构建任意 Web 应用。",
+  "Describe the application, behavior, interactions, and visual direction…": "描述你想实现的应用、功能、交互和视觉方向……",
   "Add reference attachments": "添加参考附件",
   "Language model": "语言模型",
   "Send to Lead": "发送给 Lead",
@@ -177,13 +178,14 @@ const ZH: Record<string, string> = {
   "Project log": "项目日志",
   "Run": "任务",
   "Run log": "运行日志",
+  "Download log": "下载日志",
   "Recent events": "最近事件",
   "No persisted events yet.": "暂无持久化事件。",
   "Latest": "最新",
   "persisted event": "条持久化事件",
   "persisted events": "条持久化事件",
   "Scope needs revision": "等待确认可构建替代方案",
-  "The team stopped before build because the request needs to be narrowed.": "原始产品目标超出 V1 商品目录范围，不能按原请求直接构建。",
+  "The team stopped before build because the request needs to be narrowed.": "当前需求包含 Web Runtime 无法直接提供的能力，需要确认调整后再构建。",
   "No build job was created": "确认草案后开始构建",
   "Rewrite": "PM 草案",
   "Waiting for approval": "等待确认",
@@ -208,7 +210,7 @@ const ZH: Record<string, string> = {
   "Blueprint": "Blueprint",
   "Human-in-the-loop · Adapted scope": "人工确认 · 范围调整",
   "Confirm the scope change": "确认范围变化",
-  "The supported catalog can continue only after you accept the omitted requirements.": "接受被省略的需求后，受支持的商品目录才能继续构建。",
+  "The Web application can continue after you accept the adapted runtime capabilities.": "接受被调整或省略的运行能力后，Web 应用才能继续构建。",
   "Some requirements were adapted": "部分需求已被调整",
   "Project name": "项目名称",
   "Visual direction": "视觉方向",
@@ -219,17 +221,16 @@ const ZH: Record<string, string> = {
   "This records an explicit risk confirmation.": "这会记录一次明确的风险确认。",
   "Confirm & build": "确认并构建",
   "Product Manager feedback": "产品经理反馈",
-  "The original product cannot be built in V1. Product Manager created a catalog alternative that keeps only its theme.": "原始产品目标无法在 V1 构建。产品经理只保留主题，生成了一个商品目录替代方案。",
-  "Confirm the catalog alternative": "确认商品目录替代方案",
-  "This alternative changes the product type. Accept it only if you want a catalog instead of the original application.": "该方案会改变产品类型。只有当你接受用商品目录替代原应用时才继续。",
-  "Buildable alternative": "可构建替代方案（会改变产品目标）",
-  "Accept alternative & build": "接受替代方案并开始构建",
+  "Product Manager expanded the original goal into a buildable Web requirement.": "产品经理保留了原始产品目标，并补全为可构建的 Web 需求。",
+  "Confirm the requirement draft": "确认 PM 生成的需求草案",
+  "Review the behavior, interactions, states, and visual direction before building.": "请检查功能、交互、状态和视觉方向；确认后再开始构建。",
+  "Requirement draft": "需求草案",
+  "Confirm requirement & build": "确认需求并开始构建",
   "Regenerate requirement draft": "让 PM 重新生成需求草案",
-  "Product Manager will reinterpret the text and return a new catalog alternative without starting a build.": "产品经理会重新理解输入并生成新的商品目录替代草案，不会开始构建。",
-  "The confirmed draft must remain a product catalog. To reinterpret a game or another product type, regenerate the requirement first.": "确认构建的草案必须仍是商品目录。如果要重新解释游戏或其他产品类型，请先让 PM 重新生成需求草案。",
+  "Product Manager will reinterpret the text and return a new requirement draft without starting a build.": "产品经理会重新理解输入并生成新的需求草案，不会开始构建。",
   "Could not regenerate the requirement draft": "无法重新生成需求草案",
   "Confirmation skips Product Manager and continues directly to architecture.": "确认后不会再次调用产品经理，将直接进入架构阶段。",
-  "Describe a product catalog with Home, Catalog, and Product pages…": "描述一个包含首页、目录页和商品详情页的商品目录……",
+  "Describe the product behavior, interactions, states, and visual direction…": "描述产品功能、交互、状态和视觉方向……",
   "Run stopped": "任务已停止",
   "Your project and original request are still saved.": "项目和原始请求仍已保存。",
   "Build queued": "构建已排队",
@@ -281,20 +282,24 @@ const ZH: Record<string, string> = {
   "data_running": "数据阶段",
   "Product Manager is structuring the request": "产品经理正在整理需求",
   "Blueprint is ready for review": "Blueprint 已生成，等待检查",
-  "The request is outside the V1 catalog scope": "请求超出 V1 商品目录范围",
-  "V1 only supports product catalog sites (Home, Catalog, Product pages), not interactive games.": "V1 当前只支持商品目录站点（首页、目录页、商品详情页），不支持交互式游戏。",
-  "Describe a product showcase or catalog with Home, Catalog, and Product pages.": "描述一个包含首页、目录页和商品详情页的商品展示或目录。",
-  "To use V1, consider creating a product catalog for a board game store, featuring minesweeper-themed products, with Home, Catalog, and Product pages.": "建议改成：创建一个扫雷主题商品目录，展示桌游或周边商品，包含首页、目录页和商品详情页。",
+  "The request is outside the V1 catalog scope": "当前需求包含旧版商品目录范围之外的能力，请让 PM 按原始目标重新生成 Web 需求。",
+  "V1 only supports product catalog sites (Home, Catalog, Product pages), not interactive games.": "这是一条旧版本范围说明；当前版本已经支持生成自包含 Web 交互应用。",
+  "Describe a product showcase or catalog with Home, Catalog, and Product pages.": "请描述原始产品目标、功能、交互、状态和视觉方向。",
+  "To use V1, consider creating a product catalog for a board game store, featuring minesweeper-themed products, with Home, Catalog, and Product pages.": "请让 PM 围绕扫雷游戏本身重新生成需求，不要改成商品目录。",
   "Review and confirm the Blueprint before building": "构建前需要检查并确认 Blueprint",
   "Supported Blueprint is within the requested scope and base budget": "受支持 Blueprint 在请求范围和基础预算内",
   "Build is queued": "构建已进入队列",
   "Architect is defining structure, data boundaries, and visual tokens": "架构师正在定义结构、数据边界和视觉 Token",
   "ArchitectureSpec passed schema validation": "ArchitectureSpec 已通过结构校验",
   "Engineer is producing the renderer contract": "工程师正在生成渲染器 Contract",
+  "Engineer is generating the Web source contract": "工程师正在生成 HTML、CSS 和 JavaScript",
   "AppSpec passed schema validation": "AppSpec 已通过结构校验",
   "Controlled React renderer started": "受控 React 渲染器已启动",
+  "Web source packaging and sandbox validation started": "Web 源码正在物化并进行 Sandbox 边界校验",
   "Deterministic route, data, and renderer checks completed": "路由、数据和渲染器确定性校验已完成",
+  "Deterministic source, capability, handoff, and visual checks completed": "源码、能力边界、角色交接和视觉校验已完成",
   "Data Analyst is checking catalog data and validation evidence": "数据分析正在检查商品数据和校验证据",
+  "Data Analyst is checking application state and validation evidence": "数据分析正在检查应用状态和校验证据",
   "DataReview is ready": "DataReview 已生成",
   "Interactive preview is ready": "可交互预览已就绪",
   "The build worker stopped unexpectedly": "Build Worker 异常停止",
@@ -371,13 +376,7 @@ function eventMessage(language: Language, event: RunEvent): string {
 
 function rewriteSuggestion(language: Language, blueprint: Blueprint | null, events: RunEvent[]): string {
   const latestRewrite = [...events].reverse().find((event) => typeof event.payload.rewrite_suggestion === "string")?.payload.rewrite_suggestion;
-  return conversationalText(language, blueprint?.rewrite_suggestion ?? latestRewrite, "Describe a product catalog with Home, Catalog, and Product pages…");
-}
-
-function isCatalogAlternative(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return ["商品", "商城", "商店", "product catalog", "storefront", "catalog site", "product store", "shop"]
-    .some((marker) => normalized.includes(marker));
+  return conversationalText(language, blueprint?.rewrite_suggestion ?? latestRewrite, "Describe the product behavior, interactions, states, and visual direction…");
 }
 
 function LanguageToggle({
@@ -796,7 +795,7 @@ function Composer({
           ))}
         </div>
         <h1>{ui(language, "Talk to Lead")}</h1>
-        <p>{ui(language, "Ask a question, clarify the scope, or explicitly request a product catalog build.")}</p>
+        <p>{ui(language, "Ask a question, clarify the scope, or explicitly request a Web application build.")}</p>
       </div>
       <div className="composer-layout">
         <div className="composer-primary">
@@ -804,7 +803,7 @@ function Composer({
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
-              placeholder={ui(language, "A product catalog called Mono Market for carefully selected home objects…")}
+              placeholder={ui(language, "Describe the application, behavior, interactions, and visual direction…")}
               maxLength={4000}
               autoFocus
             />
@@ -1056,7 +1055,7 @@ function BlueprintSnapshot({ blueprint, language }: { blueprint: Blueprint; lang
 
 function BlueprintEditor({ blueprint, setBlueprint, approve, approving, language }: { blueprint: Blueprint; setBlueprint: (value: Blueprint) => void; approve: () => void; approving: boolean; language: Language }) {
   return <div className="blueprint-view">
-    <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>{ui(language, "Human-in-the-loop · Adapted scope")}</span><h1>{ui(language, "Confirm the scope change")}</h1><p>{ui(language, "The supported catalog can continue only after you accept the omitted requirements.")}</p></div><SupportBadge level={blueprint.support_level} language={language} /></div>
+    <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>{ui(language, "Human-in-the-loop · Adapted scope")}</span><h1>{ui(language, "Confirm the scope change")}</h1><p>{ui(language, "The Web application can continue after you accept the adapted runtime capabilities.")}</p></div><SupportBadge level={blueprint.support_level} language={language} /></div>
     {blueprint.support_level === "adapted" && <div className="scope-note"><CircleAlert size={17} /><div><strong>{ui(language, "Some requirements were adapted")}</strong><p>{blueprint.omitted_requirements.join(" ")}</p></div></div>}
     <div className="blueprint-form">
       <label>{ui(language, "Project name")}<input value={blueprint.project_name} onChange={(e) => setBlueprint({ ...blueprint, project_name: e.target.value })} /></label>
@@ -1078,9 +1077,9 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
   const [revised, setRevised] = useState(rewrite);
   const [submitting, setSubmitting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const catalogDraft = isCatalogAlternative(revised);
+  const draftReady = revised.trim().length >= 4;
   const submit = async () => {
-    if (!revised.trim() || !catalogDraft || submitting) return;
+    if (!draftReady || submitting) return;
     setSubmitting(true);
     setError("");
     try {
@@ -1112,23 +1111,22 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
       <RoleAvatar role="product" size="large" />
       <div>
         <span>{ui(language, "Product Manager feedback")}</span>
-        <h1>{ui(language, "Confirm the catalog alternative")}</h1>
-        <p>{ui(language, "The original product cannot be built in V1. Product Manager created a catalog alternative that keeps only its theme.")}</p>
-        <p>{reason}</p>
-        <small><CircleAlert size={14} /> {ui(language, "This alternative changes the product type. Accept it only if you want a catalog instead of the original application.")}</small>
+        <h1>{ui(language, "Confirm the requirement draft")}</h1>
+        <p>{ui(language, "Product Manager expanded the original goal into a buildable Web requirement.")}</p>
+        {blueprint?.capability_policy_version !== "catalog-v1" && <p>{reason}</p>}
+        <small><CircleAlert size={14} /> {ui(language, "Review the behavior, interactions, states, and visual direction before building.")}</small>
       </div>
     </div>
     <div className="scope-revise">
-      <label>{ui(language, "Buildable alternative")}
-        <textarea value={revised} onChange={(event) => setRevised(event.target.value)} placeholder={rewrite || ui(language, "Describe a product catalog with Home, Catalog, and Product pages…")} maxLength={4000} rows={4} autoFocus />
+      <label>{ui(language, "Requirement draft")}
+        <textarea value={revised} onChange={(event) => setRevised(event.target.value)} placeholder={rewrite || ui(language, "Describe the product behavior, interactions, states, and visual direction…")} maxLength={4000} rows={4} autoFocus />
       </label>
-      {!catalogDraft && revised.trim() && <p className="scope-warning"><CircleAlert size={14} /> {ui(language, "The confirmed draft must remain a product catalog. To reinterpret a game or another product type, regenerate the requirement first.")}</p>}
       <p className="scope-hint"><Sparkles size={13} /> {ui(language, "Confirmation skips Product Manager and continues directly to architecture.")}</p>
       <div className="scope-actions">
         <button className="secondary-action" disabled={!revised.trim() || regenerating || submitting} onClick={regenerate}>{regenerating ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, "Regenerate requirement draft")}</button>
-        <button className="primary-action" disabled={!revised.trim() || !catalogDraft || submitting || regenerating} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Accept alternative & build")}</button>
+        <button className="primary-action" disabled={!draftReady || submitting || regenerating} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Confirm requirement & build")}</button>
       </div>
-      <small className="scope-regenerate-note">{ui(language, "Product Manager will reinterpret the text and return a new catalog alternative without starting a build.")}</small>
+      <small className="scope-regenerate-note">{ui(language, "Product Manager will reinterpret the text and return a new requirement draft without starting a build.")}</small>
     </div>
   </div>;
 }
@@ -1252,6 +1250,9 @@ function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent
             </div>
             <span className={`debug-status ${run.status}`}>{statusLabel(language, run.status)}</span>
           </div>
+          <a className="download-log-button" href={api.downloadRunLog(run.run_id)} download title={ui(language, "Download log")}>
+            <Download size={14} /> {ui(language, "Download log")}
+          </a>
           <div className="debug-panel-meta">
             <span>{stageLabel(language, run.current_stage)}</span>
             <span>{events.length} {ui(language, events.length === 1 ? "persisted event" : "persisted events")}</span>
