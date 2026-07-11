@@ -66,7 +66,7 @@ uv run uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 
 1. 在 Home 输入商品展示站需求，或选择页面下方示例 Prompt。
 2. 选择 `Team` 和当前可用模型，点击右侧构建按钮。模型在 Run 创建后固定，不受后续切换影响。
-3. 检查 Product Manager 生成的 Blueprint。`supported` 自动继续；`adapted` 检查映射和舍弃项后点击确认；`unsupported` 检查 PM 生成的替代草案，可直接确认或修改后重新开始。
+3. 检查 Product Manager 生成的 Blueprint。`supported` 自动继续；`adapted` 检查映射和舍弃项后点击确认；`unsupported` 检查 PM 生成的商品目录替代草案。该草案会改变产品类型，用户接受或编辑后直接进入 Architect，不再经过第二次 PM 改写。
 4. 在左侧查看 Lead、Product Manager、Architect、Engineer、Renderer、Data Analyst 的真实阶段事件。
 5. 构建完成后切换 Desktop/Mobile，进入生成站点的 Home、Catalog 和 Product 页面。
 6. 在 `Edit` 修改标题、正文或主色并保存；确认版本列表新增一项。
@@ -210,7 +210,7 @@ SQLite 与本地 Project Git 都依赖当前实例挂载的 `/app/data`。这符
 - Railway 账户、Volume 和实际资源会产生平台用量；本仓库不承诺免费额度。
 - 当前代码尚未实际创建 Railway Project，因此仓库中没有可填写的在线 Demo URL。
 - Dockerfile 已提供，但本机 Docker daemon 未响应，本轮未完成本地镜像构建验证；Railway 首次 Build Log 仍需人工确认。
-- 当前 Provider 是 Mock；部署成功只能证明产品闭环、状态与 UI 可运行，不能证明真实模型质量。
+- 默认 Provider 是 Mock；配置 Ollama/DeepSeek 后可运行真实模型，但仍需用完整四角色链路验收模型质量。
 
 ## 7. 正式 V1 的 Sandbox 部署前置
 

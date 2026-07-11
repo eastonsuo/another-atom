@@ -150,7 +150,7 @@ Target guarantees: user isolation | persistence | quota | Git traceability | San
 ### 5. Protect: Make Multi-User Public Access Real
 
 - **Identity is enforced:** Username/password login creates a server-side session cookie. Resource ownership comes from that session, not a caller-supplied user header; signing in as another user exposes only that user's Projects.
-- **State survives:** PostgreSQL stores identity, projects, sessions, quota, jobs, events, and versions. The Sandbox Host persists trusted local Git repositories and immutable build artifacts.
+- **State survives:** V1 stores identity, projects, sessions, quota, jobs, events, and versions in SQLite on a persistent Volume. The same single-instance storage boundary persists trusted Project Git repositories and immutable build artifacts; PostgreSQL and shared object storage belong to the horizontal-scale path.
 - **Usage stays bounded:** Plans and the Usage Ledger reserve quota before an LLM call and settle afterward; concurrent sessions cannot bypass account limits.
 - **Quota is application-local:** Another Atom's demo units count Provider requests for product control and are not shared with Codex usage. Ollama Cloud account limits remain an independent Provider concern.
 - **Quota exhaustion has an exit:** V1 has no self-service top-up. Projects and existing results remain available for viewing/export while the demo account waits for an operator reset.
