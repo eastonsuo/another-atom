@@ -25,6 +25,7 @@ from another_atom.domain.artifacts import get_artifact, save_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
 from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
+from another_atom.observability import get_logger
 from another_atom.repository.service import commit_version
 from another_atom.storage.models import (
     Artifact,
@@ -36,6 +37,7 @@ from another_atom.storage.models import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+logger = get_logger("orchestrator")
 
 
 class Orchestrator:
@@ -69,6 +71,14 @@ class Orchestrator:
             return Blueprint.model_validate(artifact.payload) if artifact else None
         run.current_stage = "product_manager"
         run.status = RunStatus.PRODUCT_RUNNING.value
+        logger.info(
+            "blueprint_stage_started",
+            extra={
+                "run_id": run.id,
+                "project_id": run.project_id,
+                "stage": "product_manager",
+            },
+        )
         self._record_event_once(
             run,
             "stage.started",
@@ -166,14 +176,30 @@ class Orchestrator:
                     {"build_job_id": build_job.id},
                 )
             self.db.commit()
+            logger.info(
+                "blueprint_stage_completed",
+                extra={"run_id": run.id, "project_id": run.project_id, "status": run.status},
+            )
             return blueprint
         except LLMProviderError as exc:
+            logger.warning(
+                "blueprint_stage_failed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self._fail_run(run, "LLM_OUTPUT_FAILED", str(exc))
             return None
         except AppError as exc:
+            logger.warning(
+                "blueprint_stage_failed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self._fail_run(run, exc.code, exc.message)
             return None
         except Exception as exc:
+            logger.exception(
+                "blueprint_stage_crashed",
+                extra={"run_id": run.id, "stage": "product_manager"},
+            )
             self.db.rollback()
             current = self.db.get(Run, run.id)
             if current:
@@ -200,6 +226,10 @@ class Orchestrator:
 
         blueprint = Blueprint.model_validate(blueprint_artifact.payload)
         try:
+            logger.info(
+                "build_pipeline_started",
+                extra={"run_id": run.id, "project_id": run.project_id},
+            )
             project.status = ProjectStatus.BUILDING.value
             if run.mode == Mode.TEAM.value:
                 architecture_spec = self._run_architect(run, blueprint)
@@ -252,9 +282,25 @@ class Orchestrator:
                 {"version_id": version.id, "version_number": version.version_number},
             )
             self.db.commit()
+            logger.info(
+                "build_pipeline_completed",
+                extra={
+                    "run_id": run.id,
+                    "project_id": run.project_id,
+                    "status": run.status,
+                },
+            )
         except (LLMProviderError, ValueError) as exc:
+            logger.warning(
+                "build_pipeline_failed",
+                extra={"run_id": run.id, "stage": run.current_stage},
+            )
             self._fail_run(run, "PIPELINE_FAILED", str(exc))
         except AppError as exc:
+            logger.warning(
+                "build_pipeline_failed",
+                extra={"run_id": run.id, "stage": run.current_stage},
+            )
             self._fail_run(run, exc.code, exc.message)
 
     def _run_architect(self, run: Run, blueprint: Blueprint) -> ArchitectureSpec:
@@ -471,6 +517,14 @@ class Orchestrator:
                 result = operation()
                 usage = provider.take_usage()
                 if usage.fallback_provider:
+                    logger.warning(
+                        "provider_fallback_used",
+                        extra={
+                            "run_id": run.id,
+                            "stage": stage,
+                            "provider": usage.fallback_provider,
+                        },
+                    )
                     record_event(
                         self.db,
                         run.id,
@@ -490,6 +544,10 @@ class Orchestrator:
                 self.db.commit()
                 return result, artifact, True
             except (LLMProviderError, ValueError) as exc:
+                logger.warning(
+                    "agent_stage_attempt_failed",
+                    extra={"run_id": run.id, "stage": stage, "status": f"attempt_{attempt}"},
+                )
                 last_error = exc
                 usage = provider.take_usage()
                 self.db.rollback()
@@ -510,6 +568,7 @@ class Orchestrator:
                 )
                 self.db.commit()
             except Exception:
+                logger.exception("agent_stage_crashed", extra={"run_id": run.id, "stage": stage})
                 usage = provider.take_usage()
                 self.db.rollback()
                 current = self.db.get(Run, run.id)
@@ -525,6 +584,15 @@ class Orchestrator:
         raise LLMProviderError("Agent output failed")
 
     def _fail_run(self, run: Run, code: str, message: str) -> None:
+        logger.error(
+            "run_failed",
+            extra={
+                "run_id": run.id,
+                "project_id": run.project_id,
+                "stage": run.current_stage,
+                "status": code,
+            },
+        )
         run.status = RunStatus.FAILED.value
         run.error_code = code
         run.error_message = message

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   Code2,
+  Download,
   ExternalLink,
   History,
   Layers3,
@@ -177,6 +178,7 @@ const ZH: Record<string, string> = {
   "Project log": "项目日志",
   "Run": "任务",
   "Run log": "运行日志",
+  "Download log": "下载日志",
   "Recent events": "最近事件",
   "No persisted events yet.": "暂无持久化事件。",
   "Latest": "最新",
@@ -1252,6 +1254,9 @@ function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent
             </div>
             <span className={`debug-status ${run.status}`}>{statusLabel(language, run.status)}</span>
           </div>
+          <a className="download-log-button" href={api.downloadRunLog(run.run_id)} download title={ui(language, "Download log")}>
+            <Download size={14} /> {ui(language, "Download log")}
+          </a>
           <div className="debug-panel-meta">
             <span>{stageLabel(language, run.current_stage)}</span>
             <span>{events.length} {ui(language, events.length === 1 ? "persisted event" : "persisted events")}</span>

@@ -457,6 +457,8 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .debug-panel-head span { display: block; color: #69627d; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
 .debug-panel-head strong { display: block; margin-top: 3px; font-family: "Fredoka", sans-serif; font-size: 14px; }
 .debug-status { align-self: center; padding: 5px 8px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; box-shadow: 1px 2px 0 var(--ink); font-size: 9px; font-weight: 900; text-transform: capitalize; white-space: nowrap; }
+.download-log-button { align-self: center; display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 8px; border: 1.5px solid var(--ink); border-radius: 4px; background: #fffdf7; color: var(--ink); font-size: 9px; font-weight: 900; text-decoration: none; white-space: nowrap; box-shadow: 1px 1px 0 var(--ink); }
+.download-log-button:hover { transform: translate(1px, 1px); box-shadow: none; }
 .debug-status.completed, .debug-status.completed_degraded { background: var(--mint); }
 .debug-status.failed, .debug-status.needs_input { background: var(--coral); color: #fff; }
 .debug-status.awaiting_approval { background: var(--yellow); }

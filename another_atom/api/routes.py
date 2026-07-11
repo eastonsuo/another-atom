@@ -76,6 +76,7 @@ from another_atom.domain.auth import (
 )
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
+from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
     commit_version,
@@ -104,6 +105,7 @@ from another_atom.storage.models import (
 )
 
 router = APIRouter(prefix="/api")
+logger = get_logger("routes")
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -309,6 +311,7 @@ def route_lead_message(
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
     provider = get_llm_provider(model=selected_model)
+    logger.info("lead_request_started", extra={"provider": provider.name})
     reserved = provider.reservation_units
     claimed = db.execute(
         update(User)
@@ -327,6 +330,7 @@ def route_lead_message(
         decision = provider.route_message(request.message, request.force_team)
         usage = provider.take_usage()
     except LLMProviderError as exc:
+        logger.warning("lead_request_failed", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
         db.add(
@@ -345,6 +349,7 @@ def route_lead_message(
         db.commit()
         raise AppError("LEAD_FAILED", str(exc), 502) from exc
     except Exception as exc:
+        logger.exception("lead_request_platform_failure", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
         db.add(
@@ -372,6 +377,10 @@ def route_lead_message(
         request_count=usage.request_count,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+    )
+    logger.info(
+        "lead_request_completed",
+        extra={"provider": provider.name, "status": decision.route.value},
     )
     db.add(lead_message)
     _settle_lead_quota(db, user.id, reserved, usage.request_count)
@@ -445,6 +454,10 @@ def create_run(
         project.repository_path = str(initialize_repository(project.id))
         project.repository_branch = "main"
     except RepositoryError as exc:
+        logger.exception(
+            "project_repository_initialization_failed",
+            extra={"project_id": project.id},
+        )
         db.rollback()
         raise AppError("REPOSITORY_INIT_FAILED", str(exc), 500) from exc
     project_session = ProjectSession(project_id=project.id, user_id=user.id)
@@ -472,6 +485,10 @@ def create_run(
             )
         )
     db.commit()
+    logger.info(
+        "run_created",
+        extra={"run_id": run.id, "project_id": project.id, "status": run.status},
+    )
     background_tasks.add_task(blueprint_executor, run.id)
     return _run_view(db, run)
 
@@ -760,6 +777,68 @@ def event_history(
         select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > after).order_by(RunEvent.id)
     ).all()
     return [_event_view(event) for event in events]
+
+
+def _render_run_log(run: Run, events: list[RunEvent]) -> str:
+    """Format persisted Run state and events for a user-owned debug download."""
+    lines = [
+        "Another Atom debug log",
+        f"Generated at: {datetime.now(UTC).isoformat()}",
+        "",
+        f"Run ID: {run.id}",
+        f"Project ID: {run.project_id}",
+        f"Session ID: {run.session_id}",
+        f"Status: {run.status}",
+        f"Current stage: {run.current_stage}",
+        f"Model: {run.model}",
+        f"Created at: {run.created_at.isoformat()}",
+        f"Updated at: {run.updated_at.isoformat()}",
+        f"Error code: {run.error_code or '-'}",
+        f"Error message: {run.error_message or '-'}",
+        "",
+        "Prompt:",
+        run.prompt,
+        "",
+        f"Events ({len(events)}):",
+    ]
+    for event in events:
+        lines.extend(
+            [
+                "",
+                f"[{event.created_at.isoformat()}] #{event.id} {event.event_type}",
+                f"stage: {event.stage or '-'}",
+                f"message: {event.message}",
+                "payload:",
+                json.dumps(
+                    event.payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                ),
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+@router.get("/runs/{run_id}/logs/download")
+def download_run_log(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    run = _owned_run(db, run_id, user.id)
+    events = db.scalars(
+        select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.id)
+    ).all()
+    return Response(
+        content=_render_run_log(run, events),
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="another-atom-run-{run.id}.log"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _event_view(event: RunEvent) -> EventView:

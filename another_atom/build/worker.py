@@ -11,8 +11,11 @@ from another_atom.config import get_settings
 from another_atom.contracts.schemas import BuildStatus, ProjectStatus, RunStatus
 from another_atom.domain.events import record_event
 from another_atom.domain.quota import release_quota
+from another_atom.observability import get_logger
 from another_atom.storage.database import SessionLocal
 from another_atom.storage.models import BuildJob, Project, Run, now_utc
+
+logger = get_logger("worker")
 
 
 def worker_identity() -> str:
@@ -77,6 +80,10 @@ def claim_next_job(
             job.started_at = job.started_at or now
             job.attempt += 1
             db.commit()
+            logger.info(
+                "build_job_claimed",
+                extra={"job_id": job.id, "run_id": job.run_id, "project_id": job.project_id},
+            )
             return job.id
 
 
@@ -87,10 +94,16 @@ def execute_claimed_job(
     with session_factory() as db:
         job = db.get(BuildJob, job_id)
         if job is None:
+            logger.warning("claimed_build_job_missing", extra={"job_id": job_id})
             return
         try:
+            logger.info(
+                "build_job_started",
+                extra={"job_id": job.id, "run_id": job.run_id, "project_id": job.project_id},
+            )
             Orchestrator(db).execute_approved_run(job.run_id)
         except Exception as exc:
+            logger.exception("build_job_crashed", extra={"job_id": job_id, "run_id": job.run_id})
             db.rollback()
             _fail_job(db, job_id, str(exc))
             return
@@ -110,6 +123,10 @@ def execute_claimed_job(
         job.lease_expires_at = None
         job.finished_at = now_utc()
         db.commit()
+        logger.info(
+            "build_job_finished",
+            extra={"job_id": job.id, "run_id": job.run_id, "status": job.status},
+        )
 
 
 def process_next_job(
@@ -128,6 +145,7 @@ def _fail_job(db: Session, job_id: str, message: str) -> None:
     job = db.get(BuildJob, job_id)
     if job is None:
         return
+    logger.error("build_job_marked_failed", extra={"job_id": job_id, "run_id": job.run_id})
     run = db.get(Run, job.run_id)
     job.status = BuildStatus.FAILED.value
     job.error_message = message[:2000]
