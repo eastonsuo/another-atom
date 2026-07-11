@@ -12,6 +12,10 @@ export function PreviewApp({ spec }: PreviewAppProps) {
   const [selected, setSelected] = useState<ProductItem | undefined>(spec.products[0]);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  if (spec.html) {
+    return <CodePreview spec={spec} />;
+  }
+
   if (spec.products.length === 0) {
     return (
       <div className="generated-loading">
@@ -69,6 +73,17 @@ export function PreviewApp({ spec }: PreviewAppProps) {
       </footer>
     </div>
   );
+}
+
+function CodePreview({ spec }: { spec: AppSpec }) {
+  const javascript = spec.javascript.replace(/<\/script/gi, "<\\/script");
+  const css = spec.css.replace(/<\/style/gi, "<\\/style");
+  const html = spec.html.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
+  const srcDoc = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'; media-src data: blob:; form-action 'none'; base-uri 'none'">
+<style>${css}</style></head><body>${html}<script>${javascript}</script></body></html>`;
+  return <iframe className="generated-code-preview" sandbox="allow-scripts" srcDoc={srcDoc} title={spec.project_name} />;
 }
 
 function Home({

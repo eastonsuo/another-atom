@@ -44,9 +44,9 @@ Lead Agent -> LeadDecision(route=direct|team)
 | 角色 | 输入上下文 | 结构化输出 | 可决定 | 不可决定 |
 | --- | --- | --- | --- | --- |
 | Lead | 用户消息、当前 Project 摘要、能力边界、基础预算 | `LeadDecision`、直接回复或团队摘要 | `direct` / `team` 二选一路由；direct 内回答或提出澄清 | 不自由挑选角色，不创建动态任务图，不执行 Tool，不代替专业角色生成 Contract，不发布 |
-| Product Manager | Prompt、附件元数据、平台能力范围 | `Blueprint`；unsupported 时包含可确认的 `rewrite_suggestion` | 需求字段、`support_level`、适配说明；保留原主题并把超范围目标扩展成可构建商品目录草案 | 不确认 Blueprint，不创建 Build Job，不把改写后的目标冒充原需求 |
-| Architect | 当前 Blueprint、Renderer Capability Contract | `ArchitectureSpec` | 页面策略、数据实体、布局、视觉和交互约束 | 不擅自扩大 Blueprint 范围，不选择任意技术栈 |
-| Engineer | Blueprint、ArchitectureSpec、Renderer Capability Contract | `AppSpec`；修复时为 `RevisionSpec + AppSpec` | 在固定 Renderer 能力内定义应用结构 | 不写任意源码，不选择依赖或 Shell 命令 |
+| Product Manager | Prompt、附件元数据、Web Runtime 能力范围 | `Blueprint`；unsupported 时包含可确认的 `rewrite_suggestion` | 保留原始产品目标，补全页面、交互、状态和视觉；判断浏览器能力是否足够 | 不确认 Blueprint，不创建 Build Job，不把游戏、工具或看板改成商品目录 |
+| Architect | 当前 Blueprint、Web Runtime Capability Contract | `ArchitectureSpec` | 页面策略、状态实体、布局、视觉和交互约束 | 不擅自改变产品目标，不虚构后端或原生能力 |
+| Engineer | Blueprint、ArchitectureSpec、Web Code Contract | 包含 HTML/CSS/JavaScript 的 `AppSpec` | 生成自包含浏览器源码和页面元数据 | 不安装依赖，不调用网络，不生成 Shell 命令，不发布 |
 | Data Analyst | AppSpec、不可变 ValidationReport | `DataReview` | 检查数据完整性，解释工程校验，引用证据并提出建议 | 不修改 engineering check，不宣布失败结果通过 |
 
 Product Manager 的 Blueprint 范围判定至少包含：
@@ -60,9 +60,9 @@ rewrite_suggestion
 capability_policy_version
 ```
 
-LLM 提出判定，Runtime 使用固定 Capability Policy 校验允许的产品类型、页面、模块和后端能力。同一 Policy 版本必须维持一致的允许/拒绝边界；模型不能为了继续执行把主要目标不受支持的请求标为 `adapted`。
+LLM 提出判定，Runtime 使用固定 Capability Policy 校验浏览器本地状态、网络、后端、原生能力、依赖和预算边界，而不是校验产品名称白名单。同一 Policy 版本必须维持一致的允许/拒绝边界。
 
-`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保留可识别主题、可直接作为新构建输入的完整草案，并补齐商品类别、Home/Catalog/Product 页面和视觉方向。界面必须明确说明该草案改变了产品类型。Runtime 将原 Run 停在 `NeedsInput`。接受当前商品目录草案会创建新 Run，直接复用已确认 Blueprint 进入 Architect；只有用户显式点击“重新生成需求草案”时才再次调用 Product Manager，并且重新生成本身不创建 Build Job。Agent 无权替用户确认目标变化，超范围文本也不能通过确认接口伪装成 supported。
+`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保持同一产品目标的 Web 实现草案，并明确哪些原生或服务端能力无法保留。Runtime 将原 Run 停在 `NeedsInput`。接受草案会创建新 Run并直接进入 Architect；只有用户显式点击“重新生成需求草案”时才再次调用 Product Manager，且重新生成本身不创建 Build Job。
 
 DataReview 至少包含：
 
@@ -256,14 +256,14 @@ Stage Context
 | `enqueue_build` | Orchestrator | Lead 已路由 team、Risk Policy 已满足且 AppSpec 有效时执行 |
 | `open_editor_session` | Terminal Service | 校验 AuthSession、Project owner 和单写锁后启动受限 Vim Sandbox |
 | `save_project_version` | Repository Service | 收集允许路径、校验、构建、创建 Git commit 并写 ProjectVersion |
-| `render_app` | Build Worker | 只允许固定 Renderer 和当前 Project 临时快照 |
+| `package_web_source` | Build Worker | 将已校验 AppSpec 物化为当前 Project 的 `index.html`、`styles.css`、`app.js` |
 | `run_fixed_build` | Build Worker | 只执行平台配置的固定命令 |
 | `validate_build` | Validator | 产生不可被 Agent 修改的 ValidationReport |
 | `publish_version` | Publish Service | 只接受用户显式请求和合法 `version_id` |
 
 V2 如需开放 Tool，应先引入结构化 `ToolRequest`、独立权限策略、审批和运行级沙箱；不能直接把这些 Runtime 操作注册给 V1 Agent。
 
-当前 Validator 不再只检查固定三条路由。它同时核对 Blueprint 声明的页面、受控 `mapped_requirements` 是否有确定性证据、AppSpec 与 ArchitectureSpec 视觉 Token 是否一致，以及主色/强调色相对背景的对比度。无法识别的 mapped requirement 失败而不是默认通过。
+当前 Validator 核对 Web 源码完整性、禁网和危险浏览器能力、Blueprint 页面交接、AppSpec 与 ArchitectureSpec 视觉 Token 一致性及颜色对比度。Preview 通过 CSP 和无同源权限的 iframe Sandbox 运行；Validator 结论不能被 Agent 改写。
 
 当前可运行纵切仍在每次构建前显式审批 Blueprint；审批通过使用状态 CAS 防止重复排队。上文“普通 supported 不重复审批”是 Lead/Risk Policy 完成后的 V1 目标，不是当前代码已经具备的行为。
 

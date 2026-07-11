@@ -9,23 +9,25 @@ def test_prompt_must_not_be_blank() -> None:
         RunCreate(prompt="   ")
 
 
-def test_blueprint_rejects_routes_outside_v1_scope() -> None:
-    with pytest.raises(ValidationError, match="Home, Catalog, and Product"):
+def test_blueprint_rejects_blank_web_screen_labels() -> None:
+    with pytest.raises(ValidationError, match="cannot be blank"):
         Blueprint(
-            project_name="Bad scope",
+            project_name="Web tool",
             support_level=SupportLevel.SUPPORTED,
-            pages=["Dashboard"],
+            pages=["Dashboard", "   "],
             modules=["Charts"],
             visual_direction="Dense dashboard",
         )
 
 
-def test_blueprint_accepts_controlled_catalog_pages() -> None:
+def test_blueprint_accepts_arbitrary_web_screens() -> None:
     blueprint = Blueprint(
         project_name="Mono Market",
         support_level=SupportLevel.SUPPORTED,
-        pages=["Home", "Catalog", "Product"],
-        modules=["Hero", "Grid"],
-        visual_direction="Editorial",
+        product_type="web_game",
+        pages=["Game"],
+        modules=["Board", "Timer", "Restart"],
+        visual_direction="Retro game",
     )
-    assert blueprint.capability_policy_version == "catalog-v1"
+    assert blueprint.capability_policy_version == "web-v1"
+    assert blueprint.product_type == "web_game"

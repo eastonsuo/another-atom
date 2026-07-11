@@ -100,12 +100,20 @@ class Orchestrator:
                 )
             ) is not None
             if regenerate_only:
-                draft = blueprint.rewrite_suggestion or (
-                    f"Create {blueprint.project_name} as a product catalog with "
-                    f"{', '.join(blueprint.pages)} pages and {', '.join(blueprint.modules)} modules. "
-                    f"Visual direction: {blueprint.visual_direction}. "
-                    f"Data requirements: {', '.join(blueprint.data_requirements)}."
-                )
+                if blueprint.rewrite_suggestion:
+                    draft = blueprint.rewrite_suggestion
+                elif any("\u3400" <= character <= "\u9fff" for character in run.prompt):
+                    draft = (
+                        f"构建“{blueprint.project_name}”这一{blueprint.product_type}。"
+                        f"页面：{'、'.join(blueprint.pages)}；功能：{'、'.join(blueprint.modules)}；"
+                        f"视觉方向：{blueprint.visual_direction}。"
+                    )
+                else:
+                    draft = (
+                        f"Build {blueprint.project_name} as a {blueprint.product_type}. "
+                        f"Screens: {', '.join(blueprint.pages)}. Features: {', '.join(blueprint.modules)}. "
+                        f"Visual direction: {blueprint.visual_direction}."
+                    )
                 blueprint = blueprint.model_copy(
                     update={
                         "support_level": SupportLevel.UNSUPPORTED,
@@ -136,7 +144,7 @@ class Orchestrator:
                 self._record_event_once(
                     run,
                     "run.needs_input",
-                    "The request is outside the V1 catalog scope",
+                    "The request needs user review before Web implementation",
                     "scope_review",
                     {"rewrite_suggestion": blueprint.rewrite_suggestion},
                 )
@@ -253,7 +261,7 @@ class Orchestrator:
                 self._fail_run(
                     run,
                     "BUILD_VALIDATION_FAILED",
-                    "The controlled renderer rejected the generated AppSpec",
+                    "The Web source validator rejected the generated AppSpec",
                 )
                 return
 
@@ -339,7 +347,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "stage.started",
-            "Engineer is producing the renderer contract",
+            "Engineer is generating the Web source contract",
             "engineer",
         )
         app_spec, artifact, _ = self._run_agent_stage(
@@ -398,7 +406,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "build.started",
-            "Controlled React renderer started",
+            "Web source packaging and sandbox validation started",
             "build",
             {"build_job_id": build_job.id},
         )
@@ -417,7 +425,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "validation.completed",
-            "Deterministic route, data, and renderer checks completed",
+            "Deterministic source, capability, handoff, and visual checks completed",
             "build",
             {"passed": validation_report.passed},
         )
@@ -430,7 +438,7 @@ class Orchestrator:
         self._record_event_once(
             run,
             "stage.started",
-            "Data Analyst is checking catalog data and validation evidence",
+            "Data Analyst is checking application state and validation evidence",
             "data",
         )
         data_review, artifact, _ = self._run_agent_stage(

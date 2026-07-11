@@ -24,9 +24,9 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Current status:** A runnable V1 vertical slice is implemented with username/password Sessions, user-isolated Projects, real Lead routing, Ollama Cloud and Mock providers, per-Project Git, structured editing, restricted Vim/Sandbox integration, versioning, publishing routes, persistence, quota, and automated tests. Railway public deployment and Linux isolation acceptance are not complete.
 
-> **Current runtime boundary:** The runnable slice is single-instance only. Blueprint generation runs after `POST /api/runs` through an in-process background task; supported requests continue automatically, adapted scope requires confirmation, and unsupported product goals stop before build. If Product Manager offers a catalog alternative, the UI states that it changes product type; once the user accepts or edits it, a new Run reuses the confirmed Blueprint and proceeds directly to Architect without a second PM rewrite. Committed stage artifacts, quota settlement, Build Jobs, and build versions remain replay-safe across Worker restart.
+> **Current runtime boundary:** The runnable slice is single-instance only. User requirements may describe any product goal; Product Manager preserves that goal and the team generates self-contained HTML/CSS/JavaScript. Supported offline Web behavior continues automatically, while server auth, payments, persistent writes, external services, native capabilities, or added risk require adaptation or stop before build. Committed stage artifacts, quota settlement, Build Jobs, source commits, and versions remain replay-safe across Worker restart.
 
-> **Provider fallback:** Lead calls DeepSeek V4 through Ollama Cloud in non-thinking mode. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled.
+> **Provider fallback:** Structured role calls use DeepSeek V4 through Ollama Cloud first, with non-thinking mode for Lead. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API; ordinary HTTP errors do not trigger this fallback. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled. See the [local and Railway guide](./docs/v1/local-run-and-railway-deployment.md#24-配置真实模型与-deepseek-兜底) for configuration.
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
@@ -43,7 +43,7 @@ The project is implemented in **V1 -> V2** order. V1 is the current development 
 
 1. The user signs in with a username and password; switching accounts exposes only the newly authenticated user's Projects.
 2. The user talks to Lead. Lead either answers/clarifies directly or invokes the complete fixed specialist team.
-3. Product Manager creates a **Blueprint**. Supported work proceeds without redundant approval; adapted scope requests confirmation. Unsupported goals do not build. A catalog alternative is clearly labeled as a product-type change. Accepting it skips a second PM pass; the user may instead explicitly ask PM to regenerate the requirement draft. Editing the draft back into a game or another unsupported product type cannot bypass capability validation.
+3. Product Manager creates a **Blueprint** while preserving the user's product goal. A self-contained browser game, tool, board, or catalog can be supported; server auth, payments, persistent writes, external services, native runtimes, or added risk require adaptation and confirmation. Unsupported goals do not build. The user can explicitly ask PM to regenerate the requirement draft, or confirm an edited draft and move directly to Architect without a second PM pass.
 4. Architect and Engineer produce **ArchitectureSpec** and **AppSpec**; Data Analyst explains immutable validation evidence.
 5. Every Project owns one server-side local Git repository. Build, Edit, Resolve, and Restore versions map to Git commits.
 6. The user edits through structured controls or an xterm.js + restricted Vim WebIDE whose PTY runs in an isolated Sandbox.
@@ -135,9 +135,9 @@ Target guarantees: user isolation | persistence | quota | Git traceability | San
 
 ### 3. Build: See the Process and Use the Result
 
-- **Real execution:** AppSpec enters the controlled React renderer. The asynchronous Build Worker uses only the fixed template and preinstalled dependencies and never executes ad hoc model-generated commands.
+- **Real execution:** AppSpec packages generated HTML, CSS, and JavaScript as Project source files. The asynchronous Build Worker never installs dependencies or executes ad hoc model-generated commands.
 - **Visible process:** Studio streams the current role, build progress, and errors over SSE and restores the previous state after refresh.
-- **Usable result:** Viewer switches between desktop and mobile. Home, Catalog, and Product pages and their core interactions actually run instead of appearing as static screenshots.
+- **Usable result:** Viewer switches between desktop and mobile and runs the generated Web application's actual client-side interactions inside an offline sandboxed iframe.
 - **Continued editing:** Copy, buttons, colors, and product images remain editable. A restricted xterm.js + Vim editor exposes only the current Project worktree inside a rootless Sandbox; it is not a login shell.
 
 ### 4. Deliver: Make Every Generation a Managed Version
@@ -158,7 +158,7 @@ Target guarantees: user isolation | persistence | quota | Git traceability | San
 - **One product entry point:** The browser uses one HTTPS Control Plane endpoint. Railway can host that Control Plane, while the WebIDE and builds require a Linux Sandbox Host; both may also run on one Linux VM for V1.
 - **Boundaries stay honest:** Cloud, Integrations, and Growth explain V1 limits without triggering unfinished authorization, payment, or third-party costs.
 
-> **What V1 can build:** V1 is limited to controlled product catalog and storefront sites. An `unsupported` request, such as an interactive game, stops before build. Product Manager may offer a catalog alternative that keeps only the theme, but the UI must state that this changes product type. Accepting or editing that alternative proceeds directly to Architect without asking PM to rewrite it again. `adapted` requests retain the main catalog goal, show mapped/omitted capabilities, and require confirmation.
+> **What V1 can build:** V1 accepts arbitrary product requirements and implements self-contained browser applications. Games, tools, dashboards, and catalogs preserve their original product identity. Real server auth, payments, persistent database writes, external network services, native runtimes, package installation, and unrestricted Shell execution remain explicit capability boundaries.
 
 ## V1 Delivery Milestones
 
@@ -236,12 +236,12 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 
 | Decision | Why | Benefit | Cost and boundary |
 | --- | --- | --- | --- |
-| Real LLM + structured contracts + deterministic renderer | Prove real requirement understanding while controlling execution risk in a shared cloud environment | Blueprint/AppSpec respond to input and builds remain verifiable | V1 does not support arbitrary stacks or free-form code execution |
-| Lead routing + risk-driven Approval | Lead distinguishes answer/clarify from team execution; supported work proceeds within base scope and budget | Keeps one conversational entry while matching confirmation to actual risk instead of every stage | Implemented; adapted scope and product-type-changing alternatives still require explicit confirmation |
+| Real LLM + structured contracts + offline Web Runtime | Prove real requirement understanding while controlling execution risk in a shared cloud environment | Blueprint/AppSpec respond to input and builds remain verifiable | V1 supports different product goals as self-contained browser apps, not arbitrary stacks, server integrations, or free-form execution |
+| Lead routing + risk-driven Approval | Lead distinguishes answer/clarify from team execution; supported offline Web work proceeds within base scope and budget | Keeps one conversational entry while matching confirmation to actual risk instead of every stage | Implemented; adapted capabilities, additional budget, destructive source actions, and public deployment changes still require explicit confirmation |
 | Username/password Session Gateway + user-level tenant | Project ownership must be derived from trusted identity, not a caller header | Switching accounts produces testable Project isolation | V1 has no Organization, membership, or shared Project roles |
 | One server-side local Git repository per Project | A Project needs durable, inspectable source ownership | ProjectVersion maps to a commit without requiring GitHub OAuth | V1 has no remote, push, pull, or user-machine repository |
 | xterm.js + fixed Vim in a rootless Sandbox | Users need source-level editing without exposing a host shell | Familiar terminal editing with bounded filesystem and resources | Requires a Linux Sandbox Host; it is not a Claude Code-like terminal Agent |
-| Asynchronous Build Job + fixed template and dependencies | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and resource/failure scope stays bounded | Generation is limited by template capability; initial build concurrency is one |
+| Asynchronous Build Job + restricted Web source packaging | Builds must not block HTTP requests or execute ad hoc model-generated commands | Jobs are recoverable and source/preview boundaries remain inspectable | V1 writes only self-contained HTML/CSS/JS and rejects network, dynamic imports, dependency installation, and Shell execution; initial build concurrency is one |
 | One API process + one in-process Worker for the current slice | Local and Railway V1 need durable correctness before horizontal scale | SQLite checkpoints on a persistent Volume provide restart recovery without a queue cluster | No horizontal replicas, independent Worker cluster, LISTEN/NOTIFY, or message queue in V1 |
 | Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
 
@@ -250,7 +250,7 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 ### Implemented in the runnable slice
 
 - `POST /api/runs` commits and returns before Blueprint generation; an in-process background task uses a fresh database Session, and startup recovers interrupted `product_running` Runs.
-- Supported Blueprints auto-queue. Adapted approval uses an `awaiting_approval -> build_queued` status CAS; accepting an unsupported catalog alternative creates one new Run with the confirmed Blueprint and skips a second PM pass. Unique Approval and BuildJob constraints prevent duplicate queueing.
+- Supported Blueprints auto-queue. Adapted approval uses an `awaiting_approval -> build_queued` status CAS; confirming an edited PM requirement creates one new Run with the confirmed Blueprint and skips a second PM pass. Unique Approval and BuildJob constraints prevent duplicate queueing.
 - A successful Agent stage commits its Artifact and Provider usage settlement together. Worker recovery reuses committed stage Artifacts, aligns terminal Jobs without replay, and reuses an existing build version.
 - Failed calls settle only observed Provider requests and release the unused reservation; non-LLM exceptions also clear outstanding reservation.
 - Preview queries join through Project ownership. Outside tests, an unknown `X-User-ID` returns 401 instead of creating a full-quota account.
@@ -268,10 +268,10 @@ User message -> LeadDecision
                                                        |-- supported + base budget -> continue
                                                        |-- adapted / added risk -> Approval
                                                        `-- unsupported -> stop original goal
-                                                              `-> catalog alternative -> user confirmation -> new Run at Architect
+                                                              `-> PM requirement rewrite -> user confirmation -> new Run at Architect
 ```
 
-This evolution is implemented. It preserves Blueprint as a persisted, inspectable contract while removing redundant confirmation from supported work inside the controlled catalog scope and base budget. `adapted`, a catalog alternative that changes product type, additional budget, later scope changes, destructive source actions, and public deployment changes still require Approval.
+This evolution is implemented. It preserves Blueprint as a persisted, inspectable contract while removing redundant confirmation from supported self-contained Web work inside the base budget. `adapted` capabilities, additional budget, later scope changes, destructive source actions, and public deployment changes still require Approval.
 
 The benefit is a shorter Golden Path and a clearer one-Lead interaction model. The cost is losing the original mandatory pause for pre-build Blueprint editing; V1 handles later corrections through inspectable Artifacts, Edit/Follow-up, and new versions. Unsupported goals are not silently rebranded as supported applications: the original Run remains stopped, and the user must explicitly accept the alternative goal.
 
@@ -367,7 +367,7 @@ Completed:
 - [x] V2 PRD, architecture, and agent design drafts
 - [x] Bilingual README, evaluation evidence, and project implementation constraints
 - [x] FastAPI API, SQLAlchemy persistence, quota ledger, events, versions, and publication routes
-- [x] React Studio, interactive controlled renderer, desktop/mobile preview, editing, and restore
+- [x] React Studio, generated HTML/CSS/JavaScript, offline sandboxed preview, desktop/mobile viewing, editing, and restore
 - [x] Mock role Pipeline with schema validation and bounded failure paths
 - [x] Ollama Cloud Provider, DeepSeek model selector, Provider usage ledger, and bounded retry
 - [x] Ollama 30-second timeout with optional DeepSeek official API fallback, visible provider-switch state, and combined usage settlement

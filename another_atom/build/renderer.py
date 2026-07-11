@@ -33,6 +33,13 @@ def validate_app_spec(
     architecture_spec: ArchitectureSpec | None = None,
 ) -> ValidationReport:
     routes = {page.route for page in app_spec.pages}
+    if app_spec.html:
+        return _validate_web_code_app(
+            app_spec,
+            prompt,
+            blueprint=blueprint,
+            architecture_spec=architecture_spec,
+        )
     required_routes = {"/", "/catalog"}
     product_route_exists = any(route.startswith("/product/") for route in routes)
     visual_tokens_valid, visual_detail = _validate_visual_tokens(app_spec, architecture_spec)
@@ -106,6 +113,96 @@ def validate_app_spec(
                     if unsupported_mappings
                     else None
                 ),
+            )
+        )
+    if "[fail:build]" in prompt.lower():
+        checks.append(
+            ValidationCheck(
+                check_id="mock-build-failure",
+                label="Controlled build acceptance hook",
+                status="fail",
+                root_cause="renderer",
+                resolvable=True,
+                detail="Mock build failure requested by the test prompt",
+            )
+        )
+    return ValidationReport(passed=all(check.status == "pass" for check in checks), checks=checks)
+
+
+def _validate_web_code_app(
+    app_spec: AppSpec,
+    prompt: str,
+    *,
+    blueprint: Blueprint | None,
+    architecture_spec: ArchitectureSpec | None,
+) -> ValidationReport:
+    visual_tokens_valid, visual_detail = _validate_visual_tokens(app_spec, architecture_spec)
+    combined = "\n".join((app_spec.html, app_spec.css, app_spec.javascript)).casefold()
+    forbidden = [
+        token
+        for token in (
+            "http://",
+            "https://",
+            "fetch(",
+            "xmlhttprequest",
+            "websocket(",
+            "eval(",
+            "new function(",
+            "import(",
+        )
+        if token in combined
+    ]
+    forbidden.extend(
+        token
+        for token in ("<script", "<iframe", "<object", "<embed")
+        if token in app_spec.html.casefold()
+    )
+    checks = [
+        ValidationCheck(
+            check_id="web-source",
+            label="Generated HTML, CSS, and browser code are present",
+            status="pass" if app_spec.html.strip() and app_spec.css.strip() else "fail",
+            root_cause="app_spec",
+            resolvable=True,
+            detail=None,
+        ),
+        ValidationCheck(
+            check_id="sandbox-boundary",
+            label="Generated code stays inside the offline browser Sandbox",
+            status="fail" if forbidden else "pass",
+            root_cause="app_spec",
+            resolvable=True,
+            detail=("Forbidden browser capabilities: " + ", ".join(forbidden) if forbidden else None),
+        ),
+        ValidationCheck(
+            check_id="visual-tokens",
+            label="Application visual tokens are valid",
+            status="pass" if visual_tokens_valid else "fail",
+            root_cause="renderer",
+            resolvable=True,
+            detail=visual_detail,
+        ),
+    ]
+    if blueprint is not None:
+        page_names = {page.name.casefold() for page in app_spec.pages}
+        missing_pages = [page for page in blueprint.pages if page.casefold() not in page_names]
+        checks.append(
+            ValidationCheck(
+                check_id="blueprint-pages",
+                label="Blueprint screens are represented in generated source metadata",
+                status="fail" if missing_pages else "pass",
+                root_cause="app_spec",
+                resolvable=True,
+                detail=(f"Missing Blueprint screens: {', '.join(missing_pages)}" if missing_pages else None),
+            )
+        )
+        checks.append(
+            ValidationCheck(
+                check_id="blueprint-handoff",
+                label="Blueprint modules and interactions reached the Engineer handoff",
+                status="pass" if blueprint.modules and app_spec.pages else "fail",
+                root_cause="app_spec",
+                resolvable=True,
             )
         )
     if "[fail:build]" in prompt.lower():

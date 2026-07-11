@@ -95,3 +95,40 @@ def test_architecture_visual_tokens_are_normalized_before_engineering() -> None:
     )
     report = validate_app_spec(aligned, architecture_spec=normalized)
     assert report.passed is True
+
+
+def test_generic_web_code_passes_offline_sandbox_validation() -> None:
+    provider = MockLLMProvider()
+    prompt = "给我一个网页版扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
+
+    report = validate_app_spec(
+        app_spec,
+        prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture,
+    )
+
+    assert report.passed is True
+    assert {check.check_id for check in report.checks} >= {
+        "web-source",
+        "sandbox-boundary",
+        "blueprint-pages",
+    }
+
+
+def test_generic_web_code_rejects_network_calls() -> None:
+    provider = MockLLMProvider()
+    prompt = "给我一个网页版扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt).model_copy(
+        update={"javascript": "fetch('https://example.com/state')"}
+    )
+
+    report = validate_app_spec(app_spec, blueprint=blueprint, architecture_spec=architecture)
+    boundary = next(check for check in report.checks if check.check_id == "sandbox-boundary")
+    assert report.passed is False
+    assert boundary.status == "fail"

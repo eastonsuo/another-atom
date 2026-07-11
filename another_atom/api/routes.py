@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -48,9 +49,9 @@ from another_atom.contracts.schemas import (
     Mode,
     ModelOption,
     ModelsView,
-    ProjectStatus,
     ProjectFileContent,
     ProjectFileEntry,
+    ProjectStatus,
     ProjectView,
     PublicationStrategy,
     PublishRequest,
@@ -599,33 +600,11 @@ def confirm_alternative_blueprint(
         raise AppError(
             "ALTERNATIVE_NOT_ALLOWED", "Only unsupported requests use this confirmation", 409
         )
-    normalized_prompt = confirmation.prompt.casefold()
-    catalog_markers = (
-        "商品",
-        "商城",
-        "商店",
-        "product catalog",
-        "storefront",
-        "catalog site",
-        "product store",
-        "shop",
-    )
-    if not any(marker in normalized_prompt for marker in catalog_markers):
-        raise AppError(
-            "ALTERNATIVE_OUT_OF_SCOPE",
-            "The confirmed alternative must remain a product catalog. V1 cannot build the original game or application type.",
-            422,
-        )
     confirmed_blueprint = source_blueprint.model_copy(
         update={
             "support_level": SupportLevel.SUPPORTED,
             "support_reasons": [
-                "The user explicitly accepted the Product Manager catalog alternative."
-            ],
-            "mapped_requirements": [
-                "Responsive product catalog",
-                "Product detail navigation",
-                "Editable visual direction",
+                "The user explicitly accepted the Product Manager requirement draft."
             ],
             "rewrite_suggestion": None,
         }
@@ -637,7 +616,7 @@ def confirm_alternative_blueprint(
             artifact_id=source_artifact.id,
             approved=True,
             payload={
-                "confirmation_type": "catalog_alternative",
+                "confirmation_type": "requirement_draft",
                 "confirmed_prompt": confirmation.prompt,
                 "blueprint": confirmed_blueprint.model_dump(mode="json"),
             },
@@ -681,7 +660,7 @@ def confirm_alternative_blueprint(
         db,
         source_run.id,
         "approval.confirmed",
-        "User accepted the Product Manager catalog alternative",
+        "User accepted the Product Manager requirement draft",
         stage="scope_review",
         payload={"next_run_id": next_run.id},
     )
@@ -697,7 +676,7 @@ def confirm_alternative_blueprint(
         db,
         next_run.id,
         "build.queued",
-        "Confirmed alternative is queued for architecture",
+        "Confirmed requirement is queued for architecture",
         stage="build_queue",
         payload={"build_job_id": job.id},
     )
@@ -1106,6 +1085,21 @@ def revise_project(
     updates = revision.model_dump(exclude_none=True)
     if not updates:
         raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
+    if app_spec.html:
+        html = app_spec.html
+        css = app_spec.css
+        if "hero_title" in updates:
+            html = html.replace(app_spec.hero_title, updates["hero_title"])
+        if "hero_body" in updates:
+            html = html.replace(app_spec.hero_body, updates["hero_body"])
+        if "primary_color" in updates:
+            css = re.sub(
+                re.escape(app_spec.primary_color),
+                updates["primary_color"],
+                css,
+                flags=re.IGNORECASE,
+            )
+        updates.update({"html": html, "css": css})
     app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
     blueprint, architecture_spec = _validation_contracts(db, current.run_id)
     validation = validate_app_spec(

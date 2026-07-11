@@ -4,9 +4,9 @@
 
 - Implement the project in V1 -> V2 order. V1 is the current implementation and acceptance baseline.
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
-- V1 uses a fixed sequential role pipeline: Product Manager -> Designer -> Engineer -> QA.
+- V1 uses a fixed sequential role pipeline: Product Manager -> Architect -> Engineer -> Data Analyst.
 - V2 autonomous multi-agent behavior is a planned implementation version after V1 acceptance; it is not implemented yet.
-- The supported generation scope is a controlled product catalog/storefront. Do not imply arbitrary application generation.
+- User requirements may describe any product goal. V1 implements the goal as a self-contained browser application using generated HTML/CSS/JavaScript. Preserve the product identity; do not convert games or tools into catalogs. Server-side auth, payments, persistent database writes, external services, native runtimes, and unrestricted package/Shell execution remain capability boundaries and must be marked adapted or unsupported.
 
 ## Evaluation Criteria
 

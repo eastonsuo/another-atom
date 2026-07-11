@@ -363,7 +363,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .approval-bar button:hover, .primary-action:hover, .publish-button:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }
 .support-badge { border: 1.5px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); font-weight: 900; }
 .scope-note, .rewrite-box, .inline-error { border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
-.scope-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }.scope-actions .primary-action { margin-top: 4px; }.secondary-action { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; margin-top: 4px; padding: 0 13px; border: 2px solid var(--ink); border-radius: 5px; background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-size: 11px; font-weight: 900; cursor: pointer; }.secondary-action:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }.secondary-action:disabled, .scope-actions .primary-action:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }.scope-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 9px 10px; border: 1.5px solid #a7493f; border-radius: 5px; background: #fff0ed; color: #8e3028; font-size: 10px; font-weight: 800; line-height: 1.45; }.scope-warning svg { flex: 0 0 auto; }.scope-regenerate-note { color: #777169; font-size: 9px; line-height: 1.45; }
+.scope-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: stretch; }.scope-actions .primary-action, .scope-actions .secondary-action { width: 100%; min-height: 42px; justify-content: center; margin-top: 4px; }.secondary-action { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; margin-top: 4px; padding: 0 13px; border: 2px solid var(--ink); border-radius: 5px; background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-size: 11px; font-weight: 900; cursor: pointer; }.secondary-action:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }.secondary-action:disabled, .scope-actions .primary-action:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }.scope-regenerate-note { color: #777169; font-size: 9px; line-height: 1.45; }
 
 .working-avatar { position: relative; margin-bottom: 12px; }
 .working-avatar .role-avatar { animation: working-tilt 1.3s ease-in-out infinite; }
@@ -387,6 +387,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .version-row { border-bottom: 2px dashed #d5cfdf; }.version-number { border: 1.5px solid var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); font-family: "Fredoka", sans-serif; }.version-row button { border: 1.5px solid var(--ink); background: #fff; box-shadow: 2px 2px 0 var(--ink); font-weight: 800; }
 
 /* Cartoon generated storefront */
+.generated-code-preview { width: 100%; min-height: 100vh; display: block; border: 0; background: #fff; }
 .generated-app { font-family: "Nunito", Arial, sans-serif; background-image: radial-gradient(color-mix(in srgb, var(--app-accent) 22%, transparent) 1.3px, transparent 1.3px); background-size: 24px 24px; }
 .generated-nav { height: 78px; border-bottom: 2px solid var(--app-primary); background: color-mix(in srgb, var(--app-bg) 92%, white); }
 .wordmark { font-family: "Fredoka", sans-serif; font-size: 23px; font-weight: 700; }.wordmark::before { content: "✦"; display: inline-block; margin-right: 8px; color: var(--app-accent); transform: rotate(-12deg); }
@@ -442,6 +443,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   .model-badge { display: none; }
   .workspace-process { border-bottom: 2px solid var(--ink); }
   .workspace-tools { max-height: none; }.workspace-tool-content { min-height: 520px; }.repository-panel { grid-template-rows: auto 220px 300px; }
+  .scope-actions { grid-template-columns: 1fr; }
   .timeline-item { grid-template-columns: 38px 1fr; min-width: 128px; }
   .blueprint-heading { grid-template-columns: 58px 1fr; }
   .blueprint-heading .support-badge { grid-column: 2; width: max-content; margin-top: 10px; }

@@ -11,13 +11,13 @@ export interface AttachmentMeta {
 export interface Blueprint {
   schema_version: "1.0";
   project_name: string;
-  product_type: "product_catalog";
+  product_type: string;
   support_level: SupportLevel;
   support_reasons: string[];
   mapped_requirements: string[];
   omitted_requirements: string[];
   rewrite_suggestion: string | null;
-  capability_policy_version: "catalog-v1";
+  capability_policy_version: "catalog-v1" | "web-v1";
   pages: string[];
   modules: string[];
   visual_direction: string;
@@ -44,6 +44,9 @@ export interface AppSpec {
   background_color: string;
   pages: { route: string; name: string; sections: string[] }[];
   products: ProductItem[];
+  html: string;
+  css: string;
+  javascript: string;
 }
 
 export interface RunView {
