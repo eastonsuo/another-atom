@@ -8,10 +8,12 @@ import type { VersionView } from "../types";
 
 export function TerminalPanel({
   projectId,
+  language,
   onSaved,
   onError,
 }: {
   projectId: string;
+  language: "zh" | "en";
   onSaved: (version: VersionView) => void;
   onError: (message: string) => void;
 }) {
@@ -87,7 +89,7 @@ export function TerminalPanel({
       };
       nextSocket.onerror = () => {
         setConnecting(false);
-        onError("The Sandbox terminal connection failed");
+        onError(copy(language, "The Sandbox terminal connection failed"));
       };
       nextTerminal.onData((data) => {
         if (nextSocket.readyState === WebSocket.OPEN) {
@@ -109,7 +111,7 @@ export function TerminalPanel({
     } catch (reason) {
       setConnecting(false);
       if (reason instanceof DOMException && reason.name === "AbortError") return;
-      onError(reason instanceof Error ? reason.message : "Could not open restricted Vim");
+      onError(reason instanceof Error ? reason.message : copy(language, "Could not open restricted Vim"));
     }
   };
 
@@ -121,7 +123,7 @@ export function TerminalPanel({
       saved.current = true;
       onSaved(version);
     } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "Could not save Vim changes");
+      onError(reason instanceof Error ? reason.message : copy(language, "Could not save Vim changes"));
     } finally {
       setSaving(false);
     }
@@ -129,17 +131,30 @@ export function TerminalPanel({
 
   return <div className="terminal-panel">
     <div className="terminal-heading">
-      <div><TerminalSquare size={17} /><span><strong>Restricted Vim</strong><small>Project worktree · no login shell · no network</small></span></div>
+      <div><TerminalSquare size={17} /><span><strong>{copy(language, "Restricted Vim")}</strong><small>{copy(language, "Project worktree · no login shell · no network")}</small></span></div>
       {sessionId ? (
         <button onClick={save} disabled={saving || connecting}>
-          {saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} Save version
+          {saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} {copy(language, "Save version")}
         </button>
       ) : (
         <button onClick={open} disabled={connecting}>
-          {connecting ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} Open Vim
+          {connecting ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} {copy(language, "Open Vim")}
         </button>
       )}
     </div>
     <div className="terminal-mount" ref={container} />
   </div>;
+}
+
+function copy(language: "zh" | "en", text: string): string {
+  if (language === "en") return text;
+  return {
+    "The Sandbox terminal connection failed": "Sandbox 终端连接失败",
+    "Could not open restricted Vim": "无法打开受限 Vim",
+    "Could not save Vim changes": "无法保存 Vim 修改",
+    "Restricted Vim": "受限 Vim",
+    "Project worktree · no login shell · no network": "Project worktree · 无登录 Shell · 无网络",
+    "Save version": "保存版本",
+    "Open Vim": "打开 Vim",
+  }[text] ?? text;
 }
