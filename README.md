@@ -654,6 +654,8 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **V1 部署：** [本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md)
 
+- **V1 简要交付说明：** [中文](./docs/v1/delivery-summary.md) · [English](./docs/v1/delivery-summary.en.md)
+
 - **V1 Review：** [V1 实现 Review](./review/2026-07-11-v1-implementation-review.md)
 
 - **V2 产品：** [V2 产品需求](./docs/v2/another-atom-v2-prd.md)
