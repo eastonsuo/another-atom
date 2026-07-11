@@ -229,6 +229,36 @@ V1 验证用户隔离、Lead 路由、固定团队、风险确认、源码编辑
 | 当前纵切使用单 API 进程 + 单进程内 Worker | 本地/Railway V1 先保证持久化正确性，再考虑水平扩展 | PostgreSQL Job/Artifact 检查点无需队列集群也能重启恢复 | V1 不支持水平副本、独立 Worker 集群、LISTEN/NOTIFY 或消息队列 |
 | 真实 Plan/Quota/Ledger，暂不接支付 | 多用户、多 Session 必须共享并正确结算账户额度 | 并发请求不能透支，模型用量可以审计 | V1 不实现 Stripe、Wallet、充值或发票 |
 
+## 当前单实例决策清单
+
+### 当前纵切已实现
+
+- `POST /api/runs` 提交后即返回，Blueprint 由使用新数据库 Session 的进程内后台任务生成；启动时会恢复中断的 `product_running` Run。
+- Blueprint 审批使用 `awaiting_approval -> build_queued` 状态 CAS，Approval 和 BuildJob 唯一约束防止重复排队。
+- 成功 Agent 阶段把 Artifact 与 Provider 用量结算放在同一事务提交；Worker 恢复复用已提交阶段、只对齐已完成 Job，不重放 Pipeline，并复用既有 Build Version。
+- 失败只结算已观测到的 Provider 请求并释放剩余预占；非 LLM 异常也会清空未结算 reservation。
+- Preview 通过 Project owner 联查校验归属；非测试环境遇到未知 `X-User-ID` 返回 401，不再自动创建满配额账户。
+- Validator 校验 Blueprint 页面覆盖、受控 mapped requirement 的确定性证据、ArchitectureSpec/AppSpec 视觉 Token 一致性和颜色对比度。
+- SSE 在单实例基线下继续轮询数据库，但每个连接复用一个读取 Session。
+
+### V1 验收前仍必须完成
+
+- 用用户名密码 Session Gateway 替换临时身份请求头，并完成双用户隔离验收。当前拒绝未知 ID 只是加固，不是完整认证。
+- 实现每 Project 源码物化、commit/version 映射，以及按用户/Project 隔离的 rootless Sandbox；完成前不能开放 xterm.js/Vim 或真实项目构建。
+- 完成 Railway 部署，在 PostgreSQL 与持久化存储上验证重启恢复，并从干净浏览器验收公开 URL。
+
+### 明确后置，不进入单实例 V1
+
+- 超出 V1 服务端 Session Gateway 的完整 Token/JWT/OAuth 认证平台。
+- PostgreSQL LISTEN/NOTIFY 或消息队列式 SSE、独立持久化队列、独立 Worker 集群、跨实例 lease-owner fencing 和分布式乐观并发控制。
+- API/Worker 水平副本，以及为此配套的共享对象存储架构。
+
+### 后续可以优化，但不是当前正确性工作
+
+- 多租户 Sandbox 池化、容量调度、更强容器/MicroVM 隔离，以及把不可变发布 Artifact 迁移到对象存储。
+- Provider 支持时引入幂等键，收窄“外部响应已返回、Artifact 事务尚未提交”之间的崩溃窗口。
+- Edit/Restore 计费策略、Export 分页/流式输出和 SPA fallback 404 加固。
+
 完整组件、状态、数据、安全和部署设计见 [V1 架构设计](./docs/v1/architecture-design.md)；执行范式、Human-in-the-loop、Context、Tool、Sandbox 和验收修复见 [V1 Agent 设计](./docs/v1/agent-design.md)。
 
 ## V1 部署与访问架构

@@ -229,6 +229,36 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 | One API process + one in-process Worker for the current slice | Local and Railway V1 need durable correctness before horizontal scale | PostgreSQL Job/Artifact checkpoints provide restart recovery without a queue cluster | No horizontal replicas, independent Worker cluster, LISTEN/NOTIFY, or message queue in V1 |
 | Real Plan/Quota/Ledger without payment integration | Multiple users and sessions must share and settle account usage correctly | Concurrent calls cannot overspend and model usage is auditable | V1 excludes Stripe, wallet, top-up, and invoicing |
 
+## Current Single-Instance Decision List
+
+### Implemented in the runnable slice
+
+- `POST /api/runs` commits and returns before Blueprint generation; an in-process background task uses a fresh database Session, and startup recovers interrupted `product_running` Runs.
+- Blueprint approval uses an `awaiting_approval -> build_queued` status CAS. Unique Approval and BuildJob constraints prevent duplicate queueing.
+- A successful Agent stage commits its Artifact and Provider usage settlement together. Worker recovery reuses committed stage Artifacts, aligns terminal Jobs without replay, and reuses an existing build version.
+- Failed calls settle only observed Provider requests and release the unused reservation; non-LLM exceptions also clear outstanding reservation.
+- Preview queries join through Project ownership. Outside tests, an unknown `X-User-ID` returns 401 instead of creating a full-quota account.
+- Validator checks Blueprint page coverage, canonical mapped-requirement evidence, ArchitectureSpec/AppSpec visual-token alignment, and color contrast.
+- SSE keeps database polling for the single-instance baseline but reuses one read Session per connection.
+
+### Still required for V1 acceptance
+
+- Replace the temporary identity header with the username/password Session Gateway and prove two-user isolation. The current rejection of unknown IDs is hardening, not complete authentication.
+- Implement per-Project source materialization, commit/version mapping, and a rootless per-user/per-Project Sandbox before exposing xterm.js/Vim or real project builds.
+- Complete Railway deployment, restart verification against PostgreSQL and persistent storage, and public-URL acceptance in a clean browser.
+
+### Explicitly deferred beyond single-instance V1
+
+- A full Token/JWT/OAuth authentication platform beyond the V1 server-side Session Gateway.
+- PostgreSQL LISTEN/NOTIFY or message-queue SSE, a persistent queue service, an independent Worker cluster, cross-instance lease-owner fencing, and distributed optimistic concurrency control.
+- Horizontal API/Worker replicas and the shared-object-storage architecture they require.
+
+### Valid later optimizations, not current correctness work
+
+- Multi-tenant Sandbox pooling, capacity scheduling, stronger container/MicroVM isolation, and moving immutable publish artifacts to object storage.
+- Provider idempotency keys where supported, closing the narrow crash window between an external response and the Artifact transaction commit.
+- Edit/Restore billing policy, Export pagination/streaming, and SPA-fallback 404 hardening.
+
 See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details. See the [V1 agent design](./docs/v1/agent-design.md) for execution semantics, human-in-the-loop, context, tools, sandbox boundaries, validation, and repair.
 
 ## V1 Deployment and Access Architecture
