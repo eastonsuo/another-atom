@@ -241,6 +241,14 @@ V1 验证用户隔离、Lead 路由、固定团队、风险确认、源码编辑
 - Validator 校验 Blueprint 页面覆盖、受控 mapped requirement 的确定性证据、ArchitectureSpec/AppSpec 视觉 Token 一致性和颜色对比度。
 - SSE 在单实例基线下继续轮询数据库，但每个连接复用一个读取 Session。
 
+### 待讨论的产品取舍：`supported` 是否跳过 Blueprint 审批
+
+当前行为是所有非 `unsupported` Blueprint 都进入 `awaiting_approval`。这在 Blueprint Gate 仍是主要构建前检查点时有合理性：用户可以在继续消耗团队预算前修正项目名称或视觉方向。代价是用户已经明确点击 **Build application** 后，只要系统没有改变需求范围，仍要再确认一次。
+
+建议规则是：点击 **Build application** 已授权一次受控商品目录范围、基础预算内的构建。`supported` 自动继续；`adapted` 因系统映射或舍弃了需求而继续阻塞确认；`unsupported` 停止并进入澄清。额外预算、后续范围变化、破坏性源码操作和线上变更仍触发 Approval。
+
+这项调整不依赖 Lead 路由，因为当前 Build 按钮和 `POST /api/runs` 已经表达了执行意图。优势是缩短 supported Golden Path，让确认次数与实际风险匹配；代价是失去当前“构建前编辑 Blueprint”的停顿窗口。V1 可以继续持久化并展示 Blueprint，偏差通过 Edit/Follow-up 和新版本纠正。应在修改状态机与 Studio 前先确认这项取舍。
+
 ### V1 验收前仍必须完成
 
 - 用用户名密码 Session Gateway 替换临时身份请求头，并完成双用户隔离验收。当前拒绝未知 ID 只是加固，不是完整认证。

@@ -241,6 +241,14 @@ V1 proves whether identity isolation, Lead routing, structured team execution, r
 - Validator checks Blueprint page coverage, canonical mapped-requirement evidence, ArchitectureSpec/AppSpec visual-token alignment, and color contrast.
 - SSE keeps database polling for the single-instance baseline but reuses one read Session per connection.
 
+### Product decision under discussion: should `supported` bypass Blueprint approval?
+
+Current behavior sends every non-`unsupported` Blueprint to `awaiting_approval`. This is defensible while the Blueprint gate is the main pre-build inspection point: users can correct the project name or visual direction before spending the remaining team budget. Its cost is that an explicit **Build application** action is followed by a second confirmation even when the system has not changed the requested scope.
+
+The proposed rule is: clicking **Build application** authorizes one controlled build within the catalog capability boundary and base budget. A `supported` Blueprint proceeds automatically; `adapted` still pauses because the system has mapped or omitted requirements; `unsupported` stops for clarification. Additional budget, later scope changes, destructive source actions, and public deployment changes continue to require Approval.
+
+This change does not depend on Lead routing—the current Build button and `POST /api/runs` already express execution intent. The benefit is a shorter supported Golden Path and better alignment between risk and interruption. The cost is losing the current pre-build Blueprint editing window; V1 would keep Blueprint persisted and inspectable, then handle corrections through Edit/Follow-up and new versions. This trade-off should be confirmed before changing the state machine and Studio.
+
 ### Still required for V1 acceptance
 
 - Replace the temporary identity header with the username/password Session Gateway and prove two-user isolation. The current rejection of unknown IDs is hardening, not complete authentication.
