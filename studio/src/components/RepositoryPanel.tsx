@@ -1,13 +1,13 @@
-import { FileJson, FileText, FolderGit2, LoaderCircle, RefreshCw, TerminalSquare, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Bug, FileJson, FileText, FolderGit2, LoaderCircle, RefreshCw, TerminalSquare, X } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
-import type { ProjectFileEntry, RunView, VersionView } from "../types";
+import type { ProjectFileEntry, RunEvent, RunView, VersionView } from "../types";
 import { TerminalPanel } from "./TerminalPanel";
 
 type Language = "zh" | "en";
 
-export function RepositoryPanel({ run, language, onVersionSaved, onError }: { run: RunView; language: Language; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
-  const [active, setActive] = useState<"files" | "terminal" | null>(null);
+export function RepositoryPanel({ run, events, language, sandboxAvailable, logPanel, onVersionSaved, onError }: { run: RunView; events: RunEvent[]; language: Language; sandboxAvailable: boolean; logPanel: ReactNode; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
+  const [active, setActive] = useState<"files" | "terminal" | "logs" | null>(null);
   const [files, setFiles] = useState<ProjectFileEntry[]>([]);
   const [selected, setSelected] = useState<ProjectFileEntry | null>(null);
   const [content, setContent] = useState("");
@@ -58,7 +58,8 @@ export function RepositoryPanel({ run, language, onVersionSaved, onError }: { ru
   return <aside className={active ? "workspace-tools open" : "workspace-tools"}>
     <div className="workspace-tool-rail">
       <button className={active === "files" ? "active" : ""} onClick={() => setActive((current) => current === "files" ? null : "files")} title={copy(language, "Project files")}><FolderGit2 size={17} /><span>{copy(language, "Files")}</span></button>
-      <button className={active === "terminal" ? "active" : ""} disabled={!run.version_id} onClick={() => setActive((current) => current === "terminal" ? null : "terminal")} title={run.version_id ? copy(language, "Restricted Vim") : copy(language, "Build a version before opening Vim")}><TerminalSquare size={17} /><span>Vim</span></button>
+      <button className={active === "terminal" ? "active" : ""} disabled={!run.version_id} onClick={() => setActive((current) => current === "terminal" ? null : "terminal")} title={!sandboxAvailable ? copy(language, "Sandbox Host is not configured") : run.version_id ? copy(language, "Restricted Vim") : copy(language, "Build a version before opening Vim")}><TerminalSquare size={17} /><span>Vim</span></button>
+      <button className={active === "logs" ? "active" : ""} onClick={() => setActive((current) => current === "logs" ? null : "logs")} title={copy(language, "Run log")}><Bug size={17} /><span>{copy(language, "Logs")}</span>{events.length > 0 && <b>{events.length}</b>}</button>
     </div>
     {active && <div className="workspace-tool-content">
       <button className="workspace-tool-close" onClick={() => setActive(null)} aria-label={copy(language, "Close panel")} title={copy(language, "Close panel")}><X size={15} /></button>
@@ -77,7 +78,7 @@ export function RepositoryPanel({ run, language, onVersionSaved, onError }: { ru
       <div><strong>{selected?.path ?? copy(language, "Select a file")}</strong>{selected?.source === "artifact" && <span>{copy(language, "Not committed")}</span>}</div>
       {error ? <p>{error}</p> : selected ? <pre><code>{content}</code></pre> : <p>{copy(language, "No generated files yet")}</p>}
     </div>
-      </div> : <div className="terminal-drawer"><TerminalPanel projectId={run.project_id} language={language} onSaved={onVersionSaved} onError={onError} /></div>}
+      </div> : active === "terminal" ? <div className="terminal-drawer">{sandboxAvailable ? <TerminalPanel projectId={run.project_id} language={language} onSaved={onVersionSaved} onError={onError} /> : <div className="sandbox-unavailable"><TerminalSquare size={28} /><strong>{copy(language, "Vim is not available")}</strong><p>{copy(language, "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.")}</p></div>}</div> : logPanel}
     </div>}
   </aside>;
 }
@@ -108,6 +109,11 @@ function copy(language: Language, text: string): string {
     "Files": "文件",
     "Restricted Vim": "受限 Vim",
     "Build a version before opening Vim": "生成项目版本后才能打开 Vim",
+    "Sandbox Host is not configured": "当前未配置 Sandbox Host，Vim 不可用",
+    "Vim is not available": "当前无法打开 Vim",
+    "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.": "需要先配置独立 Sandbox Host 才能使用受限编辑器；Control Plane 不会直接执行文件工具。",
+    "Run log": "运行日志",
+    "Logs": "日志",
     "Close panel": "关闭面板",
     "Live HTTP file list": "后台实时文件列表",
     "Refresh files": "刷新文件",

@@ -399,10 +399,12 @@ def _settle_lead_quota(db: Session, user_id: str, reserved: int, request_count: 
 @router.get("/models", response_model=ModelsView)
 def models() -> ModelsView:
     settings = get_settings()
+    sandbox_available = bool(settings.sandbox_host_url and settings.sandbox_shared_secret)
     if settings.llm_provider == "ollama":
         return ModelsView(
             provider="ollama",
             fallback_provider="deepseek" if settings.deepseek_api_key else None,
+            sandbox_available=sandbox_available,
             default_model=settings.ollama_model,
             models=[
                 ModelOption(id="deepseek-v4-pro", label="DeepSeek V4 Pro", usage="extra_high"),
@@ -412,6 +414,7 @@ def models() -> ModelsView:
     return ModelsView(
         provider="mock",
         fallback_provider=None,
+        sandbox_available=sandbox_available,
         default_model="mock",
         models=[ModelOption(id="mock", label="Mock LLM", usage="local")],
     )
@@ -579,6 +582,23 @@ def confirm_alternative_blueprint(
         raise AppError(
             "ALTERNATIVE_NOT_ALLOWED", "Only unsupported requests use this confirmation", 409
         )
+    normalized_prompt = confirmation.prompt.casefold()
+    catalog_markers = (
+        "商品",
+        "商城",
+        "商店",
+        "product catalog",
+        "storefront",
+        "catalog site",
+        "product store",
+        "shop",
+    )
+    if not any(marker in normalized_prompt for marker in catalog_markers):
+        raise AppError(
+            "ALTERNATIVE_OUT_OF_SCOPE",
+            "The confirmed alternative must remain a product catalog. V1 cannot build the original game or application type.",
+            422,
+        )
     confirmed_blueprint = source_blueprint.model_copy(
         update={
             "support_level": SupportLevel.SUPPORTED,
@@ -666,6 +686,64 @@ def confirm_alternative_blueprint(
     )
     db.commit()
     job_dispatcher(job.id)
+    db.refresh(next_run)
+    return _run_view(db, next_run)
+
+
+@router.post(
+    "/runs/{run_id}/regenerate-alternative",
+    response_model=RunView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def regenerate_alternative_blueprint(
+    run_id: str,
+    request: RewriteConfirmation,
+    background_tasks: BackgroundTasks,
+    blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    source_run = _owned_run(db, run_id, user.id)
+    if source_run.status != RunStatus.NEEDS_INPUT.value:
+        raise AppError(
+            "ALTERNATIVE_NOT_ALLOWED", "This run is not waiting for a new requirement", 409
+        )
+    project_session = ProjectSession(project_id=source_run.project_id, user_id=user.id)
+    db.add(project_session)
+    db.flush()
+    next_run = Run(
+        project_id=source_run.project_id,
+        session_id=project_session.id,
+        user_id=user.id,
+        mode=source_run.mode,
+        model=source_run.model,
+        status=RunStatus.PRODUCT_RUNNING.value,
+        current_stage="product_manager",
+        prompt=request.prompt,
+    )
+    db.add(next_run)
+    db.flush()
+    project = db.get(Project, source_run.project_id)
+    if project:
+        project.prompt = request.prompt
+    record_event(
+        db,
+        source_run.id,
+        "alternative.regeneration_requested",
+        "User asked Product Manager to regenerate the requirement draft",
+        stage="scope_review",
+        payload={"next_run_id": next_run.id},
+    )
+    record_event(
+        db,
+        next_run.id,
+        "alternative.regeneration_requested",
+        "A new requirement draft is queued for Product Manager",
+        stage="product_manager",
+        payload={"source_run_id": source_run.id},
+    )
+    db.commit()
+    background_tasks.add_task(blueprint_executor, next_run.id)
     db.refresh(next_run)
     return _run_view(db, next_run)
 

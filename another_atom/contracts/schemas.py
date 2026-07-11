@@ -318,6 +318,7 @@ class ModelOption(BaseModel):
 class ModelsView(BaseModel):
     provider: str
     fallback_provider: str | None = None
+    sandbox_available: bool = False
     default_model: str
     models: list[ModelOption]
 

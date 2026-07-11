@@ -24,7 +24,7 @@
 
 - **Lead（入口分派）：** 你发的每条消息都先经过 Lead。它判断你是只想询问或澄清——走 `direct`，直接回答且不创建 Project；还是明确要求构建——走 `team`，交给专业团队执行。
 
-- **Blueprint（产品方案）：** Product Manager 把需求整理成一份可检查方案，写清支持范围、页面、模块和视觉方向。它有三种结论：`supported` 表示受控范围内支持并自动继续；`adapted` 表示核心目标可保留，但部分能力需要调整，展示映射和取舍后等待确认；`unsupported` 表示原始产品目标不能构建。PM 可以提供一个只保留主题的商品目录替代方案，但必须明确它改变了产品类型；用户接受或编辑后直接进入 Architect，不再经过第二次 PM 改写。
+- **Blueprint（产品方案）：** Product Manager 把需求整理成一份可检查方案，写清支持范围、页面、模块和视觉方向。它有三种结论：`supported` 表示受控范围内支持并自动继续；`adapted` 表示核心目标可保留，但部分能力需要调整，展示映射和取舍后等待确认；`unsupported` 表示原始产品目标不能构建。PM 可以提供一个只保留主题的商品目录替代方案，但必须明确它改变了产品类型。用户可接受该草案直接进入 Architect，也可显式要求 PM 重新生成另一版需求；把草案改回游戏等超范围类型不能绕过能力校验。
 
 - **角色接力：** 一次 V1 构建由四个 AI 角色按固定顺序接力。每一步都产出可检查的结构化成果，而不是让多个角色互相闲聊。
 
@@ -605,7 +605,7 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 | **版本与发布分离** | 已完成 | 新版本和 Restore 不自动移动线上指针；Publish/Update 由显式接口执行 |
 | **恢复与配额** | 已完成 | Blueprint 后台恢复、Job Lease、阶段 Artifact 复用、实际用量结算、剩余预占释放和并发 Approval 测试通过 |
 | **xterm.js + Sandbox Gateway** | 部分完成 | Studio、Control Plane WSS 代理、独立 Sandbox Host、restricted Vim 镜像和保存版本链已实现；Linux 实机隔离待验收 |
-| **自动化测试** | 已完成 | 当前后端单元/集成测试 66 项通过，包含 Golden Path、反路径、恢复、并发、身份、Provider 兜底、Git 和 Sandbox 保存 |
+| **自动化测试** | 已完成 | 当前后端单元/集成测试 68 项通过，包含 Golden Path、反路径、恢复、并发、身份、Provider 兜底、需求草案重生成、Git 和 Sandbox 保存 |
 | **Railway 公网部署** | 待完成 | Dockerfile 和 Railway 配置已存在，尚无 SQLite 持久化 Volume 环境下完成验收的公网地址 |
 
 ## 11. 后续验收目标

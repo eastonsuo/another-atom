@@ -62,7 +62,7 @@ capability_policy_version
 
 LLM 提出判定，Runtime 使用固定 Capability Policy 校验允许的产品类型、页面、模块和后端能力。同一 Policy 版本必须维持一致的允许/拒绝边界；模型不能为了继续执行把主要目标不受支持的请求标为 `adapted`。
 
-`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保留可识别主题、可直接作为新构建输入的完整草案，并补齐商品类别、Home/Catalog/Product 页面和视觉方向。界面必须明确说明该草案改变了产品类型。Runtime 将原 Run 停在 `NeedsInput`；用户确认或编辑后创建新 Run，直接复用已确认 Blueprint 进入 Architect，不再调用第二次 Product Manager。Agent 无权替用户确认目标变化。
+`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保留可识别主题、可直接作为新构建输入的完整草案，并补齐商品类别、Home/Catalog/Product 页面和视觉方向。界面必须明确说明该草案改变了产品类型。Runtime 将原 Run 停在 `NeedsInput`。接受当前商品目录草案会创建新 Run，直接复用已确认 Blueprint 进入 Architect；只有用户显式点击“重新生成需求草案”时才再次调用 Product Manager，并且重新生成本身不创建 Build Job。Agent 无权替用户确认目标变化，超范围文本也不能通过确认接口伪装成 supported。
 
 DataReview 至少包含：
 

@@ -1,6 +1,5 @@
 import {
   ArrowUp,
-  Bug,
   Check,
   ChevronRight,
   CircleAlert,
@@ -21,7 +20,6 @@ import {
 } from "lucide-react";
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { PreviewLoader } from "./components/PreviewApp";
-import { TerminalPanel } from "./components/TerminalPanel";
 import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
 import { api } from "./lib/api";
@@ -226,6 +224,10 @@ const ZH: Record<string, string> = {
   "This alternative changes the product type. Accept it only if you want a catalog instead of the original application.": "该方案会改变产品类型。只有当你接受用商品目录替代原应用时才继续。",
   "Buildable alternative": "可构建替代方案（会改变产品目标）",
   "Accept alternative & build": "接受替代方案并开始构建",
+  "Regenerate requirement draft": "让 PM 重新生成需求草案",
+  "Product Manager will reinterpret the text and return a new catalog alternative without starting a build.": "产品经理会重新理解输入并生成新的商品目录替代草案，不会开始构建。",
+  "The confirmed draft must remain a product catalog. To reinterpret a game or another product type, regenerate the requirement first.": "确认构建的草案必须仍是商品目录。如果要重新解释游戏或其他产品类型，请先让 PM 重新生成需求草案。",
+  "Could not regenerate the requirement draft": "无法重新生成需求草案",
   "Confirmation skips Product Manager and continues directly to architecture.": "确认后不会再次调用产品经理，将直接进入架构阶段。",
   "Describe a product catalog with Home, Catalog, and Product pages…": "描述一个包含首页、目录页和商品详情页的商品目录……",
   "Run stopped": "任务已停止",
@@ -370,6 +372,12 @@ function eventMessage(language: Language, event: RunEvent): string {
 function rewriteSuggestion(language: Language, blueprint: Blueprint | null, events: RunEvent[]): string {
   const latestRewrite = [...events].reverse().find((event) => typeof event.payload.rewrite_suggestion === "string")?.payload.rewrite_suggestion;
   return conversationalText(language, blueprint?.rewrite_suggestion ?? latestRewrite, "Describe a product catalog with Home, Catalog, and Product pages…");
+}
+
+function isCatalogAlternative(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return ["商品", "商城", "商店", "product catalog", "storefront", "catalog site", "product store", "shop"]
+    .some((marker) => normalized.includes(marker));
 }
 
 function LanguageToggle({
@@ -675,6 +683,7 @@ function Studio() {
             refreshRun={refreshRun}
             error={error}
             setError={setError}
+            sandboxAvailable={models?.sandbox_available ?? false}
             language={language}
           />
         )}
@@ -869,6 +878,7 @@ function Workspace({
   refreshRun,
   error,
   setError,
+  sandboxAvailable,
   language,
 }: {
   run: RunView;
@@ -884,6 +894,7 @@ function Workspace({
   refreshRun: (runId: string) => Promise<RunView>;
   error: string;
   setError: (error: string) => void;
+  sandboxAvailable: boolean;
   language: Language;
 }) {
   const [approving, setApproving] = useState(false);
@@ -938,8 +949,7 @@ function Workspace({
           <BuildingState run={run} language={language} />
         )}
       </section>
-      <RepositoryPanel run={run} language={language} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
-      <DebugLogPanel run={run} events={events} language={language} />
+      <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
     </div>
   );
 }
@@ -1067,8 +1077,10 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
   // terminal, so confirmation creates a fresh Run from the adapted request.
   const [revised, setRevised] = useState(rewrite);
   const [submitting, setSubmitting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const catalogDraft = isCatalogAlternative(revised);
   const submit = async () => {
-    if (!revised.trim() || submitting) return;
+    if (!revised.trim() || !catalogDraft || submitting) return;
     setSubmitting(true);
     setError("");
     try {
@@ -1079,6 +1091,20 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
       setError(reason instanceof Error ? reason.message : ui(language, "Could not start the run"));
     } finally {
       setSubmitting(false);
+    }
+  };
+  const regenerate = async () => {
+    if (!revised.trim() || regenerating) return;
+    setRegenerating(true);
+    setError("");
+    try {
+      const created = await api.regenerateAlternative(run.run_id, revised.trim());
+      setRun(created);
+      await refreshShell();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not regenerate the requirement draft"));
+    } finally {
+      setRegenerating(false);
     }
   };
   return <div className="center-state scope-stop">
@@ -1096,8 +1122,13 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
       <label>{ui(language, "Buildable alternative")}
         <textarea value={revised} onChange={(event) => setRevised(event.target.value)} placeholder={rewrite || ui(language, "Describe a product catalog with Home, Catalog, and Product pages…")} maxLength={4000} rows={4} autoFocus />
       </label>
+      {!catalogDraft && revised.trim() && <p className="scope-warning"><CircleAlert size={14} /> {ui(language, "The confirmed draft must remain a product catalog. To reinterpret a game or another product type, regenerate the requirement first.")}</p>}
       <p className="scope-hint"><Sparkles size={13} /> {ui(language, "Confirmation skips Product Manager and continues directly to architecture.")}</p>
-      <button className="primary-action" disabled={!revised.trim() || submitting} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Accept alternative & build")}</button>
+      <div className="scope-actions">
+        <button className="secondary-action" disabled={!revised.trim() || regenerating || submitting} onClick={regenerate}>{regenerating ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, "Regenerate requirement draft")}</button>
+        <button className="primary-action" disabled={!revised.trim() || !catalogDraft || submitting || regenerating} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Accept alternative & build")}</button>
+      </div>
+      <small className="scope-regenerate-note">{ui(language, "Product Manager will reinterpret the text and return a new catalog alternative without starting a build.")}</small>
     </div>
   </div>;
 }
@@ -1197,7 +1228,7 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   };
   return <div className="result-view">
     <div className="result-toolbar">
-      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button><button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button><button className={tab === "code" ? "active" : ""} onClick={() => setTab("code")}><Code2 size={15} /> {ui(language, "Vim")}</button><button className={tab === "versions" ? "active" : ""} onClick={() => setTab("versions")}><History size={15} /> {ui(language, "Versions")}</button></div>
+      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button><button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button><button className={tab === "versions" ? "active" : ""} onClick={() => setTab("versions")}><History size={15} /> {ui(language, "Versions")}</button></div>
       <div className="toolbar-actions">
         {tab === "preview" && <div className="device-switch"><button className={device === "desktop" ? "active" : ""} onClick={() => setDevice("desktop")} aria-label={ui(language, "Desktop preview")} title={ui(language, "Desktop preview")}><Monitor size={16} /></button><button className={device === "mobile" ? "active" : ""} onClick={() => setDevice("mobile")} aria-label={ui(language, "Mobile preview")} title={ui(language, "Mobile preview")}><Smartphone size={16} /></button></div>}
         <button className="publish-button" onClick={publish} disabled={publishing}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
@@ -1206,29 +1237,14 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
     {deploymentUrl && <div className="published-banner"><Check size={16} /><span>{ui(language, "Published successfully")}</span><a href={deploymentUrl} target="_blank" rel="noreferrer">{ui(language, "Open public app")} <ExternalLink size={14} /></a></div>}
     {tab === "preview" && current && <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div>}
     {tab === "edit" && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
-    {tab === "code" && <TerminalPanel projectId={run.project_id} language={language} onError={setError} onSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); setTab("versions"); }} />}
     {tab === "versions" && <div className="versions-panel"><div className="content-heading"><div><span>{ui(language, "Project history")}</span><h1>{ui(language, "Versions")}</h1><p>{ui(language, "Restore always creates a new version; history is never overwritten.")}</p></div></div>{versions.map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.number}</span><div><strong>{version.summary}</strong><small>{new Date(version.created_at).toLocaleString()}</small></div>{version.id === run.version_id ? <b>{ui(language, "Current")}</b> : <button onClick={async () => { const restored = await api.restore(run.project_id, version.id); setVersions([restored, ...versions]); await refreshRun(run.run_id); }}>{ui(language, "Restore")}</button>}</div>)}</div>}
   </div>;
 }
 
-function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
-  const [open, setOpen] = useState(false);
+function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const label = ui(language, "Run log");
   return (
-    <div className={open ? "debug-dock open" : "debug-dock"}>
-      <button
-        className="debug-toggle"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-label={label}
-        title={label}
-      >
-        {open ? <X size={15} /> : <Bug size={15} />}
-        <span>{label}</span>
-        {events.length > 0 && <b className="debug-count">{events.length}</b>}
-      </button>
-      {open && (
-        <aside className="debug-panel" aria-live="polite">
+        <aside className="debug-panel workspace-run-log" aria-live="polite">
           <div className="debug-panel-head">
             <div>
               <span>{label}</span>
@@ -1257,8 +1273,6 @@ function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEve
             )}
           </div>
         </aside>
-      )}
-    </div>
   );
 }
 

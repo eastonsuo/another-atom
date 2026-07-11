@@ -134,6 +134,7 @@ export interface QuotaView {
 export interface ModelsView {
   provider: string;
   fallback_provider: string | null;
+  sandbox_available: boolean;
   default_model: string;
   models: { id: string; label: string; usage: "medium" | "extra_high" | "local" }[];
 }

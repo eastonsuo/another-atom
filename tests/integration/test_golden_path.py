@@ -26,6 +26,7 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
     model_config = client.get("/api/models")
     assert model_config.status_code == 200
     assert model_config.json()["default_model"] == "mock"
+    assert model_config.json()["sandbox_available"] is False
     run = create_and_build(client)
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True

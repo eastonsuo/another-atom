@@ -331,7 +331,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .workspace-content { background-color: var(--paper); background-image: radial-gradient(#e4ddf5 1px, transparent 1px); background-size: 20px 20px; }
 .workspace-tools { width: 48px; min-width: 48px; max-height: calc(100vh - 66px); display: flex; border-left: 2px solid var(--ink); background: #eee8ff; transition: width .2s ease; overflow: hidden; }.workspace-tools.open { width: 368px; }
 .workspace-tool-rail { flex: 0 0 46px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 7px; border-right: 1px solid #c9c0df; background: #e5ddfb; }
-.workspace-tool-rail button { min-height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 6px 2px; border: 1.5px solid var(--ink); border-radius: 6px; background: #fff; color: var(--ink); box-shadow: 1px 2px 0 var(--ink); font-size: 8px; font-weight: 900; cursor: pointer; }.workspace-tool-rail button.active { background: var(--yellow); }.workspace-tool-rail button:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
+.workspace-tool-rail button { position: relative; min-height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 6px 2px; border: 1.5px solid var(--ink); border-radius: 6px; background: #fff; color: var(--ink); box-shadow: 1px 2px 0 var(--ink); font-size: 8px; font-weight: 900; cursor: pointer; }.workspace-tool-rail button.active { background: var(--yellow); }.workspace-tool-rail button:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }.workspace-tool-rail button b { position: absolute; top: 3px; right: 3px; min-width: 14px; height: 14px; display: grid; place-items: center; padding: 0 3px; border: 1px solid var(--ink); border-radius: 999px; background: var(--coral); font-size: 7px; line-height: 1; }
 .workspace-tool-content { position: relative; flex: 1; min-width: 0; height: 100%; overflow: hidden; }.workspace-tool-close { position: absolute; z-index: 4; top: 13px; right: 12px; width: 28px; height: 28px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 5px; background: var(--coral); box-shadow: 1px 2px 0 var(--ink); cursor: pointer; }
 .repository-panel { height: 100%; min-width: 0; display: grid; grid-template-rows: auto minmax(160px, 34%) minmax(0, 1fr); background: #f7f3ff; overflow: hidden; }
 .repository-heading { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-bottom: 2px solid var(--ink); background: #e9e2ff; }
@@ -351,6 +351,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .repository-viewer pre { flex: 1; min-height: 0; margin: 0; padding: 12px; overflow: auto; text-align: left; }.repository-viewer code { color: #f6f1ff; font: 10px/1.55 "SFMono-Regular", Consolas, monospace; white-space: pre; }
 .repository-viewer > p { margin: 12px; color: #d2cada; font-size: 10px; line-height: 1.5; }
 .terminal-drawer { height: 100%; padding: 48px 10px 10px; background: #211e2b; overflow: auto; }.terminal-drawer .terminal-panel { min-width: 0; height: 100%; }.terminal-drawer .terminal-mount { min-height: 560px; }
+.sandbox-unavailable { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; border: 2px dashed #766e88; border-radius: 8px; background: #2d2939; color: #f7f3ff; text-align: center; }.sandbox-unavailable svg { color: var(--yellow); }.sandbox-unavailable strong { font-family: "Fredoka", sans-serif; font-size: 17px; }.sandbox-unavailable p { max-width: 260px; margin: 0; color: #c9c1d5; font-size: 10px; line-height: 1.55; }
 .blueprint-heading { display: grid; grid-template-columns: 70px 1fr auto; }
 .blueprint-form { padding: 22px; border: 2px solid var(--ink); border-radius: 8px; background: #fff; box-shadow: 6px 6px 0 #d9d0ff, 8px 8px 0 var(--ink); }
 .blueprint-form input, .blueprint-form textarea, .edit-panel input, .edit-panel textarea { border: 1.5px solid var(--ink); background: #fffdf7; font-weight: 700; }
@@ -361,6 +362,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .approval-bar button:hover, .primary-action:hover, .publish-button:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }
 .support-badge { border: 1.5px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); font-weight: 900; }
 .scope-note, .rewrite-box, .inline-error { border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.scope-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }.scope-actions .primary-action { margin-top: 4px; }.secondary-action { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; margin-top: 4px; padding: 0 13px; border: 2px solid var(--ink); border-radius: 5px; background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-size: 11px; font-weight: 900; cursor: pointer; }.secondary-action:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }.secondary-action:disabled, .scope-actions .primary-action:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }.scope-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 9px 10px; border: 1.5px solid #a7493f; border-radius: 5px; background: #fff0ed; color: #8e3028; font-size: 10px; font-weight: 800; line-height: 1.45; }.scope-warning svg { flex: 0 0 auto; }.scope-regenerate-note { color: #777169; font-size: 9px; line-height: 1.45; }
 
 .working-avatar { position: relative; margin-bottom: 12px; }
 .working-avatar .role-avatar { animation: working-tilt 1.3s ease-in-out infinite; }
@@ -447,16 +449,10 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   .generated-detail-image { height: 420px; }
 }
 
-/* Collapsible right-side debug log dock */
-.debug-dock { position: fixed; z-index: 40; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: stretch; gap: 0; pointer-events: none; }
-.debug-toggle { pointer-events: auto; align-self: center; display: flex; align-items: center; gap: 7px; padding: 9px 11px; border: 2px solid var(--ink); border-right: 0; border-radius: 8px 0 0 8px; background: var(--yellow); color: var(--ink); box-shadow: -3px 3px 0 var(--ink); font-weight: 900; font-size: 11px; writing-mode: vertical-rl; text-orientation: mixed; cursor: pointer; transition: background .15s; }
-.debug-dock.open .debug-toggle { writing-mode: horizontal-tb; align-self: flex-start; margin-top: 14px; border-radius: 8px 0 0 8px; background: var(--coral); }
-.debug-toggle:hover { background: #ffe17f; }
-.debug-dock.open .debug-toggle:hover { background: #ff8577; }
-.debug-toggle svg { flex: 0 0 auto; }
-.debug-count { min-width: 18px; padding: 1px 5px; border: 1.5px solid var(--ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 900; }
-.debug-panel { pointer-events: auto; width: min(380px, calc(100vw - 52px)); max-height: min(76vh, 640px); display: flex; flex-direction: column; border: 2px solid var(--ink); border-right: 0; border-radius: 10px 0 0 10px; background: #fffdf7; box-shadow: -7px 7px 0 var(--ink); overflow: hidden; animation: debug-slide .28s cubic-bezier(.2,.8,.2,1) both; }
+/* Run log is the third item in the shared workspace tool drawer. */
+.debug-panel { width: 100%; height: 100%; display: flex; flex-direction: column; background: #fffdf7; overflow: hidden; }
 .debug-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 13px 14px; border-bottom: 2px solid var(--ink); background: #fff7df; }
+.workspace-run-log .debug-panel-head { padding-right: 52px; }
 .debug-panel-head span { display: block; color: #69627d; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
 .debug-panel-head strong { display: block; margin-top: 3px; font-family: "Fredoka", sans-serif; font-size: 14px; }
 .debug-status { align-self: center; padding: 5px 8px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; box-shadow: 1px 2px 0 var(--ink); font-size: 9px; font-weight: 900; text-transform: capitalize; white-space: nowrap; }
@@ -473,8 +469,6 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .debug-line-head code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "DM Sans", monospace; font-size: 9px; font-weight: 800; color: #4c4657; }
 .debug-line-head time { color: #918a9d; font-size: 9px; font-weight: 700; }
 .debug-line p { margin: 0; color: #4c4943; font-size: 11px; line-height: 1.4; word-break: break-word; }
-@keyframes debug-slide { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
-@media (max-width: 650px) { .debug-dock { top: auto; bottom: 14px; transform: none; }.debug-dock:not(.open) .debug-toggle { writing-mode: horizontal-tb; border-radius: 8px 0 0 8px; }.debug-panel { max-height: 62vh; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

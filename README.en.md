@@ -43,7 +43,7 @@ The project is implemented in **V1 -> V2** order. V1 is the current development 
 
 1. The user signs in with a username and password; switching accounts exposes only the newly authenticated user's Projects.
 2. The user talks to Lead. Lead either answers/clarifies directly or invokes the complete fixed specialist team.
-3. Product Manager creates a **Blueprint**. Supported work proceeds without redundant approval; adapted scope requests confirmation. Unsupported goals do not build. A catalog alternative is clearly labeled as a product-type change, and accepting it skips a second PM pass.
+3. Product Manager creates a **Blueprint**. Supported work proceeds without redundant approval; adapted scope requests confirmation. Unsupported goals do not build. A catalog alternative is clearly labeled as a product-type change. Accepting it skips a second PM pass; the user may instead explicitly ask PM to regenerate the requirement draft. Editing the draft back into a game or another unsupported product type cannot bypass capability validation.
 4. Architect and Engineer produce **ArchitectureSpec** and **AppSpec**; Data Analyst explains immutable validation evidence.
 5. Every Project owns one server-side local Git repository. Build, Edit, Resolve, and Restore versions map to Git commits.
 6. The user edits through structured controls or an xterm.js + restricted Vim WebIDE whose PTY runs in an isolated Sandbox.

@@ -83,6 +83,29 @@ class Orchestrator:
                 Blueprint,
                 lambda: self._provider(run).create_blueprint(run.prompt, Mode(run.mode)),
             )
+            regenerate_only = self.db.scalar(
+                select(RunEvent.id).where(
+                    RunEvent.run_id == run.id,
+                    RunEvent.event_type == "alternative.regeneration_requested",
+                )
+            ) is not None
+            if regenerate_only:
+                draft = blueprint.rewrite_suggestion or (
+                    f"Create {blueprint.project_name} as a product catalog with "
+                    f"{', '.join(blueprint.pages)} pages and {', '.join(blueprint.modules)} modules. "
+                    f"Visual direction: {blueprint.visual_direction}. "
+                    f"Data requirements: {', '.join(blueprint.data_requirements)}."
+                )
+                blueprint = blueprint.model_copy(
+                    update={
+                        "support_level": SupportLevel.UNSUPPORTED,
+                        "support_reasons": [
+                            "Product Manager regenerated this requirement for explicit user review."
+                        ],
+                        "rewrite_suggestion": draft,
+                    }
+                )
+                artifact.payload = blueprint.model_dump(mode="json")
             project = self.db.get(Project, run.project_id)
             if project:
                 project.name = blueprint.project_name

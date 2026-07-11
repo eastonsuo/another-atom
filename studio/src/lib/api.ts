@@ -65,6 +65,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt }),
     }),
+  regenerateAlternative: (runId: string, prompt: string) =>
+    request<RunView>(`/api/runs/${runId}/regenerate-alternative`, {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
   events: (runId: string) =>
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),
   projects: () => request<ProjectView[]>("/api/projects"),

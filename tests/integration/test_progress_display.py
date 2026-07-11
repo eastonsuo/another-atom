@@ -186,3 +186,50 @@ def test_confirmed_catalog_alternative_skips_second_product_manager_pass(
         f"/api/runs/{source['run_id']}/confirm-alternative",
         json={"prompt": suggestion},
     ).status_code == 409
+
+
+def test_catalog_alternative_cannot_be_edited_back_to_original_game(
+    client: TestClient,
+) -> None:
+    source = _create_team_run(client, "Build a minesweeper game")
+    assert source["status"] == "needs_input"
+
+    response = client.post(
+        f"/api/runs/{source['run_id']}/confirm-alternative",
+        json={"prompt": "扫雷游戏"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "ALTERNATIVE_OUT_OF_SCOPE"
+    assert client.get(f"/api/runs/{source['run_id']}").json()["status"] == "needs_input"
+
+
+def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
+    client: TestClient,
+) -> None:
+    source = _create_team_run(client, "Build a minesweeper game")
+    response = client.post(
+        f"/api/runs/{source['run_id']}/regenerate-alternative",
+        json={"prompt": "做一个复古像素风扫雷游戏"},
+    )
+
+    assert response.status_code == 202
+    regenerated = response.json()
+    assert regenerated["project_id"] == source["project_id"]
+    assert regenerated["run_id"] != source["run_id"]
+    regenerated = client.get(f"/api/runs/{regenerated['run_id']}").json()
+    assert regenerated["status"] == "needs_input"
+    assert regenerated["blueprint"]["support_level"] == "unsupported"
+    assert regenerated["build_job_id"] is None
+    suggestion = regenerated["blueprint"]["rewrite_suggestion"]
+    assert isinstance(suggestion, str) and suggestion
+    assert "catalog" in suggestion.lower() or "商品" in suggestion
+
+    second_response = client.post(
+        f"/api/runs/{regenerated['run_id']}/regenerate-alternative",
+        json={"prompt": suggestion},
+    )
+    assert second_response.status_code == 202
+    second = client.get(f"/api/runs/{second_response.json()['run_id']}").json()
+    assert second["status"] == "needs_input"
+    assert second["build_job_id"] is None
