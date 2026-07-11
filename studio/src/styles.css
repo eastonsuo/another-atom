@@ -386,6 +386,34 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 @keyframes reveal-right { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes card-arrive { from { opacity: 0; transform: translateY(18px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
+/* Collapsible right-side debug log dock */
+.debug-dock { position: fixed; z-index: 40; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: stretch; gap: 0; pointer-events: none; }
+.debug-toggle { pointer-events: auto; align-self: center; display: flex; align-items: center; gap: 7px; padding: 9px 11px; border: 2px solid var(--ink); border-right: 0; border-radius: 8px 0 0 8px; background: var(--yellow); color: var(--ink); box-shadow: -3px 3px 0 var(--ink); font-weight: 900; font-size: 11px; writing-mode: vertical-rl; text-orientation: mixed; cursor: pointer; transition: background .15s; }
+.debug-dock.open .debug-toggle { writing-mode: horizontal-tb; align-self: flex-start; margin-top: 14px; border-radius: 8px 0 0 8px; background: var(--coral); }
+.debug-toggle:hover { background: #ffe17f; }
+.debug-dock.open .debug-toggle:hover { background: #ff8577; }
+.debug-toggle svg { flex: 0 0 auto; }
+.debug-count { min-width: 18px; padding: 1px 5px; border: 1.5px solid var(--ink); border-radius: 999px; background: #fff; font-size: 9px; font-weight: 900; }
+.debug-panel { pointer-events: auto; width: min(380px, calc(100vw - 52px)); max-height: min(76vh, 640px); display: flex; flex-direction: column; border: 2px solid var(--ink); border-right: 0; border-radius: 10px 0 0 10px; background: #fffdf7; box-shadow: -7px 7px 0 var(--ink); overflow: hidden; animation: debug-slide .28s cubic-bezier(.2,.8,.2,1) both; }
+.debug-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 13px 14px; border-bottom: 2px solid var(--ink); background: #fff7df; }
+.debug-panel-head span { display: block; color: #69627d; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.debug-panel-head strong { display: block; margin-top: 3px; font-family: "Fredoka", sans-serif; font-size: 14px; }
+.debug-status { align-self: center; padding: 5px 8px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; box-shadow: 1px 2px 0 var(--ink); font-size: 9px; font-weight: 900; text-transform: capitalize; white-space: nowrap; }
+.debug-status.completed, .debug-status.completed_degraded { background: var(--mint); }
+.debug-status.failed, .debug-status.needs_input { background: var(--coral); color: #fff; }
+.debug-status.awaiting_approval { background: var(--yellow); }
+.debug-panel-meta { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px dashed #d1cabc; }
+.debug-panel-meta span { padding: 4px 7px; border: 1px solid #cabf99; border-radius: 999px; background: rgba(255,255,255,.62); color: #5b5365; font-size: 9px; font-weight: 800; }
+.debug-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; display: grid; gap: 9px; align-content: start; }
+.debug-empty { margin: 4px 0; color: #777169; font-size: 11px; }
+.debug-line { padding: 8px 9px; border: 1.5px solid var(--ink); border-radius: 6px; background: #fff; box-shadow: 2px 2px 0 rgba(39,36,58,.14); }
+.debug-line-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+.debug-line-head b { font-family: "Fredoka", sans-serif; font-size: 10px; color: var(--coral); }
+.debug-line-head code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "DM Sans", monospace; font-size: 9px; font-weight: 800; color: #4c4657; }
+.debug-line-head time { color: #918a9d; font-size: 9px; font-weight: 700; }
+.debug-line p { margin: 0; color: #4c4943; font-size: 11px; line-height: 1.4; word-break: break-word; }
+@keyframes debug-slide { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+
 @media (max-width: 900px) {
   .workspace-grid { grid-template-columns: 215px minmax(0, 1fr); }
   .crew-stage { gap: 10px; }
@@ -408,6 +436,9 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
   .generated-hero { padding: 12px; gap: 14px; }
   .generated-grid { grid-template-columns: 1fr; gap: 16px; }
   .generated-detail-image { height: 420px; }
+  .debug-dock { top: auto; bottom: 14px; transform: none; }
+  .debug-dock:not(.open) .debug-toggle { writing-mode: horizontal-tb; border-radius: 8px 0 0 8px; }
+  .debug-panel { max-height: 62vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {

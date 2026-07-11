@@ -1,5 +1,6 @@
 import {
   ArrowUp,
+  Bug,
   Check,
   ChevronRight,
   CircleAlert,
@@ -144,6 +145,7 @@ const ZH: Record<string, string> = {
   "Complete": "已完成",
   "Waiting": "等待中",
   "Project log": "Project 日志",
+  "Debug log": "调试日志",
   "Recent events": "最近事件",
   "No persisted events yet.": "暂无持久化事件。",
   "Latest": "最新",
@@ -823,6 +825,7 @@ function Workspace({
           <BuildingState run={run} language={language} />
         )}
       </section>
+      <DebugLogPanel run={run} events={events} language={language} />
     </div>
   );
 }
@@ -1004,6 +1007,57 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
     {tab === "code" && <TerminalPanel projectId={run.project_id} language={language} onError={setError} onSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); setTab("versions"); }} />}
     {tab === "versions" && <div className="versions-panel"><div className="content-heading"><div><span>{ui(language, "Project history")}</span><h1>{ui(language, "Versions")}</h1><p>{ui(language, "Restore always creates a new version; history is never overwritten.")}</p></div></div>{versions.map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.number}</span><div><strong>{version.summary}</strong><small>{new Date(version.created_at).toLocaleString()}</small></div>{version.id === run.version_id ? <b>{ui(language, "Current")}</b> : <button onClick={async () => { const restored = await api.restore(run.project_id, version.id); setVersions([restored, ...versions]); await refreshRun(run.run_id); }}>{ui(language, "Restore")}</button>}</div>)}</div>}
   </div>;
+}
+
+function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
+  const [open, setOpen] = useState(false);
+  const label = ui(language, "Debug log");
+  return (
+    <div className={open ? "debug-dock open" : "debug-dock"}>
+      <button
+        className="debug-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+      >
+        {open ? <X size={15} /> : <Bug size={15} />}
+        <span>{label}</span>
+        {events.length > 0 && <b className="debug-count">{events.length}</b>}
+      </button>
+      {open && (
+        <aside className="debug-panel" aria-live="polite">
+          <div className="debug-panel-head">
+            <div>
+              <span>{label}</span>
+              <strong>Run {run.run_id.slice(0, 8)}</strong>
+            </div>
+            <span className={`debug-status ${run.status}`}>{statusLabel(language, run.status)}</span>
+          </div>
+          <div className="debug-panel-meta">
+            <span>{stageLabel(language, run.current_stage)}</span>
+            <span>{events.length} {ui(language, events.length === 1 ? "persisted event" : "persisted events")}</span>
+          </div>
+          <div className="debug-stream">
+            {events.length === 0 ? (
+              <p className="debug-empty">{ui(language, "No persisted events yet.")}</p>
+            ) : (
+              [...events].reverse().map((event) => (
+                <div className="debug-line" key={event.event_id}>
+                  <div className="debug-line-head">
+                    <b>#{event.sequence}</b>
+                    <code>{event.type}</code>
+                    <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
+                  </div>
+                  <p>{ui(language, String(event.payload.message ?? event.type))}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      )}
+    </div>
+  );
 }
 
 function StatusPill({ status, language }: { status: string; language: Language }) { return <span className={`status-pill ${status}`}><i /> {statusLabel(language, status)}</span>; }
