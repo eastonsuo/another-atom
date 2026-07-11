@@ -9,8 +9,17 @@ interface PreviewAppProps {
 
 export function PreviewApp({ spec }: PreviewAppProps) {
   const [route, setRoute] = useState<"home" | "catalog" | "product">("home");
-  const [selected, setSelected] = useState<ProductItem>(spec.products[0]);
+  const [selected, setSelected] = useState<ProductItem | undefined>(spec.products[0]);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  if (spec.products.length === 0) {
+    return (
+      <div className="generated-loading">
+        <strong>{spec.project_name}</strong>
+        <span>This preview has no catalog products to display yet.</span>
+      </div>
+    );
+  }
 
   const go = (next: "home" | "catalog" | "product", product?: ProductItem) => {
     if (product) setSelected(product);
@@ -51,7 +60,7 @@ export function PreviewApp({ spec }: PreviewAppProps) {
 
       {route === "home" && <Home spec={spec} go={go} />}
       {route === "catalog" && <Catalog spec={spec} go={go} />}
-      {route === "product" && <ProductDetail product={selected} go={go} />}
+      {route === "product" && <ProductDetail product={selected ?? spec.products[0]} go={go} />}
 
       <footer className="generated-footer">
         <strong>{spec.project_name}</strong>

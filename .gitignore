@@ -16,3 +16,5 @@ studio/vite.config.d.ts
 .env
 .DS_Store
 .idea/
+fixes.patch
+/patches/

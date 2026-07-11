@@ -1,3 +1,4 @@
+import json
 import re
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
@@ -465,13 +466,21 @@ class OllamaCloudProvider:
                 response = httpx.post(
                     f"{self.host}/api/chat",
                     headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": self.model, "messages": messages, "stream": False},
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "stream": False,
+                        # Constrain the model to emit strictly valid JSON matching the
+                        # contract. Reasoning-capable models (DeepSeek V4) otherwise emit
+                        # think-text and prose that corrupt free-form JSON extraction.
+                        "format": schema,
+                    },
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
                 body = response.json()
                 self._record_response_usage(body)
-                content = body["message"]["content"]
+                content = self._message_content(body)
                 json_content = self._extract_json(content)
                 try:
                     return contract.model_validate_json(json_content)
@@ -495,12 +504,64 @@ class OllamaCloudProvider:
             raise LLMProviderError(f"Ollama {role} output failed: {exc}") from exc
 
     @staticmethod
+    def _message_content(body: dict) -> str:
+        message = body.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("response did not contain a chat message")
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("response message content was empty")
+        return content
+
+    @staticmethod
     def _extract_json(content: str) -> str:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("response did not contain a JSON object")
-        return content[start : end + 1]
+        """Return the first brace-balanced region that parses as valid JSON.
+
+        Reasoning models frequently prepend hidden-thought text (which can itself
+        contain decoy braces such as ``{x}``), wrap the answer in markdown fences,
+        or append trailing prose. Naively slicing from the first ``{`` to the last
+        ``}`` breaks on all of those. We instead scan each ``{``-anchored,
+        brace-balanced region (respecting string literals and escapes) and return
+        the first one that is actually valid JSON, skipping non-JSON decoys.
+        """
+        length = len(content)
+        for start in range(length):
+            if content[start] != "{":
+                continue
+            candidate = OllamaCloudProvider._balanced_object(content, start)
+            if candidate is None:
+                continue
+            try:
+                json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            return candidate
+        raise ValueError("response did not contain a JSON object")
+
+    @staticmethod
+    def _balanced_object(content: str, start: int) -> str | None:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(content)):
+            char = content[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start : index + 1]
+        return None
 
 
 def get_llm_provider(model: str | None = None) -> LLMProvider:

@@ -60,6 +60,51 @@ def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) 
     assert provider.take_usage().request_count == 3
 
 
+def test_extract_json_handles_reasoning_and_prose() -> None:
+    from another_atom.agent.provider import OllamaCloudProvider
+
+    extract = OllamaCloudProvider._extract_json
+    # Reasoning text with braces before the real object.
+    assert extract('think {x} then\n{"a": 1}') == '{"a": 1}'
+    # Trailing prose and a stray closing brace after the object.
+    assert extract('{"a": 1} note: use } later') == '{"a": 1}'
+    # Fenced markdown block.
+    assert extract('```json\n{"a": 1}\n```') == '{"a": 1}'
+    # Braces inside string literals must not end the object early.
+    assert extract('{"k": "has } brace"}') == '{"k": "has } brace"}'
+    with pytest.raises(ValueError):
+        extract("no json here")
+
+
+def test_ollama_provider_requests_structured_format(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+    blueprint = MockLLMProvider().create_blueprint("Build a catalog", Mode.TEAM)
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {"content": blueprint.model_dump_json()},
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    OllamaCloudProvider(model="deepseek-v4-pro").create_blueprint("Build a catalog", Mode.TEAM)
+    # Real reliability fix: the request must constrain output to the JSON schema.
+    assert isinstance(captured.get("format"), dict)
+    assert captured["format"].get("type") == "object"
+    get_settings.cache_clear()
+
+
 def test_ollama_provider_records_response_token_usage(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
     get_settings.cache_clear()

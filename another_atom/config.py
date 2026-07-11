@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ollama_api_key: str | None = None
     ollama_host: str = "https://ollama.com"
     ollama_model: str = "deepseek-v4-pro"
-    ollama_timeout_seconds: float = 120
+    ollama_timeout_seconds: float = 300
     demo_quota_units: int = 100
     public_base_url: str = "http://localhost:8000"
     worker_poll_seconds: float = 0.5

@@ -959,6 +959,17 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   const [publishing, setPublishing] = useState(false);
   const [deploymentUrl, setDeploymentUrl] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
+  // Re-sync editable fields during render whenever the displayed version
+  // changes (e.g. after Restore or Save selects a different version). This
+  // avoids stale Edit-tab inputs without triggering cascading effect renders.
+  const [syncedId, setSyncedId] = useState(current?.id);
+  if (current && current.id !== syncedId) {
+    setSyncedId(current.id);
+    setTitle(current.app_spec.hero_title ?? "");
+    setBody(current.app_spec.hero_body ?? "");
+    setColor(current.app_spec.primary_color ?? "#151515");
+    setDeploymentUrl("");
+  }
   const save = async () => {
     try {
       const version = await api.revise(run.project_id, { hero_title: title, hero_body: body, primary_color: color });
