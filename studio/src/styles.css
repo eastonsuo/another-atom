@@ -335,6 +335,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .workspace-tool-content { position: relative; flex: 1; min-width: 0; height: 100%; overflow: hidden; }.workspace-tool-close { position: absolute; z-index: 4; top: 13px; right: 12px; width: 28px; height: 28px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 5px; background: var(--coral); box-shadow: 1px 2px 0 var(--ink); cursor: pointer; }
 .repository-panel { height: 100%; min-width: 0; display: grid; grid-template-rows: auto minmax(160px, 34%) minmax(0, 1fr); background: #f7f3ff; overflow: hidden; }
 .repository-heading { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-bottom: 2px solid var(--ink); background: #e9e2ff; }
+.workspace-tool-content .repository-heading { padding-right: 54px; }
 .repository-heading > div { min-width: 0; display: flex; align-items: center; gap: 8px; }.repository-heading > div > span { min-width: 0; }
 .repository-heading strong, .repository-heading small { display: block; }.repository-heading strong { font-size: 12px; }.repository-heading small { margin-top: 2px; color: #756e84; font-size: 9px; }
 .repository-heading button { width: 30px; height: 30px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 5px; background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); cursor: pointer; }
