@@ -154,6 +154,7 @@ npm run build
 | `DEMO_QUOTA_UNITS` | `100` | `100` 或按演示需要调整 | 每个新账户的演示配额 |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Railway 分配的 `https://...up.railway.app` | 生成公开访问地址 |
 | `ENVIRONMENT` | `development` | `production` | 运行环境标识 |
+| `LOG_DIRECTORY` | `data` | `/app/data`（默认相对路径在容器中同样解析到此处） | JSON 进程日志目录；每次启动创建 `atom-<pid>-<启动UTC时间>.log` |
 
 `.env` 已被 Git 忽略；仓库只提交 `.env.example`。Ollama Cloud 当前不提供服务端 Structured Outputs，因此响应会经过本地 Pydantic 校验；失败时先带校验错误修复一次，再进入阶段级有限重试。
 

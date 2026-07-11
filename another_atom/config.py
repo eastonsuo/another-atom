@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "Another Atom"
     environment: str = "development"
     log_level: str = "INFO"
+    log_directory: Path = Path("data")
     database_url: str = "sqlite:///./data/another_atom.db"
     studio_dist: Path = Path("studio/dist")
     llm_provider: str = "mock"
