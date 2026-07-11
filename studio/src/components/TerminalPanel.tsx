@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { Check, LoaderCircle, TerminalSquare } from "lucide-react";
+import { Check, LoaderCircle, Play, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { VersionView } from "../types";
@@ -16,74 +16,110 @@ export function TerminalPanel({
   onError: (message: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const started = useRef(false);
+  const terminal = useRef<Terminal | null>(null);
+  const socket = useRef<WebSocket | null>(null);
+  const resizeObserver = useRef<ResizeObserver | null>(null);
+  const sessionIdRef = useRef("");
+  const saved = useRef(false);
+  const abortOpen = useRef<AbortController | null>(null);
   const [sessionId, setSessionId] = useState("");
-  const [connecting, setConnecting] = useState(true);
+  const [connecting, setConnecting] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!container.current || started.current) return;
-    started.current = true;
-    const terminal = new Terminal({
-      cursorBlink: true,
-      fontFamily: '"SFMono-Regular", Consolas, monospace',
-      fontSize: 13,
-      theme: { background: "#191724", foreground: "#f6f1ff", cursor: "#ffd45c" },
-    });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(container.current);
-    fit.fit();
-    let socket: WebSocket | undefined;
-    let resizeObserver: ResizeObserver | undefined;
+  useEffect(() => () => {
+    abortOpen.current?.abort();
+    resizeObserver.current?.disconnect();
+    socket.current?.close();
+    terminal.current?.dispose();
+    if (sessionIdRef.current && !saved.current) {
+      void api.closeSandbox(projectId, sessionIdRef.current).catch(() => undefined);
+    }
+  }, [projectId]);
 
-    api.openSandbox(projectId).then((session) => {
+  const open = async () => {
+    if (connecting || sessionId || !container.current) return;
+    setConnecting(true);
+    onError("");
+    const controller = new AbortController();
+    abortOpen.current = controller;
+    try {
+      const session = await api.openSandbox(projectId, controller.signal);
+      sessionIdRef.current = session.session_id;
       setSessionId(session.session_id);
+      abortOpen.current = null;
+      if (!container.current) {
+        await api.closeSandbox(projectId, session.session_id);
+        return;
+      }
+
+      const nextTerminal = new Terminal({
+        cursorBlink: true,
+        fontFamily: '"SFMono-Regular", Consolas, monospace',
+        fontSize: 13,
+        theme: { background: "#191724", foreground: "#f6f1ff", cursor: "#ffd45c" },
+      });
+      const fit = new FitAddon();
+      nextTerminal.loadAddon(fit);
+      nextTerminal.open(container.current);
+      fit.fit();
+      terminal.current = nextTerminal;
+
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}${session.websocket_path}`);
-      socket.binaryType = "arraybuffer";
-      socket.onopen = () => {
+      const nextSocket = new WebSocket(
+        `${protocol}//${window.location.host}${session.websocket_path}`,
+      );
+      nextSocket.binaryType = "arraybuffer";
+      socket.current = nextSocket;
+      nextSocket.onopen = () => {
         setConnecting(false);
         fit.fit();
-        socket?.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }));
+        nextSocket.send(JSON.stringify({
+          type: "resize",
+          cols: nextTerminal.cols,
+          rows: nextTerminal.rows,
+        }));
       };
-      socket.onmessage = (event) => {
+      nextSocket.onmessage = (event) => {
         const output = event.data instanceof ArrayBuffer
           ? new TextDecoder().decode(event.data)
           : String(event.data);
-        terminal.write(output);
+        nextTerminal.write(output);
       };
-      socket.onerror = () => onError("The Sandbox terminal connection failed");
-      terminal.onData((data) => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "input", data }));
+      nextSocket.onerror = () => {
+        setConnecting(false);
+        onError("The Sandbox terminal connection failed");
+      };
+      nextTerminal.onData((data) => {
+        if (nextSocket.readyState === WebSocket.OPEN) {
+          nextSocket.send(JSON.stringify({ type: "input", data }));
         }
       });
-      resizeObserver = new ResizeObserver(() => {
+      const nextObserver = new ResizeObserver(() => {
         fit.fit();
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }));
+        if (nextSocket.readyState === WebSocket.OPEN) {
+          nextSocket.send(JSON.stringify({
+            type: "resize",
+            cols: nextTerminal.cols,
+            rows: nextTerminal.rows,
+          }));
         }
       });
-      if (container.current) resizeObserver.observe(container.current);
-    }).catch((reason: Error) => {
+      nextObserver.observe(container.current);
+      resizeObserver.current = nextObserver;
+    } catch (reason) {
       setConnecting(false);
-      terminal.writeln(`\r\nSandbox unavailable: ${reason.message}`);
-      onError(reason.message);
-    });
-
-    return () => {
-      resizeObserver?.disconnect();
-      socket?.close();
-      terminal.dispose();
-    };
-  }, [onError, projectId]);
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      onError(reason instanceof Error ? reason.message : "Could not open restricted Vim");
+    }
+  };
 
   const save = async () => {
     if (!sessionId || saving) return;
     setSaving(true);
     try {
-      onSaved(await api.saveSandbox(projectId, sessionId));
+      const version = await api.saveSandbox(projectId, sessionId);
+      saved.current = true;
+      onSaved(version);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : "Could not save Vim changes");
     } finally {
@@ -94,9 +130,15 @@ export function TerminalPanel({
   return <div className="terminal-panel">
     <div className="terminal-heading">
       <div><TerminalSquare size={17} /><span><strong>Restricted Vim</strong><small>Project worktree · no login shell · no network</small></span></div>
-      <button onClick={save} disabled={!sessionId || saving || connecting}>
-        {saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} Save version
-      </button>
+      {sessionId ? (
+        <button onClick={save} disabled={saving || connecting}>
+          {saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />} Save version
+        </button>
+      ) : (
+        <button onClick={open} disabled={connecting}>
+          {connecting ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} Open Vim
+        </button>
+      )}
     </div>
     <div className="terminal-mount" ref={container} />
   </div>;

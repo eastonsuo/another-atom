@@ -12,7 +12,7 @@ Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工
 
 - **当前范围：** V1 只支持受控的商品展示和商品目录站，包括 Home、Catalog、Product 页面；不宣称可以生成任意应用。
 
-- **模型接入：** 后端已实现 Ollama Cloud 和确定性 Mock Provider。真实模型默认配置为 DeepSeek V4 Pro，也允许选择 V4 Flash；真实网络调用仍需完成最终验收。
+- **模型接入：** 后端已实现 Ollama Cloud 和确定性 Mock Provider。DeepSeek V4 Pro 的真实 Lead 结构化调用已经成功，也允许选择 V4 Flash；完整四角色真实链路仍待验收。
 
 - **本地状态：** Lead 路由、固定专业团队、风险审批、Session Gateway、用户隔离、Project Git、版本、发布路由和 Sandbox Gateway 已有本地实现与自动化测试。
 
@@ -412,7 +412,7 @@ Browser -- HTTPS/WSS --> Unified Gateway
 
 | 关键词 | 状态 | 详情与证据 |
 | --- | --- | --- |
-| **真实 LLM Provider** | 部分完成 | Ollama Cloud 结构化调用、模型 allowlist、token 用量和修复重试已实现并有 Mock HTTP 单测；真实网络调用待最终确认 |
+| **真实 LLM Provider** | 已完成 | DeepSeek V4 Pro 真实 Lead 请求成功返回结构化 `direct`；记录 1 次请求、254 input token 和 195 output token，且未输出密钥 |
 | **Lead `direct/team`** | 已完成 | 能力询问走 direct 且不创建 Project；明确 Build 走 team；结果和用量持久化 |
 | **风险驱动 Approval** | 已完成 | supported 自动创建 BuildJob 且无 Approval；adapted 进入 awaiting_approval；并发确认由状态 CAS 和唯一约束保护 |
 | **固定专业团队** | 已完成 | Product Manager、Architect、Engineer、Data Analyst 依次生成结构化 Artifact |
@@ -429,7 +429,7 @@ Browser -- HTTPS/WSS --> Unified Gateway
 | **版本与发布分离** | 已完成 | 新版本和 Restore 不自动移动线上指针；Publish/Update 由显式接口执行 |
 | **恢复与配额** | 已完成 | Blueprint 后台恢复、Job Lease、阶段 Artifact 复用、实际用量结算、剩余预占释放和并发 Approval 测试通过 |
 | **xterm.js + Sandbox Gateway** | 部分完成 | Studio、Control Plane WSS 代理、独立 Sandbox Host、restricted Vim 镜像和保存版本链已实现；Linux 实机隔离待验收 |
-| **自动化测试** | 已完成 | 当前后端单元/集成测试 47 项通过，包含 Golden Path、反路径、恢复、并发、身份、Git 和 Sandbox 保存 |
+| **自动化测试** | 已完成 | 当前后端单元/集成测试 52 项通过，包含 Golden Path、反路径、恢复、并发、身份、Git 和 Sandbox 保存 |
 | **Railway 公网部署** | 待完成 | Dockerfile 和 Railway 配置已存在，尚无 PostgreSQL/持久化存储环境下完成验收的公网地址 |
 
 ## 11. 后续验收目标
@@ -437,8 +437,6 @@ Browser -- HTTPS/WSS --> Unified Gateway
 这里只列仍准备完成的目标，不重复已经通过的能力，也不写通用评估维度。
 
 ### 11.1 Agent
-
-- **真实 Lead 调用｜待完成：** 使用 `.env` 中配置的 Ollama Cloud 凭证执行最小真实请求，确认模型、结构化 LeadDecision 和 token 用量，不输出密钥。
 
 - **真实范围分类｜待完成：** 分别验证真实模型对 supported、adapted、unsupported 请求的 Blueprint 分类与 Risk Policy 状态推进。
 

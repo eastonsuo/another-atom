@@ -29,3 +29,29 @@ def test_lead_team_route_is_persisted_before_build(client: TestClient) -> None:
         assert message is not None
         assert message.route == "team"
         assert message.request_count == 1
+
+
+def test_lead_llm_failure_settles_observed_call_and_releases_rest(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/lead/messages",
+        json={"message": "Build a catalog [fail:llm]", "model": "mock"},
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "LEAD_FAILED"
+    quota = client.get("/api/quota").json()
+    assert quota["used"] == 1
+    assert quota["reserved"] == 0
+
+
+def test_lead_platform_failure_does_not_leave_reserved_quota(client: TestClient) -> None:
+    response = client.post(
+        "/api/lead/messages",
+        json={"message": "Build a catalog [fail:platform]", "model": "mock"},
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "LEAD_PLATFORM_FAILED"
+    quota = client.get("/api/quota").json()
+    assert quota["used"] == 1
+    assert quota["reserved"] == 0

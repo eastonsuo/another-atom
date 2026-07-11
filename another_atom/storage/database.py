@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import Engine, create_engine, event, inspect, text
+from sqlalchemy import Engine, create_engine, event, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from another_atom.config import get_settings
@@ -42,6 +42,9 @@ def init_database(target_engine: Engine | None = None) -> None:
     version_columns = {
         column["name"] for column in database_inspector.get_columns("project_versions")
     }
+    sandbox_columns = {
+        column["name"] for column in database_inspector.get_columns("sandbox_sessions")
+    }
     with database_engine.begin() as connection:
         if "model" not in run_columns:
             connection.execute(
@@ -64,6 +67,10 @@ def init_database(target_engine: Engine | None = None) -> None:
         if "git_commit" not in version_columns:
             connection.execute(
                 text("ALTER TABLE project_versions ADD COLUMN git_commit VARCHAR(40)")
+            )
+        if "status" not in sandbox_columns:
+            connection.execute(
+                text("ALTER TABLE sandbox_sessions ADD COLUMN status VARCHAR(20) DEFAULT 'open'")
             )
         build_additions = {
             "lease_owner": "VARCHAR(120)",
@@ -95,7 +102,9 @@ def init_database(target_engine: Engine | None = None) -> None:
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_idx ON users (username)")
         )
 
-    from another_atom.storage.models import User
+    from another_atom.contracts.schemas import AppSpec, VersionSource
+    from another_atom.repository.service import commit_version, initialize_repository
+    from another_atom.storage.models import Project, ProjectVersion, User
 
     bootstrap_session = sessionmaker(bind=database_engine, expire_on_commit=False)
     with bootstrap_session() as db:
@@ -109,6 +118,26 @@ def init_database(target_engine: Engine | None = None) -> None:
                 )
             )
             db.commit()
+        projects = db.scalars(select(Project).order_by(Project.created_at)).all()
+        for project in projects:
+            if project.repository_path is not None:
+                continue
+            project.repository_path = str(initialize_repository(project.id))
+            project.repository_branch = "main"
+            versions = db.scalars(
+                select(ProjectVersion)
+                .where(ProjectVersion.project_id == project.id)
+                .order_by(ProjectVersion.version_number)
+            ).all()
+            for version in versions:
+                version.git_commit = commit_version(
+                    project.id,
+                    version.id,
+                    version.version_number,
+                    VersionSource(version.source),
+                    AppSpec.model_validate(version.app_spec),
+                )
+        db.commit()
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -309,14 +309,41 @@ def route_lead_message(
         decision = provider.route_message(request.message, request.force_team)
         usage = provider.take_usage()
     except LLMProviderError as exc:
-        db.execute(
-            update(User)
-            .where(User.id == user.id)
-            .values(quota_reserved=User.quota_reserved - reserved)
+        usage = provider.take_usage()
+        _settle_lead_quota(db, user.id, reserved, usage.request_count)
+        db.add(
+            LeadMessage(
+                user_id=user.id,
+                content=request.message,
+                route="failed",
+                response="Lead request failed",
+                reason=str(exc)[:300],
+                model=selected_model,
+                request_count=usage.request_count,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            )
         )
         db.commit()
         raise AppError("LEAD_FAILED", str(exc), 502) from exc
-    actual = min(reserved, usage.request_count)
+    except Exception as exc:
+        usage = provider.take_usage()
+        _settle_lead_quota(db, user.id, reserved, usage.request_count)
+        db.add(
+            LeadMessage(
+                user_id=user.id,
+                content=request.message,
+                route="failed",
+                response="Lead request failed",
+                reason=str(exc)[:300],
+                model=selected_model,
+                request_count=usage.request_count,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            )
+        )
+        db.commit()
+        raise AppError("LEAD_PLATFORM_FAILED", "Lead execution failed", 502) from exc
     lead_message = LeadMessage(
         user_id=user.id,
         content=request.message,
@@ -329,19 +356,24 @@ def route_lead_message(
         output_tokens=usage.output_tokens,
     )
     db.add(lead_message)
-    db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(
-            quota_reserved=User.quota_reserved - reserved,
-            quota_used=User.quota_used + actual,
-        )
-    )
+    _settle_lead_quota(db, user.id, reserved, usage.request_count)
     db.commit()
     return LeadDecisionView(
         message_id=lead_message.id,
         model=selected_model,
         **decision.model_dump(),
+    )
+
+
+def _settle_lead_quota(db: Session, user_id: str, reserved: int, request_count: int) -> None:
+    actual = min(reserved, request_count)
+    db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(
+            quota_reserved=User.quota_reserved - reserved,
+            quota_used=User.quota_used + actual,
+        )
     )
 
 
@@ -966,18 +998,105 @@ def create_project_sandbox(
     )
 
 
+@router.delete(
+    "/projects/{project_id}/sandbox/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def close_project_sandbox(
+    project_id: str,
+    session_id: str,
+    sandbox_factory: Callable[[], SandboxClient] = Depends(get_sandbox),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    project = _owned_project(db, project_id, user.id)
+    session = _owned_sandbox_session(db, session_id, user.id)
+    if session.project_id != project.id:
+        raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
+    claimed = db.execute(
+        update(SandboxSession)
+        .where(
+            SandboxSession.id == session.id,
+            SandboxSession.status == "open",
+            SandboxSession.closed_at.is_(None),
+        )
+        .values(status="closing")
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError("SANDBOX_CLOSE_NOT_ALLOWED", "Sandbox session is busy", 409)
+    db.commit()
+    try:
+        sandbox_factory().close(session.remote_session_id)
+    except SandboxUnavailable as exc:
+        db.execute(
+            update(SandboxSession)
+            .where(
+                SandboxSession.id == session.id,
+                SandboxSession.status == "closing",
+            )
+            .values(status="open")
+        )
+        db.commit()
+        raise AppError("SANDBOX_CLEANUP_FAILED", str(exc), 503) from exc
+    db.execute(
+        update(SandboxSession)
+        .where(
+            SandboxSession.id == session.id,
+            SandboxSession.status == "closing",
+        )
+        .values(status="closed", closed_at=now_utc())
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 def _owned_sandbox_session(db: Session, session_id: str, user_id: str) -> SandboxSession:
     session = db.scalar(
         select(SandboxSession).where(
             SandboxSession.id == session_id,
             SandboxSession.user_id == user_id,
+        )
+    )
+    expires_at = session.expires_at if session is not None else None
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if session is None or session.closed_at is not None or expires_at <= now_utc():
+        raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
+    return session
+
+
+def _claim_sandbox_save(db: Session, session: SandboxSession) -> None:
+    claimed = db.execute(
+        update(SandboxSession)
+        .where(
+            SandboxSession.id == session.id,
+            SandboxSession.status == "open",
             SandboxSession.closed_at.is_(None),
             SandboxSession.expires_at > now_utc(),
         )
+        .values(status="saving")
+        .execution_options(synchronize_session=False)
     )
-    if session is None:
-        raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
-    return session
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError("SANDBOX_SAVE_NOT_ALLOWED", "Sandbox save is already in progress", 409)
+    db.commit()
+
+
+def _release_sandbox_save(db: Session, session_id: str) -> None:
+    db.rollback()
+    db.execute(
+        update(SandboxSession)
+        .where(
+            SandboxSession.id == session_id,
+            SandboxSession.status == "saving",
+            SandboxSession.closed_at.is_(None),
+        )
+        .values(status="open")
+    )
+    db.commit()
 
 
 @router.post(
@@ -996,55 +1115,67 @@ def save_project_sandbox(
     if session.project_id != project.id:
         raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
     sandbox = sandbox_factory()
+    _claim_sandbox_save(db, session)
     try:
         app_spec = sandbox.read_app_spec(session.remote_session_id)
     except SandboxUnavailable as exc:
+        _release_sandbox_save(db, session.id)
         raise AppError("SANDBOX_UNAVAILABLE", str(exc), 503) from exc
-    current = db.get(ProjectVersion, project.latest_version_id)
-    if current is None:
-        raise AppError("VERSION_NOT_FOUND", "Build a version before saving Vim changes", 409)
-    blueprint, architecture_spec = _validation_contracts(db, current.run_id)
-    validation = validate_app_spec(
-        app_spec,
-        project.prompt,
-        blueprint=blueprint,
-        architecture_spec=architecture_spec,
-    )
-    if not validation.passed:
-        raise AppError("SANDBOX_VALIDATION_FAILED", "The edited AppSpec failed validation", 422)
-    latest_number = db.scalar(
-        select(func.max(ProjectVersion.version_number)).where(
-            ProjectVersion.project_id == project.id
+    except Exception:
+        _release_sandbox_save(db, session.id)
+        raise
+    try:
+        current = db.get(ProjectVersion, project.latest_version_id)
+        if current is None:
+            raise AppError("VERSION_NOT_FOUND", "Build a version before saving Vim changes", 409)
+        blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+        validation = validate_app_spec(
+            app_spec,
+            project.prompt,
+            blueprint=blueprint,
+            architecture_spec=architecture_spec,
         )
-    )
-    version = ProjectVersion(
-        project_id=project.id,
-        run_id=current.run_id,
-        version_number=(latest_number or 0) + 1,
-        source=VersionSource.EDIT.value,
-        app_spec=app_spec.model_dump(mode="json"),
-        validation_report=validation.model_dump(mode="json"),
-        data_review=current.data_review,
-    )
-    db.add(version)
-    db.flush()
-    version.git_commit = commit_version(
-        project.id,
-        version.id,
-        version.version_number,
-        VersionSource.EDIT,
-        app_spec,
-    )
-    project.latest_version_id = version.id
-    session.closed_at = now_utc()
-    _record_project_event(
-        db,
-        project.id,
-        "version.created",
-        "A validated Vim edit version was created",
-        {"version_id": version.id, "source": "vim"},
-    )
-    db.commit()
+        if not validation.passed:
+            raise AppError("SANDBOX_VALIDATION_FAILED", "The edited AppSpec failed validation", 422)
+        latest_number = db.scalar(
+            select(func.max(ProjectVersion.version_number)).where(
+                ProjectVersion.project_id == project.id
+            )
+        )
+        version = ProjectVersion(
+            project_id=project.id,
+            run_id=current.run_id,
+            version_number=(latest_number or 0) + 1,
+            source=VersionSource.EDIT.value,
+            app_spec=app_spec.model_dump(mode="json"),
+            validation_report=validation.model_dump(mode="json"),
+            data_review=current.data_review,
+        )
+        db.add(version)
+        db.flush()
+        version.git_commit = commit_version(
+            project.id,
+            version.id,
+            version.version_number,
+            VersionSource.EDIT,
+            app_spec,
+        )
+        project.latest_version_id = version.id
+        session = db.get(SandboxSession, session.id)
+        assert session is not None
+        session.status = "closed"
+        session.closed_at = now_utc()
+        _record_project_event(
+            db,
+            project.id,
+            "version.created",
+            "A validated Vim edit version was created",
+            {"version_id": version.id, "source": "vim"},
+        )
+        db.commit()
+    except Exception:
+        _release_sandbox_save(db, session.id)
+        raise
     try:
         sandbox.close(session.remote_session_id)
     except SandboxUnavailable:
@@ -1079,6 +1210,8 @@ async def proxy_sandbox_terminal(websocket: WebSocket, session_id: str) -> None:
             return
         try:
             session = _owned_sandbox_session(db, session_id, user.id)
+            if session.status != "open":
+                raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
             sandbox = get_sandbox_client()
         except AppError:
             await websocket.close(code=4404)

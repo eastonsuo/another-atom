@@ -71,6 +71,7 @@ class SandboxSession(Base, TimestampMixin):
     )
     remote_session_id: Mapped[str] = mapped_column(String(80), unique=True)
     terminal_token: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

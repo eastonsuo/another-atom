@@ -219,15 +219,9 @@ def _git_worktree(repository: Path, *arguments: str) -> None:
 
 
 def _remove_worktree(host_session: HostSession) -> None:
-    try:
-        _git_worktree(
-            repository_path(host_session.project_id),
-            "remove",
-            "--force",
-            str(host_session.worktree),
-        )
-    finally:
-        shutil.rmtree(host_session.worktree, ignore_errors=True)
+    repository = repository_path(host_session.project_id)
+    shutil.rmtree(host_session.worktree, ignore_errors=True)
+    _git_worktree(repository, "prune", "--expire", "now")
 
 
 app = create_sandbox_host()

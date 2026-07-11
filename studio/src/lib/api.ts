@@ -83,9 +83,14 @@ export const api = {
     }),
   unpublish: (projectId: string) =>
     request<void>(`/api/projects/${projectId}/unpublish`, { method: "POST" }),
-  openSandbox: (projectId: string) =>
+  openSandbox: (projectId: string, signal?: AbortSignal) =>
     request<SandboxSessionView>(`/api/projects/${projectId}/sandbox/sessions`, {
       method: "POST",
+      signal,
+    }),
+  closeSandbox: (projectId: string, sessionId: string) =>
+    request<void>(`/api/projects/${projectId}/sandbox/sessions/${sessionId}`, {
+      method: "DELETE",
     }),
   saveSandbox: (projectId: string, sessionId: string) =>
     request<VersionView>(`/api/projects/${projectId}/sandbox/sessions/${sessionId}/save`, {
