@@ -13,6 +13,7 @@ import {
   Paperclip,
   Plus,
   Rocket,
+  RotateCcw,
   Smartphone,
   Sparkles,
   Users,
@@ -21,6 +22,7 @@ import {
 import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import { PreviewLoader } from "./components/PreviewApp";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
 import { api } from "./lib/api";
 import type {
@@ -66,7 +68,7 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
     data: "数据分析",
     complete: "预览就绪",
     build_queue: "构建队列",
-    scope_review: "范围确认",
+    scope_review: "确认 PM 草案",
   },
   en: {
     team_leader: "Team Leader",
@@ -78,7 +80,30 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
     data: "Data Analyst",
     complete: "Preview ready",
     build_queue: "Build queue",
-    scope_review: "Scope review",
+    scope_review: "Confirm PM draft",
+  },
+};
+
+const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
+  zh: {
+    team_leader: "Lead 正在分派请求",
+    product_manager: "产品经理正在整理需求",
+    build_queue: "构建任务正在排队",
+    architect: "架构师正在设计方案",
+    engineer: "工程师正在生成应用规格",
+    build: "渲染器正在构建页面",
+    data: "数据分析正在检查结果",
+    complete: "正在准备预览结果",
+  },
+  en: {
+    team_leader: "Lead is routing the request",
+    product_manager: "Product Manager is structuring the requirement",
+    build_queue: "The build job is waiting to start",
+    architect: "Architect is designing the solution",
+    engineer: "Engineer is generating the application specification",
+    build: "Renderer is building the pages",
+    data: "Data Analyst is checking the result",
+    complete: "Preparing the preview result",
   },
 };
 
@@ -101,24 +126,28 @@ const ZH: Record<string, string> = {
   "Session Gateway": "会话网关",
   "Create your workspace": "创建你的工作区",
   "Sign in": "登录",
-  "Projects, repositories, versions, and Sandbox sessions stay isolated by account.": "Project、源码仓库、版本和 Sandbox Session 都按账号隔离。",
+  "Projects, repositories, versions, and Sandbox sessions stay isolated by account.": "项目、源码仓库、版本和 Sandbox Session 都按账号隔离。",
   "Display name": "显示名称",
   "Username": "用户名",
   "Password": "密码",
   "Already have an account? Sign in": "已有账号？登录",
   "Need an account? Sign up": "没有账号？注册",
-  "Could not start the run": "无法启动 Run",
-  "Could not open the project": "无法打开 Project",
+  "Could not start the run": "无法启动任务",
+  "Could not open the project": "无法打开项目",
   "Lead request sent to {model}. Waiting for model response.": "已发送给 Lead（{model}），等待模型返回。",
+  "Lead is producing a direct/team decision": "Lead 正在生成 direct/team 路由决策",
+  "Project and Run logs start after this step completes.": "此步骤完成后才会创建 Project，并接入 Run 日志。",
+  "Model response is slower than usual.": "模型响应比平时慢，仍在等待服务端返回。",
+  "seconds": "秒",
   "Lead routed this message to {route}.": "Lead 将消息路由到 {route}。",
-  "No build run was created because Lead answered directly.": "Lead 已直接回答，没有创建构建 Run。",
-  "Creating Project and Build Run.": "正在创建 Project 和构建 Run。",
-  "Run created. Opening build event stream.": "Run 已创建，正在打开构建事件流。",
-  "Project workspace": "Project 工作区",
+  "No build run was created because Lead answered directly.": "Lead 已直接回答，没有创建构建任务。",
+  "Creating Project and Build Run.": "正在创建项目和构建任务。",
+  "Run created. Opening build event stream.": "任务已创建，正在打开构建事件流。",
+  "Project workspace": "项目工作区",
   "Application studio": "应用工作台",
-  "New project": "新建 Project",
-  "Projects": "Projects",
-  "Your generated projects will appear here.": "生成的 Project 会显示在这里。",
+  "New project": "新建项目",
+  "Projects": "项目",
+  "Your generated projects will appear here.": "生成的项目会显示在这里。",
   "Demo usage": "演示配额",
   "left": "剩余",
   "LLM usage is isolated to this account.": "LLM 用量按当前账号隔离。",
@@ -135,7 +164,7 @@ const ZH: Record<string, string> = {
   "Remove attachment": "移除附件",
   "Call team": "调用团队",
   "Lead handoff": "Lead 交接",
-  "Submit a message to see pre-project Lead progress. Project logs appear after a Run is created.": "提交消息后会显示 Project 创建前的 Lead 进度；Run 创建后日志进入 Project。",
+  "Submit a message to see pre-project Lead progress. Project logs appear after a Run is created.": "提交消息后会显示项目创建前的 Lead 进度；任务创建后日志进入项目。",
   "Start with an example": "从示例开始",
   "Staged pipeline": "阶段流水线",
   "Build activity": "构建活动",
@@ -144,34 +173,44 @@ const ZH: Record<string, string> = {
   "In progress": "进行中",
   "Complete": "已完成",
   "Waiting": "等待中",
-  "Project log": "Project 日志",
-  "Debug log": "调试日志",
+  "Waiting for your input": "等待你确认",
+  "Project log": "项目日志",
+  "Run": "任务",
+  "Run log": "运行日志",
   "Recent events": "最近事件",
   "No persisted events yet.": "暂无持久化事件。",
   "Latest": "最新",
   "persisted event": "条持久化事件",
   "persisted events": "条持久化事件",
-  "Scope needs revision": "需要调整范围",
-  "The team stopped before build because the request needs to be narrowed.": "团队在构建前暂停，因为请求需要收窄。",
-  "No build job was created": "未创建 Build Job",
-  "Rewrite": "改写建议",
+  "Scope needs revision": "等待确认 PM 需求草案",
+  "The team stopped before build because the request needs to be narrowed.": "原始功能超出 V1 构建范围，产品经理已将主题扩展为可构建的商品目录草案。",
+  "No build job was created": "确认草案后开始构建",
+  "Rewrite": "PM 草案",
   "Waiting for approval": "等待确认",
   "The Blueprint changes the requested scope, so the build is paused until you confirm it.": "Blueprint 对请求范围做了调整，确认前不会继续构建。",
   "Blueprint ready": "Blueprint 已就绪",
   "Preview version is ready": "预览版本已就绪",
-  "The run created a ProjectVersion. Publishing still requires an explicit user action.": "本次 Run 已创建 ProjectVersion；发布仍需要用户显式操作。",
+  "The run created a ProjectVersion. Publishing still requires an explicit user action.": "本次任务已创建项目版本；发布仍需要用户显式操作。",
   "Version created": "版本已创建",
-  "Run stopped with an error": "Run 因错误停止",
-  "The run failed before producing a ready preview.": "Run 在生成可预览版本前失败。",
+  "Run stopped with an error": "任务因错误停止",
+  "The run failed before producing a ready preview.": "任务在生成可预览版本前失败。",
+  "The controlled renderer rejected the generated AppSpec": "生成结果未通过受控构建校验。",
+  "Primary/background contrast is below 4.5:1": "主色与背景色的对比度低于 4.5:1。",
+  "Accent/background contrast is below 3:1": "强调色与背景色的对比度低于 3:1。",
+  "AppSpec colors do not match the approved ArchitectureSpec tokens": "应用颜色与架构阶段确认的视觉 Token 不一致。",
+  "No deterministic evidence for: Editable visual direction": "缺少“可编辑视觉方向”的确定性校验证据。",
+  "Failed validation checks": "未通过的校验项",
+  "Retry with saved request": "使用已保存需求重新构建",
+  "Retrying creates a new Run and preserves this failure record.": "重新构建会创建新任务，并保留本次失败记录。",
   "Failure recorded": "失败已记录",
   "Build is moving": "构建进行中",
-  "The run has started and is waiting for the next persisted event.": "Run 已启动，正在等待下一条持久化事件。",
+  "The run has started and is waiting for the next persisted event.": "任务已启动，正在等待下一条持久化事件。",
   "Blueprint": "Blueprint",
   "Human-in-the-loop · Adapted scope": "人工确认 · 范围调整",
   "Confirm the scope change": "确认范围变化",
   "The supported catalog can continue only after you accept the omitted requirements.": "接受被省略的需求后，受支持的商品目录才能继续构建。",
   "Some requirements were adapted": "部分需求已被调整",
-  "Project name": "Project 名称",
+  "Project name": "项目名称",
   "Visual direction": "视觉方向",
   "Pages": "页面",
   "Modules": "模块",
@@ -179,13 +218,19 @@ const ZH: Record<string, string> = {
   "Accept the adapted scope?": "接受调整后的范围？",
   "This records an explicit risk confirmation.": "这会记录一次明确的风险确认。",
   "Confirm & build": "确认并构建",
-  "Request needs to be narrowed": "请求需要收窄",
-  "Suggested rewrite": "建议改写",
-  "Run stopped": "Run 已停止",
-  "Your project and original request are still saved.": "Project 和原始请求仍已保存。",
+  "Product Manager feedback": "产品经理反馈",
+  "The Product Manager preserved your idea and expanded it into a buildable catalog brief.": "产品经理保留了你的原始主题，并扩展成一份当前可以构建的商品目录需求。",
+  "Confirm the generated catalog brief": "确认 PM 生成的需求草案",
+  "Review the draft below. You can confirm it as-is or edit it first.": "请检查下面的草案。你可以直接确认，也可以先修改再继续。",
+  "Generated requirement draft": "PM 生成的需求草案",
+  "Confirm requirement & build": "确认需求并开始构建",
+  "Confirming starts a new build run with this draft.": "确认后将使用这份草案启动新的构建任务。",
+  "Describe a product catalog with Home, Catalog, and Product pages…": "描述一个包含首页、目录页和商品详情页的商品目录……",
+  "Run stopped": "任务已停止",
+  "Your project and original request are still saved.": "项目和原始请求仍已保存。",
   "Build queued": "构建已排队",
   "is working": "正在工作",
-  "The current stage is persisted. Refreshing this page will not lose the run.": "当前阶段已持久化，刷新页面不会丢失本次 Run。",
+  "The current stage is persisted. Refreshing this page will not lose the run.": "当前阶段已持久化，刷新页面不会丢失本次任务。",
   "Save failed": "保存失败",
   "Publish failed": "发布失败",
   "Preview": "预览",
@@ -200,12 +245,12 @@ const ZH: Record<string, string> = {
   "Generated application preview": "生成应用预览",
   "Structured edit": "结构化编辑",
   "Refine the current version": "调整当前版本",
-  "Saving creates a new ProjectVersion and keeps the original.": "保存会创建新的 ProjectVersion，原版本不会被覆盖。",
+  "Saving creates a new ProjectVersion and keeps the original.": "保存会创建新的项目版本，原版本不会被覆盖。",
   "Hero title": "首屏标题",
   "Hero body": "首屏正文",
   "Primary color": "主色",
   "Save as new version": "保存为新版本",
-  "Project history": "Project 历史",
+  "Project history": "项目历史",
   "Restore always creates a new version; history is never overwritten.": "恢复会创建新版本，历史不会被覆盖。",
   "Current": "当前",
   "Restore": "恢复",
@@ -218,7 +263,11 @@ const ZH: Record<string, string> = {
   "completed_degraded": "已完成，有警告",
   "failed": "失败",
   "cancelled": "已取消",
-  "needs_input": "需要补充输入",
+  "needs_input": "等待确认需求",
+  "draft": "草稿",
+  "ready": "就绪",
+  "live": "已发布",
+  "paused": "已暂停",
   "awaiting_approval": "等待确认",
   "product_running": "产品阶段",
   "build_queued": "构建排队",
@@ -229,6 +278,9 @@ const ZH: Record<string, string> = {
   "Product Manager is structuring the request": "产品经理正在整理需求",
   "Blueprint is ready for review": "Blueprint 已生成，等待检查",
   "The request is outside the V1 catalog scope": "请求超出 V1 商品目录范围",
+  "V1 only supports product catalog sites (Home, Catalog, Product pages), not interactive games.": "V1 当前只支持商品目录站点（首页、目录页、商品详情页），不支持交互式游戏。",
+  "Describe a product showcase or catalog with Home, Catalog, and Product pages.": "描述一个包含首页、目录页和商品详情页的商品展示或目录。",
+  "To use V1, consider creating a product catalog for a board game store, featuring minesweeper-themed products, with Home, Catalog, and Product pages.": "建议改成：创建一个扫雷主题商品目录，展示桌游或周边商品，包含首页、目录页和商品详情页。",
   "Review and confirm the Blueprint before building": "构建前需要检查并确认 Blueprint",
   "Supported Blueprint is within the requested scope and base budget": "受支持 Blueprint 在请求范围和基础预算内",
   "Build is queued": "构建已进入队列",
@@ -242,6 +294,13 @@ const ZH: Record<string, string> = {
   "DataReview is ready": "DataReview 已生成",
   "Interactive preview is ready": "可交互预览已就绪",
   "The build worker stopped unexpectedly": "Build Worker 异常停止",
+  "event.run.created": "任务已创建",
+  "event.stage.started": "阶段已开始",
+  "event.artifact.created": "产物已保存",
+  "event.approval.required": "等待确认",
+  "event.run.needs_input": "需要补充输入",
+  "event.run.completed": "任务已完成",
+  "event.run.failed": "任务失败",
 };
 
 type ActivityEntry = {
@@ -279,6 +338,34 @@ function statusLabel(language: Language, status: string): string {
 
 function routeLabel(language: Language, route: string): string {
   return ui(language, route);
+}
+
+function displayText(language: Language, value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  return ui(language, value.trim());
+}
+
+function conversationalText(language: Language, value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const text = displayText(language, raw);
+  const containsChinese = /[\u3400-\u9fff]/.test(raw);
+  if (language === "zh" && raw && text === raw && !containsChinese && /[A-Za-z]{4,}/.test(raw)) return ui(language, fallback);
+  return text || ui(language, fallback);
+}
+
+function eventTitle(language: Language, event: RunEvent): string {
+  const key = `event.${event.type}`;
+  const title = ui(language, key);
+  return title === key ? event.type : title;
+}
+
+function eventMessage(language: Language, event: RunEvent): string {
+  return displayText(language, event.payload.message ?? event.type) || eventTitle(language, event);
+}
+
+function rewriteSuggestion(language: Language, blueprint: Blueprint | null, events: RunEvent[]): string {
+  const latestRewrite = [...events].reverse().find((event) => typeof event.payload.rewrite_suggestion === "string")?.payload.rewrite_suggestion;
+  return conversationalText(language, blueprint?.rewrite_suggestion ?? latestRewrite, "Describe a product catalog with Home, Catalog, and Product pages…");
 }
 
 function LanguageToggle({
@@ -363,6 +450,7 @@ function Studio() {
   const [error, setError] = useState("");
   const [leadDecision, setLeadDecision] = useState<LeadDecisionView | null>(null);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
+  const [leadElapsed, setLeadElapsed] = useState(0);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [tab, setTab] = useState<WorkspaceTab>("preview");
 
@@ -457,11 +545,17 @@ function Studio() {
         tone: "pending",
       },
     ]);
+    const leadStartedAt = Date.now();
+    setLeadElapsed(0);
+    const leadTimer = window.setInterval(() => {
+      setLeadElapsed(Math.floor((Date.now() - leadStartedAt) / 1000));
+    }, 1000);
     const appendActivity = (message: string, tone: ActivityEntry["tone"] = "pending") => {
       setActivityLog((current) => [...current, { id: `${Date.now()}-${current.length}`, message, tone }]);
     };
     try {
       const decision = await api.leadMessage(prompt, model, forceTeam);
+      window.clearInterval(leadTimer);
       setLeadDecision(decision);
       appendActivity(template(language, "Lead routed this message to {route}.", { route: routeLabel(language, decision.route) }), "success");
       if (decision.route === "direct") {
@@ -480,6 +574,7 @@ function Studio() {
       setError(reason instanceof Error ? reason.message : ui(language, "Could not start the run"));
       appendActivity(reason instanceof Error ? reason.message : ui(language, "Could not start the run"), "error");
     } finally {
+      window.clearInterval(leadTimer);
       setSubmitting(false);
     }
   };
@@ -552,6 +647,7 @@ function Studio() {
             error={error}
             leadDecision={leadDecision}
             activityLog={activityLog}
+            leadElapsed={leadElapsed}
             language={language}
             sendToLead={sendToLead}
           />
@@ -641,6 +737,7 @@ function Composer({
   error,
   leadDecision,
   activityLog,
+  leadElapsed,
   language,
   sendToLead,
 }: {
@@ -655,6 +752,7 @@ function Composer({
   error: string;
   leadDecision: LeadDecisionView | null;
   activityLog: ActivityEntry[];
+  leadElapsed: number;
   language: Language;
   sendToLead: (forceTeam?: boolean) => void;
 }) {
@@ -716,7 +814,7 @@ function Composer({
           {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
           {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>Lead</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
         </div>
-        <ActivityLog entries={activityLog} active={submitting} language={language} />
+        <ActivityLog entries={activityLog} active={submitting} elapsed={leadElapsed} language={language} />
       </div>
       <div className="example-prompts">
         <span>{ui(language, "Start with an example")}</span>
@@ -726,7 +824,7 @@ function Composer({
   );
 }
 
-function ActivityLog({ entries, active, language }: { entries: ActivityEntry[]; active: boolean; language: Language }) {
+function ActivityLog({ entries, active, elapsed, language }: { entries: ActivityEntry[]; active: boolean; elapsed: number; language: Language }) {
   return <aside className="activity-panel" aria-live="polite">
     <div className="activity-heading">
       <span>{ui(language, "Lead handoff")}</span>
@@ -739,6 +837,11 @@ function ActivityLog({ entries, active, language }: { entries: ActivityEntry[]; 
         {entries.map((entry) => <div className={`activity-item ${entry.tone}`} key={entry.id}><i /> <p>{entry.message}</p></div>)}
       </div>
     )}
+    {active && <div className="lead-wait-log">
+      <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "Lead is producing a direct/team decision")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
+      <p>{ui(language, "Project and Run logs start after this step completes.")}</p>
+      {elapsed >= 15 && <small>{ui(language, "Model response is slower than usual.")}</small>}
+    </div>}
   </aside>;
 }
 
@@ -802,10 +905,10 @@ function Workspace({
       <section className="workspace-content">
         {run.status === "awaiting_approval" && blueprint ? (
           <BlueprintEditor blueprint={blueprint} setBlueprint={setBlueprint} approve={approve} approving={approving} language={language} />
-        ) : run.status === "needs_input" && blueprint ? (
-          <ScopeStop blueprint={blueprint} language={language} />
+        ) : run.status === "needs_input" ? (
+          <ScopeStop blueprint={blueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : run.status === "failed" ? (
-          <FailedState run={run} language={language} />
+          <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : ready && run.version_id ? (
           <ResultWorkspace
             key={run.version_id}
@@ -825,6 +928,7 @@ function Workspace({
           <BuildingState run={run} language={language} />
         )}
       </section>
+      <RepositoryPanel run={run} language={language} />
       <DebugLogPanel run={run} events={events} language={language} />
     </div>
   );
@@ -832,19 +936,21 @@ function Workspace({
 
 function Timeline({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const requiresApproval = run.status === "awaiting_approval" || run.blueprint?.support_level === "adapted";
+  const needsInput = run.status === "needs_input";
   const stages = run.mode === "team"
-    ? ["team_leader", "product_manager", ...(requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "build", "data", "complete"]
-    : ["product_manager", ...(requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
-  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", blueprint_approval: "user", architect: "architect", engineer: "engineer", build: "renderer", data: "data", complete: "data" };
+    ? ["team_leader", "product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "build", "data", "complete"]
+    : ["product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
+  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", build: "renderer", data: "data", complete: "data" };
   const displayStage = run.current_stage === "build_queue" ? "engineer" : run.current_stage;
   const currentIndex = stages.indexOf(displayStage);
   return <div className="timeline">
     {stages.map((stage, index) => {
       const completed = currentIndex > index || TERMINAL.has(run.status) && run.status.startsWith("completed");
       const active = displayStage === stage;
+      const state = active && needsInput ? "Waiting for your input" : active ? "In progress" : completed ? "Complete" : "Waiting";
       return <div className={active ? "timeline-item active" : completed ? "timeline-item complete" : "timeline-item"} key={stage}>
-        <div className="timeline-avatar"><RoleAvatar role={roles[stage]} size="small" /><span className="timeline-state">{completed ? <Check size={10} /> : active ? <LoaderCircle className="spin" size={10} /> : index + 1}</span></div>
-        <div><strong>{stageLabel(language, stage)}</strong><small>{ui(language, active ? "In progress" : completed ? "Complete" : "Waiting")}</small></div>
+        <div className="timeline-avatar"><RoleAvatar role={roles[stage]} size="small" /><span className="timeline-state">{completed ? <Check size={10} /> : active && needsInput ? <CircleAlert size={10} /> : active ? <LoaderCircle className="spin" size={10} /> : index + 1}</span></div>
+        <div><strong>{stageLabel(language, stage)}</strong><small>{ui(language, state)}</small></div>
       </div>;
     })}
     <ProjectLog run={run} events={events} language={language} />
@@ -857,7 +963,7 @@ function ProjectLog({ run, events, language }: { run: RunView; events: RunEvent[
   return <div className={`project-log ${summary.tone}`}>
     <div className="project-log-heading">
       <span>{ui(language, "Project log")}</span>
-      <small>Run {run.run_id.slice(0, 8)}</small>
+      <small>{ui(language, "Run")} {run.run_id.slice(0, 8)}</small>
     </div>
     <strong>{summary.title}</strong>
     <p>{summary.detail}</p>
@@ -866,7 +972,7 @@ function ProjectLog({ run, events, language }: { run: RunView; events: RunEvent[
     </div>
     <div className="event-log">
       <span>{ui(language, "Recent events")}</span>
-      {events.length === 0 ? <p>{ui(language, "No persisted events yet.")}</p> : events.slice(-5).reverse().map((event) => <div key={event.event_id}><i /> <p>{ui(language, String(event.payload.message))}</p></div>)}
+      {events.length === 0 ? <p>{ui(language, "No persisted events yet.")}</p> : events.slice(-5).reverse().map((event) => <div key={event.event_id}><i /> <p><strong>{eventTitle(language, event)}</strong><span>{eventMessage(language, event)}</span></p></div>)}
       {latest && <small>{ui(language, "Latest")}: {new Date(latest.timestamp).toLocaleTimeString()}</small>}
     </div>
   </div>;
@@ -879,10 +985,12 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
     stageLabel(language, run.current_stage),
   ];
   if (run.status === "needs_input") {
+    const reason = conversationalText(language, run.blueprint?.support_reasons[0] ?? latest?.payload.message, "The team stopped before build because the request needs to be narrowed.");
+    const rewrite = rewriteSuggestion(language, run.blueprint, events);
     return {
       title: ui(language, "Scope needs revision"),
-      detail: run.blueprint?.support_reasons[0] ?? (latest?.payload.message ? ui(language, String(latest.payload.message)) : ui(language, "The team stopped before build because the request needs to be narrowed.")),
-      facts: [...facts, run.blueprint?.rewrite_suggestion ? `${ui(language, "Rewrite")}: ${run.blueprint.rewrite_suggestion}` : ui(language, "No build job was created")],
+      detail: reason,
+      facts: [...facts, rewrite ? `${ui(language, "Rewrite")}: ${rewrite}` : ui(language, "No build job was created")],
       tone: "warning",
     };
   }
@@ -905,14 +1013,14 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
   if (run.status === "failed") {
     return {
       title: ui(language, "Run stopped with an error"),
-      detail: run.error_message ?? (latest?.payload.message ? ui(language, String(latest.payload.message)) : ui(language, "The run failed before producing a ready preview.")),
+      detail: conversationalText(language, run.error_message ?? latest?.payload.message, "The run failed before producing a ready preview."),
       facts: [...facts, run.error_code ?? ui(language, "Failure recorded")],
       tone: "error",
     };
   }
   return {
     title: ui(language, "Build is moving"),
-    detail: latest?.payload.message ? ui(language, String(latest.payload.message)) : ui(language, "The run has started and is waiting for the next persisted event."),
+    detail: latest ? eventMessage(language, latest) : ui(language, "The run has started and is waiting for the next persisted event."),
     facts,
     tone: "running",
   };
@@ -941,17 +1049,101 @@ function BlueprintEditor({ blueprint, setBlueprint, approve, approving, language
   </div>;
 }
 
-function ScopeStop({ blueprint, language }: { blueprint: Blueprint; language: Language }) {
-  return <div className="center-state"><span className="state-icon warning"><CircleAlert /></span><h1>{ui(language, "Request needs to be narrowed")}</h1><p>{blueprint.support_reasons[0]}</p><div className="rewrite-box"><span>{ui(language, "Suggested rewrite")}</span><p>{blueprint.rewrite_suggestion}</p></div></div>;
+function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, language }: { blueprint: Blueprint | null; events: RunEvent[]; run: RunView; setRun: (run: RunView) => void; refreshShell: () => Promise<void>; setError: (error: string) => void; language: Language }) {
+  const latest = events.at(-1);
+  const reason = conversationalText(language, blueprint?.support_reasons?.[0] ?? latest?.payload.message, "The team stopped before build because the request needs to be narrowed.");
+  const rewrite = rewriteSuggestion(language, blueprint, events);
+  // The PM draft is ready to confirm, but remains editable. needs_input is
+  // terminal, so confirmation creates a fresh Run from the adapted request.
+  const [revised, setRevised] = useState(rewrite);
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async () => {
+    if (!revised.trim() || submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const created = await api.createRun(revised.trim(), run.mode, run.model, []);
+      setRun(created);
+      await refreshShell();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not start the run"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return <div className="center-state scope-stop">
+    <div className="pm-feedback-card">
+      <RoleAvatar role="product" size="large" />
+      <div>
+        <span>{ui(language, "Product Manager feedback")}</span>
+        <h1>{ui(language, "Confirm the generated catalog brief")}</h1>
+        <p>{ui(language, "The Product Manager preserved your idea and expanded it into a buildable catalog brief.")}</p>
+        <p>{reason}</p>
+        <small><CircleAlert size={14} /> {ui(language, "Review the draft below. You can confirm it as-is or edit it first.")}</small>
+      </div>
+    </div>
+    <div className="scope-revise">
+      <label>{ui(language, "Generated requirement draft")}
+        <textarea value={revised} onChange={(event) => setRevised(event.target.value)} placeholder={rewrite || ui(language, "Describe a product catalog with Home, Catalog, and Product pages…")} maxLength={4000} rows={4} autoFocus />
+      </label>
+      <p className="scope-hint"><Sparkles size={13} /> {ui(language, "Confirming starts a new build run with this draft.")}</p>
+      <button className="primary-action" disabled={!revised.trim() || submitting} onClick={submit}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />} {ui(language, "Confirm requirement & build")}</button>
+    </div>
+  </div>;
 }
 
-function FailedState({ run, language }: { run: RunView; language: Language }) {
-  return <div className="center-state"><span className="state-icon error"><X /></span><h1>{ui(language, "Run stopped")}</h1><p>{run.error_message}</p><code>{run.error_code}</code><span>{ui(language, "Your project and original request are still saved.")}</span></div>;
+function FailedState({ run, setRun, refreshShell, setError, language }: { run: RunView; setRun: (run: RunView) => void; refreshShell: () => Promise<void>; setError: (error: string) => void; language: Language }) {
+  const [retrying, setRetrying] = useState(false);
+  const failedChecks = run.validation_report?.checks.filter((check) => check.status === "fail") ?? [];
+  const retry = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    setError("");
+    try {
+      const created = await api.createRun(run.prompt, run.mode, run.model, []);
+      setRun(created);
+      await refreshShell();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not start the run"));
+    } finally {
+      setRetrying(false);
+    }
+  };
+  return <div className="center-state failed-state">
+    <span className="state-icon error"><X /></span>
+    <h1>{ui(language, "Run stopped")}</h1>
+    <p>{conversationalText(language, run.error_message, "The run failed before producing a ready preview.")}</p>
+    {failedChecks.length > 0 && <div className="validation-failures">
+      <strong>{ui(language, "Failed validation checks")}</strong>
+      {failedChecks.map((check) => <div key={check.check_id}><CircleAlert size={14} /><span>{ui(language, check.detail || check.label)}</span></div>)}
+    </div>}
+    <code>{run.error_code}</code>
+    <span>{ui(language, "Your project and original request are still saved.")}</span>
+    <button className="primary-action" disabled={retrying || !run.prompt} onClick={retry}>{retrying ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, "Retry with saved request")}</button>
+    <small>{ui(language, "Retrying creates a new Run and preserves this failure record.")}</small>
+  </div>;
 }
 
 function BuildingState({ run, language }: { run: RunView; language: Language }) {
-  const role: RoleKey = run.current_stage === "architect" ? "architect" : run.current_stage === "data" ? "data" : run.current_stage === "build" ? "renderer" : "engineer";
-  return <div className="center-state building-cartoon"><div className="working-avatar"><RoleAvatar role={role} size="hero" /><span><LoaderCircle className="spin" /></span></div><h1>{run.current_stage === "build_queue" ? ui(language, "Build queued") : `${roleLabel(language, role)} ${ui(language, "is working")}`}</h1><p>{ui(language, "The current stage is persisted. Refreshing this page will not lose the run.")}</p><div className="build-meter"><span /></div></div>;
+  const roles: Record<string, RoleKey> = {
+    team_leader: "leader",
+    product_manager: "product",
+    build_queue: "renderer",
+    architect: "architect",
+    engineer: "engineer",
+    build: "renderer",
+    data: "data",
+    complete: "data",
+  };
+  const role = roles[run.current_stage] ?? "leader";
+  const title = BUILDING_STAGE_TITLES[language][run.current_stage] ?? `${stageLabel(language, run.current_stage)} ${ui(language, "is working")}`;
+  return <div className="center-state building-cartoon">
+    <div className="working-avatar"><RoleAvatar role={role} size="hero" /></div>
+    <div className="working-stage"><LoaderCircle className="spin" size={15} /><span>{stageLabel(language, run.current_stage)}</span></div>
+    <h1>{title}</h1>
+    <p>{ui(language, "The current stage is persisted. Refreshing this page will not lose the run.")}</p>
+    <div className="build-meter"><span /></div>
+  </div>;
 }
 
 function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, setTab, refreshShell, refreshRun, setError, language }: { run: RunView; versions: VersionView[]; setVersions: (v: VersionView[]) => void; device: "desktop" | "mobile"; setDevice: (v: "desktop" | "mobile") => void; tab: WorkspaceTab; setTab: (v: WorkspaceTab) => void; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (v: string) => void; language: Language }) {
@@ -1011,7 +1203,7 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
 
 function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const [open, setOpen] = useState(false);
-  const label = ui(language, "Debug log");
+  const label = ui(language, "Run log");
   return (
     <div className={open ? "debug-dock open" : "debug-dock"}>
       <button
@@ -1030,7 +1222,7 @@ function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEve
           <div className="debug-panel-head">
             <div>
               <span>{label}</span>
-              <strong>Run {run.run_id.slice(0, 8)}</strong>
+              <strong>{ui(language, "Run")} {run.run_id.slice(0, 8)}</strong>
             </div>
             <span className={`debug-status ${run.status}`}>{statusLabel(language, run.status)}</span>
           </div>
@@ -1046,10 +1238,10 @@ function DebugLogPanel({ run, events, language }: { run: RunView; events: RunEve
                 <div className="debug-line" key={event.event_id}>
                   <div className="debug-line-head">
                     <b>#{event.sequence}</b>
-                    <code>{event.type}</code>
+                    <code>{eventTitle(language, event)}</code>
                     <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
                   </div>
-                  <p>{ui(language, String(event.payload.message ?? event.type))}</p>
+                  <p>{eventMessage(language, event)}</p>
                 </div>
               ))
             )}

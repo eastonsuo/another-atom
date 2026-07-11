@@ -7,6 +7,24 @@ from another_atom.contracts.schemas import (
 )
 
 
+def normalize_architecture_visual_tokens(
+    architecture_spec: ArchitectureSpec,
+) -> ArchitectureSpec:
+    """Keep the model's palette where possible while enforcing renderer contrast."""
+    background = architecture_spec.background_color.upper()
+    primary = _ensure_contrast(architecture_spec.primary_color, background, 4.5)
+    accent = _ensure_contrast(architecture_spec.accent_color, background, 3.0)
+    if accent.casefold() == primary.casefold():
+        accent = _distinct_contrast_color(background, 3.0, {primary.casefold()})
+    return architecture_spec.model_copy(
+        update={
+            "primary_color": primary,
+            "accent_color": accent,
+            "background_color": background,
+        }
+    )
+
+
 def validate_app_spec(
     app_spec: AppSpec,
     prompt: str = "",
@@ -135,13 +153,43 @@ def _validate_visual_tokens(
         return False, "Primary/background contrast is below 4.5:1"
     if _contrast_ratio(app_spec.accent_color, app_spec.background_color) < 3.0:
         return False, "Accent/background contrast is below 3:1"
-    if architecture_spec is not None and colors != (
-        architecture_spec.primary_color,
-        architecture_spec.accent_color,
-        architecture_spec.background_color,
+    if architecture_spec is not None and tuple(color.casefold() for color in colors) != tuple(
+        color.casefold()
+        for color in (
+            architecture_spec.primary_color,
+            architecture_spec.accent_color,
+            architecture_spec.background_color,
+        )
     ):
         return False, "AppSpec colors do not match the approved ArchitectureSpec tokens"
     return True, None
+
+
+def _ensure_contrast(color: str, background: str, minimum: float) -> str:
+    color = color.upper()
+    if _contrast_ratio(color, background) >= minimum:
+        return color
+    channels = [int(color[index : index + 2], 16) for index in (1, 3, 5)]
+    lighten = _relative_luminance(background) < 0.179
+    for step in range(1, 21):
+        amount = step / 20
+        adjusted = [
+            round(channel + (255 - channel) * amount) if lighten else round(channel * (1 - amount))
+            for channel in channels
+        ]
+        candidate = "#" + "".join(f"{channel:02X}" for channel in adjusted)
+        if _contrast_ratio(candidate, background) >= minimum:
+            return candidate
+    return "#FFFFFF" if lighten else "#000000"
+
+
+def _distinct_contrast_color(
+    background: str, minimum: float, excluded: set[str]
+) -> str:
+    for candidate in ("#000000", "#FFFFFF", "#003366", "#5A2400", "#FFD166"):
+        if candidate.casefold() not in excluded and _contrast_ratio(candidate, background) >= minimum:
+            return candidate
+    return "#000000"
 
 
 def _contrast_ratio(first: str, second: str) -> float:

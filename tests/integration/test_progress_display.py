@@ -116,3 +116,39 @@ def test_all_persisted_events_expose_message_and_valid_stage(client: TestClient)
         stage = event["payload"].get("stage")
         if stage is not None:
             assert stage in FRONTEND_TEAM_STAGES
+
+
+def test_out_of_scope_request_stops_at_needs_input_scope_review(client: TestClient) -> None:
+    """An out-of-scope request must settle on needs_input / scope_review.
+
+    Regression guard for the studio freeze bug: a request the V1 catalog cannot
+    build (e.g. a CRM / a game like Minesweeper) used to leave the main
+    workspace stuck on the looping "Engineer is working" animation. The
+    frontend only switches to the ScopeStop / needs-input view when the run
+    settles on status ``needs_input`` at stage ``scope_review`` (a terminal
+    state the polling loop stops on), so we lock that contract here and confirm
+    a rewrite suggestion is surfaced for the user to act on.
+    """
+    run = _create_team_run(client, "Build a CRM for my sales team")
+
+    assert run["status"] in FRONTEND_STATUSES
+    assert run["status"] == "needs_input"
+    assert run["current_stage"] in FRONTEND_TEAM_STAGES
+    assert run["current_stage"] == "scope_review"
+    # No build artifact/version is produced for an out-of-scope request.
+    assert not run["version_id"]
+
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    assert events
+    needs_input_events = [event for event in events if event["type"] == "run.needs_input"]
+    assert needs_input_events, "no run.needs_input event -> frontend can't render ScopeStop"
+    payload = needs_input_events[-1]["payload"]
+    assert payload.get("stage") == "scope_review"
+    assert isinstance(payload.get("message"), str) and payload["message"]
+    # The PM draft is what ScopeStop asks the user to confirm; it must be a
+    # concrete, buildable catalog request rather than generic rewrite advice.
+    assert isinstance(payload.get("rewrite_suggestion"), str) and payload["rewrite_suggestion"]
+    suggestion = payload["rewrite_suggestion"].lower()
+    assert "catalog" in suggestion
+    assert "home" in suggestion
+    assert "product" in suggestion

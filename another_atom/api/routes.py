@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -48,6 +49,8 @@ from another_atom.contracts.schemas import (
     ModelOption,
     ModelsView,
     ProjectStatus,
+    ProjectFileContent,
+    ProjectFileEntry,
     ProjectView,
     PublicationStrategy,
     PublishRequest,
@@ -72,11 +75,18 @@ from another_atom.domain.auth import (
 )
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
-from another_atom.repository.service import RepositoryError, commit_version, initialize_repository
+from another_atom.repository.service import (
+    RepositoryError,
+    commit_version,
+    initialize_repository,
+    list_repository_files,
+    read_repository_file,
+)
 from another_atom.sandbox.client import SandboxClient, SandboxUnavailable, get_sandbox_client
 from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
     Approval,
+    Artifact,
     Attachment,
     AuthSession,
     BuildJob,
@@ -155,6 +165,7 @@ def _run_view(db: Session, run: Run) -> RunView:
         run_id=run.id,
         project_id=run.project_id,
         session_id=run.session_id,
+        prompt=run.prompt,
         mode=Mode(run.mode),
         model=run.model,
         status=RunStatus(run.status),
@@ -665,6 +676,97 @@ def _project_view(db: Session, project: Project) -> ProjectView:
         updated_at=project.updated_at,
         repository_ready=project.repository_path is not None,
         repository_branch=project.repository_branch,
+    )
+
+
+_ARTIFACT_FILE_PATHS = {
+    ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
+    ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
+    ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
+    ArtifactType.VALIDATION_REPORT: ".another-atom/generated/validation-report.json",
+    ArtifactType.DATA_REVIEW: ".another-atom/generated/data-review.json",
+}
+
+
+def _owned_project_run(db: Session, project: Project, run_id: str | None) -> Run | None:
+    query = select(Run).where(Run.project_id == project.id)
+    if run_id:
+        query = query.where(Run.id == run_id)
+    else:
+        query = query.order_by(Run.created_at.desc())
+    return db.scalar(query)
+
+
+@router.get("/projects/{project_id}/files", response_model=list[ProjectFileEntry])
+def list_project_files(
+    project_id: str,
+    run_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[ProjectFileEntry]:
+    project = _owned_project(db, project_id, user.id)
+    try:
+        files = [
+            ProjectFileEntry(path=path, source="repository", size=size)
+            for path, size in list_repository_files(project.id)
+        ]
+    except RepositoryError as exc:
+        raise AppError("REPOSITORY_NOT_READY", str(exc), 409) from exc
+    run = _owned_project_run(db, project, run_id)
+    if run_id and run is None:
+        raise AppError("RUN_NOT_FOUND", "Project Run was not found", 404)
+    if run:
+        artifacts = db.scalars(
+            select(Artifact).where(Artifact.run_id == run.id).order_by(Artifact.created_at)
+        ).all()
+        for artifact in artifacts:
+            artifact_type = ArtifactType(artifact.artifact_type)
+            path = _ARTIFACT_FILE_PATHS.get(artifact_type)
+            if path:
+                content = json.dumps(artifact.payload, ensure_ascii=False, indent=2) + "\n"
+                files.append(
+                    ProjectFileEntry(
+                        path=path,
+                        source="artifact",
+                        size=len(content.encode("utf-8")),
+                    )
+                )
+    return files
+
+
+@router.get("/projects/{project_id}/files/content", response_model=ProjectFileContent)
+def get_project_file_content(
+    project_id: str,
+    path: str = Query(min_length=1, max_length=500),
+    source: str = Query(pattern="^(repository|artifact)$"),
+    run_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProjectFileContent:
+    project = _owned_project(db, project_id, user.id)
+    if source == "repository":
+        try:
+            content = read_repository_file(project.id, path)
+        except RepositoryError as exc:
+            raise AppError("REPOSITORY_FILE_NOT_READABLE", str(exc), 404) from exc
+        return ProjectFileContent(path=path, source="repository", content=content)
+
+    run = _owned_project_run(db, project, run_id)
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Project Run was not found", 404)
+    artifact_type = next(
+        (artifact_type for artifact_type, file_path in _ARTIFACT_FILE_PATHS.items() if file_path == path),
+        None,
+    )
+    if artifact_type is None:
+        raise AppError("ARTIFACT_FILE_NOT_FOUND", "Generated artifact file was not found", 404)
+    artifact = get_artifact(db, run.id, artifact_type)
+    if artifact is None:
+        raise AppError("ARTIFACT_FILE_NOT_FOUND", "Generated artifact file was not found", 404)
+    return ProjectFileContent(
+        path=path,
+        source="artifact",
+        content=json.dumps(artifact.payload, ensure_ascii=False, indent=2) + "\n",
     )
 
 

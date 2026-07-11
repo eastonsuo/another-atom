@@ -11,6 +11,9 @@ class RepositoryError(RuntimeError):
     pass
 
 
+MAX_BROWSER_FILE_BYTES = 256_000
+
+
 def repository_path(project_id: str) -> Path:
     if not project_id or any(character not in "0123456789abcdef-" for character in project_id):
         raise RepositoryError("Invalid Project identifier for repository path")
@@ -74,6 +77,39 @@ def commit_version(
     _git(path, "add", "app-spec.json", ".another-atom/version.json")
     _git(path, "commit", "-m", f"version {version_number}: {source.value}")
     return _git(path, "rev-parse", "HEAD")
+
+
+def list_repository_files(project_id: str) -> list[tuple[str, int]]:
+    path = repository_path(project_id)
+    if not path.is_dir():
+        raise RepositoryError("Project repository was not found")
+    entries: list[tuple[str, int]] = []
+    for candidate in path.rglob("*"):
+        relative = candidate.relative_to(path)
+        if ".git" in relative.parts:
+            continue
+        if relative.parts[:2] == (".another-atom", "worktrees"):
+            continue
+        if candidate.is_file():
+            entries.append((relative.as_posix(), candidate.stat().st_size))
+    return sorted(entries, key=lambda item: (item[0].count("/"), item[0].casefold()))
+
+
+def read_repository_file(project_id: str, relative_path: str) -> str:
+    root = repository_path(project_id)
+    if not relative_path or relative_path.startswith("/"):
+        raise RepositoryError("Invalid repository file path")
+    candidate = (root / relative_path).resolve()
+    if not candidate.is_relative_to(root) or ".git" in candidate.relative_to(root).parts:
+        raise RepositoryError("Repository file path is not readable")
+    if not candidate.is_file():
+        raise RepositoryError("Repository file was not found")
+    if candidate.stat().st_size > MAX_BROWSER_FILE_BYTES:
+        raise RepositoryError("Repository file is too large to display")
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise RepositoryError("Repository file is not UTF-8 text") from exc
 
 
 def _git(path: Path, *arguments: str) -> str:

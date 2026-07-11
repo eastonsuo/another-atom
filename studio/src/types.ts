@@ -50,13 +50,14 @@ export interface RunView {
   run_id: string;
   project_id: string;
   session_id: string;
+  prompt: string;
   mode: Mode;
   model: string;
   status: string;
   current_stage: string;
   blueprint: Blueprint | null;
   app_spec: AppSpec | null;
-  validation_report: { passed: boolean; checks: { label: string; status: string }[] } | null;
+  validation_report: { passed: boolean; checks: { check_id: string; label: string; status: string; detail?: string | null }[] } | null;
   architecture_spec: {
     architecture_summary: string;
     page_strategy: string[];
@@ -109,6 +110,18 @@ export interface ProjectView {
   updated_at: string;
   repository_ready: boolean;
   repository_branch: string;
+}
+
+export interface ProjectFileEntry {
+  path: string;
+  source: "repository" | "artifact";
+  size: number;
+}
+
+export interface ProjectFileContent {
+  path: string;
+  source: "repository" | "artifact";
+  content: string;
 }
 
 export interface QuotaView {

@@ -212,6 +212,7 @@ class RunView(BaseModel):
     run_id: str
     project_id: str
     session_id: str
+    prompt: str
     mode: Mode
     model: str
     status: RunStatus
@@ -227,6 +228,18 @@ class RunView(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectFileEntry(BaseModel):
+    path: str
+    source: Literal["repository", "artifact"]
+    size: int = Field(ge=0)
+
+
+class ProjectFileContent(BaseModel):
+    path: str
+    source: Literal["repository", "artifact"]
+    content: str
 
 
 class EventView(BaseModel):

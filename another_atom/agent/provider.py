@@ -76,6 +76,8 @@ class MockLLMProvider:
     _unsupported_terms = {
         "crm",
         "erp",
+        "minesweeper",
+        "扫雷",
         "社交网络",
         "即时通讯",
         "工作流平台",
@@ -175,11 +177,7 @@ class MockLLMProvider:
                 "Editable visual direction",
             ],
             omitted_requirements=omitted,
-            rewrite_suggestion=(
-                "Describe a product showcase or catalog with Home, Catalog, and Product pages."
-                if support_level == SupportLevel.UNSUPPORTED
-                else None
-            ),
+            rewrite_suggestion=(self._catalog_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None),
             pages=["Home", "Catalog", "Product"],
             modules=["Hero", "Featured products", "Catalog grid", "Product detail"],
             visual_direction="Editorial commerce with crisp typography and restrained color",
@@ -291,6 +289,38 @@ class MockLLMProvider:
         }[level]
 
     @staticmethod
+    def _catalog_rewrite(prompt: str) -> str:
+        """Create a deterministic, buildable PM draft that preserves the user's theme."""
+        normalized = prompt.lower()
+        if "crm" in normalized:
+            return (
+                "Build a sales productivity product catalog featuring customer-management "
+                "templates, sales dashboards, and team toolkits, with Home, Catalog, and "
+                "Product pages and a clear professional visual style."
+            )
+        if "erp" in normalized:
+            return (
+                "Build a business operations toolkit catalog featuring inventory templates, "
+                "planning packs, and finance worksheets, with Home, Catalog, and Product pages."
+            )
+        if "minesweeper" in normalized or "扫雷" in normalized:
+            return (
+                "创建一个扫雷主题商品目录，展示桌游、收藏品和周边商品，包含首页、目录页和"
+                "商品详情页，采用复古像素风格和清晰的商品分类。"
+            )
+        if "社交网络" in normalized:
+            theme = "创作者社区周边商品"
+        elif "即时通讯" in normalized:
+            theme = "沟通主题办公工具"
+        elif "工作流平台" in normalized:
+            theme = "效率模板与自动化工具"
+        elif "数据分析后台" in normalized:
+            theme = "数据分析模板与工具"
+        else:
+            theme = "与原始创意相关的商品"
+        return f"创建一个{theme}目录，包含首页、目录页和商品详情页，并为商品分类、视觉风格和详情展示补充完整内容。"
+
+    @staticmethod
     def _products() -> list[ProductItem]:
         return [
             ProductItem(
@@ -340,6 +370,7 @@ class OllamaCloudProvider:
         self.host = settings.ollama_host.rstrip("/")
         self.api_key = settings.ollama_api_key
         self.timeout = settings.ollama_timeout_seconds
+        self.lead_timeout = settings.ollama_lead_timeout_seconds
         self._usage = ProviderUsage()
 
     def take_usage(self) -> ProviderUsage:
@@ -365,6 +396,7 @@ class OllamaCloudProvider:
                 "Manager, Architect, Engineer, and Data Analyst pipeline."
             ),
             {"message": message},
+            timeout_seconds=self.lead_timeout,
         )
 
     def _record_response_usage(self, body: dict) -> None:
@@ -383,7 +415,14 @@ class OllamaCloudProvider:
                 "sites with Home, Catalog, and Product pages. Classify support_level honestly as "
                 "supported, adapted, or unsupported. Do not invent backend, auth, or payment "
                 "support. mapped_requirements may only contain these canonical claims: "
-                "Responsive product catalog, Product detail navigation, Editable visual direction."
+                "Responsive product catalog, Product detail navigation, Editable visual direction. "
+                "When the original workflow is unsupported, act as a proactive Product Manager: "
+                "rewrite_suggestion must be a complete build instruction that preserves the "
+                "request's recognizable theme while converting it into the supported catalog "
+                "scope. Expand the catalog concept with concrete product categories, Home, "
+                "Catalog, and Product pages, and a visual direction. Write it in the same language "
+                "as the user. It must be ready for the user to confirm unchanged, not advice asking "
+                "the user to describe or narrow the request."
             ),
             {"request": prompt, "mode": mode.value},
         )
@@ -394,7 +433,10 @@ class OllamaCloudProvider:
             "Architect",
             (
                 "Define a controlled three-route React catalog architecture and visual tokens. "
-                "Use only Product and Category data entities and no generated backend."
+                "Use only Product and Category data entities and no generated backend. Primary "
+                "text against background must meet at least 4.5:1 contrast and accent against "
+                "background at least 3:1. Preserve the requested visual theme while choosing "
+                "accessible token values."
             ),
             {"blueprint": blueprint.model_dump(mode="json")},
         )
@@ -408,8 +450,9 @@ class OllamaCloudProvider:
             (
                 "Produce an AppSpec for the fixed renderer. Include exactly the Home, Catalog, and "
                 "at least one /product/<id> route plus 3-6 complete sample products. Use valid hex "
-                "colors and stable lowercase product ids. Do not output source code or shell "
-                "commands."
+                "colors and stable lowercase product ids. Copy primary_color, accent_color, and "
+                "background_color exactly from ArchitectureSpec. Do not output source code or "
+                "shell commands."
             ),
             {
                 "request": prompt,
@@ -442,6 +485,7 @@ class OllamaCloudProvider:
         role: str,
         instruction: str,
         payload: dict,
+        timeout_seconds: float | None = None,
     ) -> T:
         schema = contract.model_json_schema()
         messages = [
@@ -475,7 +519,7 @@ class OllamaCloudProvider:
                         # think-text and prose that corrupt free-form JSON extraction.
                         "format": schema,
                     },
-                    timeout=self.timeout,
+                    timeout=timeout_seconds or self.timeout,
                 )
                 response.raise_for_status()
                 body = response.json()

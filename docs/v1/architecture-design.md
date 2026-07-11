@@ -161,6 +161,7 @@ Product Manager Agent -> Blueprint + support_level -> Pydantic 校验
     v
 supported + 明确构建意图 -> 继续
 adapted / 范围变化 / 超预算 -> approval.required -> 用户决定
+unsupported -> needs_input + PM 可构建草案 -> 用户确认或编辑 -> 新 Run
     |
     v
 [3. 设计与应用规格]
@@ -316,6 +317,8 @@ adaptation_summary: string[]
 
 `unsupported` 不得进入 Architect 或 Build；`adapted` 必须等待用户确认映射结果。
 
+`unsupported` 的 `rewrite_suggestion` 必须是 Product Manager 根据原主题生成的完整可构建需求，而不是通用 Golden Path 提示。原 Run 保持终止且不创建 Build Job；用户确认或编辑草案后，通过正常创建入口产生新 Run，避免复用已按 unsupported 结算和终止的执行状态。
+
 ### 5.4 阶段产物契约
 
 前端默认只展示 Lead 对话与当前结果；用户展开团队过程时，每个阶段必须绑定可检查产物：
@@ -373,7 +376,7 @@ V1 使用 Sandbox Host 上的持久化后台 Worker：
 - 每个 Job 设置可配置超时、输出上限和工作区磁盘上限。
 - 禁止启用多个 Uvicorn Worker 后各自无协调地消费任务。
 
-当前可运行纵切在 Sandbox Host 拆分完成前采用更小的单实例形态：一个 FastAPI 进程、一个进程内 Build Worker、PostgreSQL/本地 SQLite 持久化。`POST /api/runs` 只提交 Run 并返回 `product_running`；Blueprint 由响应后的 `BackgroundTasks` 使用新数据库 Session 生成，进程启动时重新处理遗留的 `product_running` Run。Build 仍由持久化 `build_jobs` 和 lease 驱动，不依赖 HTTP 请求存活。该纵切仍保留统一 Blueprint Approval Gate；本轮 CAS 只加固现有审批正确性，不代表风险驱动 Approval 已实现。
+当前可运行纵切在 Sandbox Host 拆分完成前采用更小的单实例形态：一个 FastAPI 进程、一个进程内 Build Worker、PostgreSQL/本地 SQLite 持久化。`POST /api/runs` 只提交 Run 并返回 `product_running`；Blueprint 由响应后的 `BackgroundTasks` 使用新数据库 Session 生成，进程启动时重新处理遗留的 `product_running` Run。Build 仍由持久化 `build_jobs` 和 lease 驱动，不依赖 HTTP 请求存活。风险驱动 Approval 已用于 Blueprint 路径：`supported` 自动继续，`adapted` 进入确认，`unsupported` 停止原 Run 并展示 PM 生成的可构建草案；CAS 和唯一约束保证确认不会重复创建 Build Job。
 
 V1 不引入 LISTEN/NOTIFY、消息队列、独立 Worker 集群或跨实例 lease owner。SSE 继续轮询数据库，但单连接复用一个读取 Session。只有准备增加 API/Worker 水平副本时，才需要重新设计通知、队列、owner fencing 和共享 Artifact 存储。
 
@@ -397,8 +400,9 @@ Repository Service 是 Project 与源码历史的可信所有者：
 1. 创建 Project 时同步创建唯一 `ProjectRepository(status=provisioning)`。
 2. 在受控 repo root 下执行固定 `git init --bare`，写入平台生成的初始模板并创建初始化 commit，随后标记 ready。
 3. Build/Edit/Resolve/Restore 都从指定 base commit 导出临时 worktree；通过校验后由 Repository Service 收集 allowlist 文件并提交。
-4. `ProjectVersion.git_commit_sha` 必须指向该 Project 仓库中的 commit；数据库 Version 和 Git commit 在同一业务操作中成功或进入可恢复失败状态。
-5. V1 不配置 remote、credential helper 或 hook，不支持 clone 用户仓库、push GitHub、force push 或改写历史。
+4. Workspace 文件树通过只读 HTTP API 列出 Repository 文件和当前 Run Artifact；API 隐藏 `.git`、内部 worktree 与宿主机绝对路径，限制 UTF-8 文本大小，并复用 User/Project/Run 归属校验。Artifact 文件明确标记为未提交，不能与 Git working tree 状态混淆。
+5. `ProjectVersion.git_commit_sha` 必须指向该 Project 仓库中的 commit；数据库 Version 和 Git commit 在同一业务操作中成功或进入可恢复失败状态。
+6. V1 不配置 remote、credential helper 或 hook，不支持 clone 用户仓库、push GitHub、force push 或改写历史。
 
 推荐受控目录：
 

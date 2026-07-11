@@ -1,5 +1,5 @@
 from another_atom.agent.provider import MockLLMProvider
-from another_atom.build.renderer import validate_app_spec
+from another_atom.build.renderer import normalize_architecture_visual_tokens, validate_app_spec
 from another_atom.contracts.schemas import Blueprint, Mode
 
 
@@ -70,3 +70,28 @@ def test_visual_tokens_require_contrast_and_architecture_alignment() -> None:
     check = next(check for check in report.checks if check.check_id == "visual-tokens")
     assert report.passed is False
     assert check.status == "fail"
+
+
+def test_architecture_visual_tokens_are_normalized_before_engineering() -> None:
+    _, architecture, _ = build_contracts()
+    inaccessible = architecture.model_copy(
+        update={
+            "primary_color": "#00A000",
+            "accent_color": "#000080",
+            "background_color": "#C0C0C0",
+        }
+    )
+    normalized = normalize_architecture_visual_tokens(inaccessible)
+
+    assert normalized.background_color == "#C0C0C0"
+    assert normalized.primary_color != inaccessible.primary_color
+    _, _, app_spec = build_contracts()
+    aligned = app_spec.model_copy(
+        update={
+            "primary_color": normalized.primary_color.lower(),
+            "accent_color": normalized.accent_color.lower(),
+            "background_color": normalized.background_color.lower(),
+        }
+    )
+    report = validate_app_spec(aligned, architecture_spec=normalized)
+    assert report.passed is True

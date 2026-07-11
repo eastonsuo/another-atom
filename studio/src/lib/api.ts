@@ -5,6 +5,8 @@ import type {
   DeploymentView,
   Mode,
   ModelsView,
+  ProjectFileContent,
+  ProjectFileEntry,
   ProjectView,
   QuotaView,
   RunEvent,
@@ -65,6 +67,10 @@ export const api = {
   models: () => request<ModelsView>("/api/models"),
   versions: (projectId: string) =>
     request<VersionView[]>(`/api/projects/${projectId}/versions`),
+  projectFiles: (projectId: string, runId: string) =>
+    request<ProjectFileEntry[]>(`/api/projects/${projectId}/files?${new URLSearchParams({ run_id: runId })}`),
+  projectFile: (projectId: string, runId: string, path: string, source: ProjectFileEntry["source"]) =>
+    request<ProjectFileContent>(`/api/projects/${projectId}/files/content?${new URLSearchParams({ run_id: runId, path, source })}`),
   preview: (versionId: string) => request<AppSpec>(`/api/previews/${versionId}`),
   publicApp: (publicId: string) => request<AppSpec>(`/api/public/${publicId}`),
   revise: (projectId: string, revision: Partial<AppSpec>) =>

@@ -44,7 +44,7 @@ Lead Agent -> LeadDecision(route=direct|team)
 | 角色 | 输入上下文 | 结构化输出 | 可决定 | 不可决定 |
 | --- | --- | --- | --- | --- |
 | Lead | 用户消息、当前 Project 摘要、能力边界、基础预算 | `LeadDecision`、直接回复或团队摘要 | `direct` / `team` 二选一路由；direct 内回答或提出澄清 | 不自由挑选角色，不创建动态任务图，不执行 Tool，不代替专业角色生成 Contract，不发布 |
-| Product Manager | Prompt、附件元数据、平台能力范围 | `Blueprint` | 需求字段、`support_level`、适配说明 | 不确认 Blueprint，不创建 Build Job |
+| Product Manager | Prompt、附件元数据、平台能力范围 | `Blueprint`；unsupported 时包含可确认的 `rewrite_suggestion` | 需求字段、`support_level`、适配说明；保留原主题并把超范围目标扩展成可构建商品目录草案 | 不确认 Blueprint，不创建 Build Job，不把改写后的目标冒充原需求 |
 | Architect | 当前 Blueprint、Renderer Capability Contract | `ArchitectureSpec` | 页面策略、数据实体、布局、视觉和交互约束 | 不擅自扩大 Blueprint 范围，不选择任意技术栈 |
 | Engineer | Blueprint、ArchitectureSpec、Renderer Capability Contract | `AppSpec`；修复时为 `RevisionSpec + AppSpec` | 在固定 Renderer 能力内定义应用结构 | 不写任意源码，不选择依赖或 Shell 命令 |
 | Data Analyst | AppSpec、不可变 ValidationReport | `DataReview` | 检查数据完整性，解释工程校验，引用证据并提出建议 | 不修改 engineering check，不宣布失败结果通过 |
@@ -61,6 +61,8 @@ capability_policy_version
 ```
 
 LLM 提出判定，Runtime 使用固定 Capability Policy 校验允许的产品类型、页面、模块和后端能力。同一 Policy 版本必须维持一致的允许/拒绝边界；模型不能为了继续执行把主要目标不受支持的请求标为 `adapted`。
+
+`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保留可识别主题、可直接作为新构建输入的完整草案，并补齐商品类别、Home/Catalog/Product 页面和视觉方向。Runtime 将原 Run 停在 `NeedsInput`，用户确认或编辑后以草案创建新 Run；Agent 无权替用户确认目标变化。
 
 DataReview 至少包含：
 
@@ -120,6 +122,7 @@ Created
        |-- DirectResponding -> Completed
        `-- TeamQueued
   -> ProductRunning
+       `-- Unsupported -> NeedsInput -> PM draft confirmation -> New Run
   -> AwaitingRiskApproval        (only when policy requires)
   -> ArchitectRunning              (team route)
   -> EngineerRunning

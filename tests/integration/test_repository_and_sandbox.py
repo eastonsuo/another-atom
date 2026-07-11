@@ -66,6 +66,56 @@ def test_database_startup_backfills_repository_for_existing_project(
         assert version is not None and version.git_commit is not None
 
 
+def test_project_file_browser_lists_repository_and_generated_artifacts(client) -> None:
+    created = client.post(
+        "/api/runs",
+        json={"prompt": "Build a lighting product catalog", "mode": "team"},
+    ).json()
+    run = client.get(f"/api/runs/{created['run_id']}").json()
+    response = client.get(
+        f"/api/projects/{run['project_id']}/files",
+        params={"run_id": run["run_id"]},
+    )
+    assert response.status_code == 200
+    files = response.json()
+    assert any(item["source"] == "repository" and item["path"] == "README.md" for item in files)
+    assert any(item["source"] == "repository" and item["path"] == "app-spec.json" for item in files)
+    artifact_file = next(
+        item
+        for item in files
+        if item["source"] == "artifact" and item["path"].endswith("app-spec.json")
+    )
+    content = client.get(
+        f"/api/projects/{run['project_id']}/files/content",
+        params={
+            "run_id": run["run_id"],
+            "path": artifact_file["path"],
+            "source": "artifact",
+        },
+    )
+    assert content.status_code == 200
+    assert '"project_name"' in content.json()["content"]
+
+
+def test_project_file_browser_blocks_cross_user_and_git_metadata(client) -> None:
+    created = client.post(
+        "/api/runs",
+        json={"prompt": "Build a catalog", "mode": "team"},
+        headers={"X-User-ID": "file-owner"},
+    ).json()
+    project_id = created["project_id"]
+    assert client.get(
+        f"/api/projects/{project_id}/files",
+        headers={"X-User-ID": "other-user"},
+    ).status_code == 404
+    hidden = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": ".git/config", "source": "repository"},
+        headers={"X-User-ID": "file-owner"},
+    )
+    assert hidden.status_code == 404
+
+
 def test_new_version_does_not_move_public_pointer_without_publish(client: TestClient) -> None:
     run = _built_run(client)
     published = client.post(

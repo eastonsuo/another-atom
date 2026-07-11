@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from another_atom.agent.provider import LLMProvider, LLMProviderError, get_llm_provider
-from another_atom.build.renderer import validate_app_spec
+from another_atom.build.renderer import normalize_architecture_visual_tokens, validate_app_spec
 from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
@@ -186,7 +186,9 @@ class Orchestrator:
                     "architect",
                     ArtifactType.ARCHITECTURE_SPEC,
                     ArchitectureSpec,
-                    lambda: self._provider(run).create_architecture_spec(blueprint),
+                    lambda: normalize_architecture_visual_tokens(
+                        self._provider(run).create_architecture_spec(blueprint)
+                    ),
                 )
             app_spec = self._run_engineer(run, blueprint, architecture_spec)
             validation_report, build_job = self._run_build(
@@ -246,7 +248,9 @@ class Orchestrator:
             "architect",
             ArtifactType.ARCHITECTURE_SPEC,
             ArchitectureSpec,
-            lambda: self._provider(run).create_architecture_spec(blueprint),
+            lambda: normalize_architecture_visual_tokens(
+                self._provider(run).create_architecture_spec(blueprint)
+            ),
         )
         self._record_event_once(
             run,
@@ -274,7 +278,10 @@ class Orchestrator:
             "engineer",
             ArtifactType.APP_SPEC,
             AppSpec,
-            lambda: self._provider(run).create_app_spec(blueprint, architecture_spec, run.prompt),
+            lambda: self._align_app_spec_visual_tokens(
+                self._provider(run).create_app_spec(blueprint, architecture_spec, run.prompt),
+                architecture_spec,
+            ),
         )
         self._record_event_once(
             run,
@@ -285,6 +292,18 @@ class Orchestrator:
         )
         self.db.commit()
         return app_spec
+
+    @staticmethod
+    def _align_app_spec_visual_tokens(
+        app_spec: AppSpec, architecture_spec: ArchitectureSpec
+    ) -> AppSpec:
+        return app_spec.model_copy(
+            update={
+                "primary_color": architecture_spec.primary_color,
+                "accent_color": architecture_spec.accent_color,
+                "background_color": architecture_spec.background_color,
+            }
+        )
 
     def _run_build(
         self,

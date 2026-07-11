@@ -4,13 +4,19 @@
 
 > 把产品想法转化为可检查、可修改、可管理版本并可发布的网页原型。
 
+## 产品界面
+
+![Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态](./docs/assets/readme/studio-home-zh.png)
+
+中文 Studio 将 Lead 对话入口、固定专业团队、Project 历史、模型选择和账号级配额放在同一工作区；进入构建后继续展示阶段进度、运行日志、文件树、预览、版本和发布状态。
+
 ## 先认识几个核心概念
 
 下文会反复出现几个关键词，先用大白话解释一遍：
 
 - **Lead（入口分派）：** 你发的每条消息都先经过 Lead。它判断你是只想询问或澄清——走 `direct`，直接回答且不创建 Project；还是明确要求构建——走 `team`，交给专业团队执行。
 
-- **Blueprint（产品方案）：** Product Manager 把需求整理成的一份可检查方案，写清支持范围、页面、模块和视觉方向。它有三种结论：`supported` 表示受控范围内支持并自动继续；`adapted` 表示需要调整，先展示需求映射和取舍再等待确认；`unsupported` 表示超出范围，在构建前停止。
+- **Blueprint（产品方案）：** Product Manager 把需求整理成一份可检查方案，写清支持范围、页面、模块和视觉方向。它有三种结论：`supported` 表示受控范围内支持并自动继续；`adapted` 表示核心目标可保留，但部分能力需要调整，展示映射和取舍后等待确认；`unsupported` 表示原始目标不能直接构建，PM 会保留主题并生成一份可构建的商品目录需求草案，由用户确认或修改后重新开始。
 
 - **角色接力：** 一次 V1 构建由四个 AI 角色按固定顺序接力。每一步都产出可检查的结构化成果，而不是让多个角色互相闲聊。
 
@@ -112,13 +118,15 @@ Another Atom 是一个通过自然语言创建网页产品原型的 AI Agent 工
 
 - **对话与路由：** 用户始终从 Lead 入口表达需求。询问、能力确认或澄清走 `direct`；明确构建请求走 `team`，用户也可以主动选择 Call team。
 
-- **范围与确认：** Product Manager 将请求整理成 Blueprint。`supported` 工作自动进入固定团队，`adapted` 会展示映射和省略内容并等待确认，`unsupported` 在构建前停止。
+- **范围与确认：** Product Manager 将请求整理成 Blueprint。`supported` 工作自动进入固定团队；`adapted` 展示映射和省略内容并等待确认；`unsupported` 停止原请求，不创建 Build Job，同时由 PM 生成保留原主题的可构建草案。用户可直接确认或先修改，确认后以该草案启动新的 Run。
 
 - **设计与实现：** Architect 产生 ArchitectureSpec，Engineer 产生 AppSpec；确定性 Renderer 和 Validator 负责真正构建与校验，不执行模型临时生成的 Shell 命令。
 
 - **质量解释：** ValidationReport 保存不可由 Agent 改写的工程证据，Data Analyst 基于 AppSpec 和校验结果生成 DataReview，不把失败检查解释成成功。
 
 - **预览与修改：** 用户可以实际操作 Home、Catalog、Product 页面，通过结构化 Edit 或 xterm.js + restricted Vim 修改当前 Project 的 `app-spec.json`。
+
+- **文件可见：** Workspace 右侧通过受用户归属校验的 HTTP API 实时列出 Project Git 仓库文件和当前 Run 的结构化产物，并支持手动刷新与内容查看。V1 的可编辑生成源码是受控 Renderer Contract `app-spec.json`；尚未形成版本的 Blueprint、ArchitectureSpec、AppSpec 和 ValidationReport 明确标记为“本次生成产物”，不伪装成已提交代码。
 
 - **版本与恢复：** Build、Edit、Vim Save 和 Restore 都创建新的 ProjectVersion 与 Git commit；Restore 只新增恢复版本，不删除或重写历史。
 
@@ -254,19 +262,24 @@ Lead 判断（LeadDecision）
           |-- 范围受支持 + 基础预算（supported + base budget）
           |      `-> 自动继续（continue）
           |
-          `-- 范围调整或新增风险（adapted / new risk）
-                 `-> 请求用户确认（Approval）
+          |-- 范围调整或新增风险（adapted / new risk）
+          |      `-> 请求用户确认（Approval）
+          |
+          `-- 原始目标不受支持（unsupported）
+                 `-> PM 生成可构建草案 -> 用户确认或修改 -> 新 Run
 ```
 
 - **正常直通：** `supported` Blueprint 保持在受控商品目录范围和基础预算内，生成后自动进入后续团队，不再重复询问用户是否开始构建。
 
 - **风险确认：** `adapted`、额外预算、后续范围变化、破坏性源码操作、版本发布指针变化和公开访问变化需要用户确认。
 
+- **主动承接：** `unsupported` 不会被伪装成原功能继续构建，也不会只把问题退回给用户。Product Manager 保留原始主题，补齐商品类别、页面结构和视觉方向，生成一份可直接确认的完整需求草案；确认前不创建 Build Job，确认后以草案创建新的 Run。
+
 - **Contract 保留：** Blueprint 仍然持久化、可检查并参与后续 Validator，只是不再充当所有构建的统一审批门。
 
 - **纠偏窗口：** 取消固定 Gate 会失去默认的“构建前编辑 Blueprint”停顿；系统用 Artifact Inspector、Follow-up、Edit 和新版本承接后续纠偏。
 
-- **关键取舍：** Human-in-the-loop 应匹配不可逆性、成本扩大和授权变化，而不是匹配 Agent 阶段数量。
+- **关键取舍：** Human-in-the-loop 应匹配不可逆性、成本扩大和授权变化，而不是匹配 Agent 阶段数量。系统可以主动补全需求，但不能替用户接受已经改变的产品目标。
 
 ### 6.4 【版本与发布】保存新版本，不会自动影响线上版本
 
