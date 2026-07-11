@@ -30,7 +30,7 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
 
-> **Delivery summary:** [中文说明](./docs/v1/delivery-summary.md)
+> **Delivery summary:** [中文说明](./V1-简要交付说明.md)
 
 ## Version Roadmap
 
