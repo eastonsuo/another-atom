@@ -413,6 +413,7 @@ Not completed:
 - Online version: Railway deployment and public access have been accepted; the service domain is managed by the Railway deployment environment.
 - [Discussion documentation index](./docs/discussion/README.md)
 - [Design documentation index](./docs/design/README.md)
+- [Overall product goal and positioning (Chinese)](./docs/design/整体/产品设计/整体产品目标与定位.md)
 - [V1 product requirements](./docs/design/V1/产品设计/产品需求.md)
 - [V1 architecture design](./docs/design/V1/工程设计/架构设计.md)
 - [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md)

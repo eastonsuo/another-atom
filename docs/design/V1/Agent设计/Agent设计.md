@@ -7,7 +7,8 @@
 - 产品文档：[Another Atom V1 产品需求文档](../产品设计/产品需求.md)
 - 工程架构：[Another Atom V1 架构设计](../工程设计/架构设计.md)
 - 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/V1/综合评审/2026-07-12-关键设计与实现检查.md)
-- 学习文档：[半 AI Coding 场景下的 Agent Runtime 演进](../../整体/Agent设计/半AI-Coding-Agent-Runtime演进.md)
+- 整体产品：[Another Atom 整体产品目标与定位](../../整体/产品设计/整体产品目标与定位.md)
+- 讨论文档：[Agent Runtime 边界与演进讨论](../../../discussion/Agent讨论/2026-07-12-Agent-Runtime边界与演进讨论.md)
 - V2 演进：[Another Atom V2 Agent 设计](../../V2/Agent设计/Agent设计.md)
 
 ## 1. 设计结论

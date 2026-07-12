@@ -36,7 +36,7 @@ docs/design/
 
 - [V1 设计](./V1/README.md)：当前实现、P0 设计与交付基线。
 - [V2 设计](./V2/README.md)：动态 TaskGraph、多 Agent 和 Task Sandbox 计划。
-- [整体设计](./整体/README.md)：半 AI Coding Agent Runtime 演进和参考资料。
+- [整体设计](./整体/README.md)：整体产品目标、跨版本原则和参考资料。
 
 ## 4. 新设计文档要求
 

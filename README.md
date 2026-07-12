@@ -652,6 +652,8 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **讨论导航：** [未决讨论规范与索引](./docs/discussion/README.md)
 
+- **整体产品：** [Another Atom 整体产品目标与定位](./docs/design/整体/产品设计/整体产品目标与定位.md)
+
 - **V1 产品：** [V1 产品需求](./docs/design/V1/产品设计/产品需求.md)
 
 - **V1 工程：** [V1 架构设计](./docs/design/V1/工程设计/架构设计.md)
