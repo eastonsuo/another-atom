@@ -1,4 +1,4 @@
-export type RoleKey = "leader" | "product" | "architect" | "engineer" | "data" | "user" | "renderer";
+export type RoleKey = "leader" | "product" | "architect" | "engineer" | "data" | "reviewer" | "validator" | "user" | "renderer";
 
 export const ROLE_META: Record<RoleKey, { label: string; short: string }> = {
   leader: { label: "Team Leader", short: "TL" },
@@ -6,6 +6,8 @@ export const ROLE_META: Record<RoleKey, { label: string; short: string }> = {
   architect: { label: "Architect", short: "AR" },
   engineer: { label: "Engineer", short: "EN" },
   data: { label: "Data Analyst", short: "DA" },
+  reviewer: { label: "Reviewer", short: "RV" },
+  validator: { label: "Validator", short: "VA" },
   user: { label: "You", short: "YOU" },
   renderer: { label: "Renderer", short: "RE" },
 };

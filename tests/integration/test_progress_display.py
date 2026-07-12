@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 # Stage identifiers the frontend Timeline knows how to render (App.tsx).
 # team mode: team_leader, product_manager, [blueprint_approval], architect,
-# engineer, build, data, complete. build_queue is display-mapped to engineer.
+# engineer, data, build, reviewer, complete. build_queue is display-mapped to engineer.
 FRONTEND_TEAM_STAGES = {
     "team_leader",
     "product_manager",
@@ -21,6 +21,7 @@ FRONTEND_TEAM_STAGES = {
     "engineer",
     "build",
     "data",
+    "reviewer",
     "complete",
     "build_queue",  # mapped to "engineer" by the frontend
     "scope_review",  # needs_input terminal view (ScopeStop), not a timeline step
@@ -36,6 +37,7 @@ FRONTEND_STATUSES = {
     "engineer_running",
     "building",
     "data_running",
+    "review_running",
     "completed",
     "completed_degraded",
     "failed",
@@ -79,7 +81,15 @@ def test_supported_run_reaches_completed_with_frontend_mappable_stages(
 
     # The full supported pipeline must visibly pass through each build step so
     # the timeline lights up sequentially rather than jumping to done.
-    for expected in ("product_manager", "architect", "engineer", "build", "data", "complete"):
+    for expected in (
+        "product_manager",
+        "architect",
+        "engineer",
+        "data",
+        "build",
+        "reviewer",
+        "complete",
+    ):
         assert expected in stages, f"missing progress stage: {expected}"
 
 

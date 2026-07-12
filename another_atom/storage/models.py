@@ -192,8 +192,9 @@ class ProjectVersion(Base, TimestampMixin):
     version_number: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(24))
     app_spec: Mapped[dict[str, Any]] = mapped_column(JSON)
+    data_profile: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     validation_report: Mapped[dict[str, Any]] = mapped_column(JSON)
-    data_review: Mapped[dict[str, Any]] = mapped_column("qa_review", JSON)
+    review_report: Mapped[dict[str, Any]] = mapped_column("qa_review", JSON)
     git_commit: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 

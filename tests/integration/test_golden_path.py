@@ -30,11 +30,13 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
     run = create_and_build(client)
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True
-    assert run["data_review"]["warnings"] == []
+    assert run["data_profile"]["warnings"] == []
+    assert run["review_report"]["verdict"] == "accept"
+    assert run["review_report"]["warnings"] == []
     assert run["model"] == "mock"
     assert run["version_id"]
     quota = client.get("/api/quota").json()
-    assert quota["used"] == 4
+    assert quota["used"] == 5
     assert quota["reserved"] == 0
     with client.app.state.testing_session() as db:
         settles = db.scalars(
@@ -50,8 +52,9 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
         "architect",
         "engineer",
         "data",
+        "reviewer",
     ]
-    assert [entry.request_count for entry in settles] == [1, 1, 1, 1]
+    assert [entry.request_count for entry in settles] == [1, 1, 1, 1, 1]
 
     versions = client.get(f"/api/projects/{run['project_id']}/versions")
     assert versions.status_code == 200

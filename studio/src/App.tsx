@@ -63,8 +63,9 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
     blueprint_approval: "用户确认",
     architect: "架构师",
     engineer: "工程师",
-    build: "渲染器",
-    data: "数据分析",
+    data: "数据分析师",
+    build: "校验器",
+    reviewer: "审查员",
     complete: "预览就绪",
     build_queue: "构建队列",
     scope_review: "确认 PM 草案",
@@ -75,8 +76,9 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
     blueprint_approval: "Your approval",
     architect: "Architect",
     engineer: "Engineer",
-    build: "Renderer",
     data: "Data Analyst",
+    build: "Validator",
+    reviewer: "Reviewer",
     complete: "Preview ready",
     build_queue: "Build queue",
     scope_review: "Confirm PM draft",
@@ -90,8 +92,9 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
     build_queue: "构建任务正在排队",
     architect: "架构师正在设计方案",
     engineer: "工程师正在生成应用规格",
-    build: "渲染器正在构建页面",
-    data: "数据分析正在检查结果",
+    data: "数据分析师正在分析应用数据",
+    build: "校验器正在检查源码与交付证据",
+    reviewer: "审查员正在独立审查结果",
     complete: "正在准备预览结果",
   },
   en: {
@@ -100,8 +103,9 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
     build_queue: "The build job is waiting to start",
     architect: "Architect is designing the solution",
     engineer: "Engineer is generating the application specification",
-    build: "Renderer is building the pages",
-    data: "Data Analyst is checking the result",
+    data: "Data Analyst is analyzing application data",
+    build: "Validator is checking source and delivery evidence",
+    reviewer: "Reviewer is independently checking the result",
     complete: "Preparing the preview result",
   },
 };
@@ -113,6 +117,8 @@ const ROLE_LABELS: Record<Language, Partial<Record<RoleKey, string>>> = {
     architect: "架构",
     engineer: "工程",
     data: "数据",
+    reviewer: "审查",
+    validator: "校验",
     renderer: "渲染",
     user: "你",
   },
@@ -280,6 +286,7 @@ const ZH: Record<string, string> = {
   "engineer_running": "工程阶段",
   "building": "构建中",
   "data_running": "数据阶段",
+  "review_running": "审查阶段",
   "Product Manager is structuring the request": "产品经理正在整理需求",
   "Blueprint is ready for review": "Blueprint 已生成，等待检查",
   "The request is outside the V1 catalog scope": "当前需求包含旧版商品目录范围之外的能力，请让 PM 按原始目标重新生成 Web 需求。",
@@ -298,9 +305,10 @@ const ZH: Record<string, string> = {
   "Web source packaging and sandbox validation started": "Web 源码正在物化并进行 Sandbox 边界校验",
   "Deterministic route, data, and renderer checks completed": "路由、数据和渲染器确定性校验已完成",
   "Deterministic source, capability, handoff, and visual checks completed": "源码、能力边界、角色交接和视觉校验已完成",
-  "Data Analyst is checking catalog data and validation evidence": "数据分析正在检查商品数据和校验证据",
-  "Data Analyst is checking application state and validation evidence": "数据分析正在检查应用状态和校验证据",
-  "DataReview is ready": "DataReview 已生成",
+  "Data Analyst is analyzing application data and local state": "数据分析师正在分析应用数据和本地状态",
+  "DataProfile is ready": "DataProfile 已生成",
+  "Reviewer is checking requirement coverage and immutable evidence": "审查员正在检查需求覆盖和不可变证据",
+  "ReviewReport is ready": "ReviewReport 已生成",
   "Interactive preview is ready": "可交互预览已就绪",
   "The build worker stopped unexpectedly": "Build Worker 异常停止",
   "event.run.created": "任务已创建",
@@ -787,7 +795,7 @@ function Composer({
         <div className="crew-stage" aria-label={ui(language, "Your build team")}>
           <span className="crew-spark spark-one" />
           <span className="crew-spark spark-two" />
-          {(["leader", "product", "architect", "engineer", "data"] as RoleKey[]).map((role) => (
+          {(["leader", "product", "architect", "engineer", "data", "reviewer"] as RoleKey[]).map((role) => (
             <div className="crew-member" key={role}>
               <RoleAvatar role={role} size="large" />
               <span>{roleLabel(language, role)}</span>
@@ -957,9 +965,9 @@ function Timeline({ run, events, language }: { run: RunView; events: RunEvent[];
   const requiresApproval = run.status === "awaiting_approval" || run.blueprint?.support_level === "adapted";
   const needsInput = run.status === "needs_input";
   const stages = run.mode === "team"
-    ? ["team_leader", "product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "build", "data", "complete"]
+    ? ["team_leader", "product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "data", "build", "reviewer", "complete"]
     : ["product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
-  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", build: "renderer", data: "data", complete: "data" };
+  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", data: "data", build: "validator", reviewer: "reviewer", complete: "reviewer" };
   const displayStage = run.current_stage === "build_queue" ? "engineer" : run.current_stage;
   const currentIndex = stages.indexOf(displayStage);
   return <div className="timeline">
@@ -1167,12 +1175,13 @@ function BuildingState({ run, language }: { run: RunView; language: Language }) 
   const roles: Record<string, RoleKey> = {
     team_leader: "leader",
     product_manager: "product",
-    build_queue: "renderer",
+    build_queue: "validator",
     architect: "architect",
     engineer: "engineer",
-    build: "renderer",
     data: "data",
-    complete: "data",
+    build: "validator",
+    reviewer: "reviewer",
+    complete: "reviewer",
   };
   const role = roles[run.current_stage] ?? "leader";
   const title = BUILDING_STAGE_TITLES[language][run.current_stage] ?? `${stageLabel(language, run.current_stage)} ${ui(language, "is working")}`;

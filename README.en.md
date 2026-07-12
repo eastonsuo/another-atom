@@ -52,7 +52,7 @@ See the [overall product goal and positioning](./docs/design/整体/产品设计
 ### Multi-agent Collaboration
 
 - **Single entry point:** Users primarily talk to Lead and do not need to understand internal roles, modes, or workflows first.
-- **Specialized responsibilities:** Product Manager, Architect, Engineer, and Data Analyst handle requirements, structure, implementation, and validation. Their value is demonstrated by deliverables, not avatars or staged conversations.
+- **Specialized responsibilities:** Product Manager, Architect, Engineer, Data Analyst, and Reviewer handle requirements, structure, implementation, data, and independent review. The deterministic Validator supplies engineering evidence Agents cannot rewrite.
 - **Task-based evolution:** Simple tasks should take a short path, while complex work may involve more roles, tools, and rework. The purpose of multiple Agents is to reduce different uncertainties, not maximize Agent count.
 - **User involvement:** Users can inspect, edit, and confirm key plans. The system pauses only for real changes in scope, budget, destructive operations, or publishing.
 
@@ -119,7 +119,7 @@ A Project is the common owner of requirements, Agent artifacts, source repositor
 
 ### Multi-agent collaboration: hand off artifacts, not roleplay messages
 
-Lead is the user entry point. Product Manager, Architect, Engineer, Data Analyst, and later specialists address different uncertainties. Their value is proven by inspectable plans, architecture, source code, validation, and analysis—not avatars or message count.
+Lead is the user entry point. Product Manager, Architect, Engineer, Data Analyst, and Reviewer address product, architecture, code, data, and independent review. Their value is proven by inspectable contracts and evidence—not avatars or message count.
 
 ### Context handoff: each role receives only what the task requires
 
@@ -208,7 +208,7 @@ Blueprint -> Risk Policy -> TaskGraph / Fixed Pipeline
                     ToolRequest -> Sandbox
                               |
                               v
-                Validation + Evidence + DataReview
+          DataProfile + Validation + ReviewReport
                               |
                               v
                    Git commit + ProjectVersion
@@ -317,9 +317,9 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 
 ## Documentation
 
+- **Complete knowledge base (Chinese):** [Full project design knowledge base](./PROJECT_KNOWLEDGE_BASE.md)
 - **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/产品设计/整体产品目标与定位.md)
 - **Design:** [Design documentation index](./docs/design/README.md)
-- **Discussion:** [Open discussion index](./docs/discussion/README.md)
 - **Review:** [Inspection, reflection, and bug index](./docs/review/README.md)
 - **Deployment:** [Local run and Railway deployment guide](./docs/design/V1/工程设计/本地运行与Railway部署.md)
 - **Atoms reference:** [Atoms reference product analysis](./docs/design/整体/参考资料/Atoms参考产品分析.md)

@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
+from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import LeadRoute, Mode, SupportLevel
 
@@ -63,7 +64,10 @@ def test_ollama_lead_disables_thinking(monkeypatch) -> None:
         def json(self) -> dict:
             return {
                 "message": {
-                    "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
+                    "content": (
+                        '{"route":"team","response":"Calling team",'
+                        '"reason":"Explicit build"}'
+                    )
                 },
                 "prompt_eval_count": 10,
                 "eval_count": 5,
@@ -96,7 +100,10 @@ def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
                 "choices": [
                     {
                         "message": {
-                            "content": '{"route":"team","response":"Calling team","reason":"Explicit build"}'
+                            "content": (
+                                '{"route":"team","response":"Calling team",'
+                                '"reason":"Explicit build"}'
+                            )
                         }
                     }
                 ],
@@ -136,6 +143,39 @@ def test_provider_outputs_complete_renderer_contract(provider: MockLLMProvider) 
     assert any(page.route.startswith("/product/") for page in app_spec.pages)
     assert len(app_spec.products) >= 3
     assert provider.take_usage().request_count == 3
+
+
+def test_data_analyst_and_reviewer_have_distinct_contracts(
+    provider: MockLLMProvider,
+) -> None:
+    prompt = "Build a product catalog called Mono Market"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
+    data_profile = provider.analyze_data(blueprint, architecture, app_spec, prompt)
+    validation_report = validate_app_spec(
+        app_spec,
+        prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture,
+    )
+    review_report = provider.review(
+        blueprint,
+        architecture,
+        app_spec,
+        data_profile,
+        validation_report,
+        prompt,
+    )
+
+    assert data_profile.sources == ["AppSpec.products"]
+    assert data_profile.entities
+    assert all(
+        check.status in {"pass", "warning", "not_applicable"} for check in data_profile.checks
+    )
+    assert review_report.verdict == "accept"
+    assert review_report.issues == []
+    assert review_report.engineering_checks
 
 
 def test_minesweeper_preserves_the_game_goal_and_generates_web_source(

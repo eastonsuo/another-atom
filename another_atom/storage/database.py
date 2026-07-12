@@ -68,6 +68,8 @@ def init_database(target_engine: Engine | None = None) -> None:
             connection.execute(
                 text("ALTER TABLE project_versions ADD COLUMN git_commit VARCHAR(40)")
             )
+        if "data_profile" not in version_columns:
+            connection.execute(text("ALTER TABLE project_versions ADD COLUMN data_profile JSON"))
         if "status" not in sandbox_columns:
             connection.execute(
                 text("ALTER TABLE sandbox_sessions ADD COLUMN status VARCHAR(20) DEFAULT 'open'")

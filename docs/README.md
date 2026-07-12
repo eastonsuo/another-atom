@@ -2,11 +2,7 @@
 
 [toc]
 
-项目文档分为 Discussion、Design 和 Review 三类。Design 和 Review 先按 `V1`、`V2`、`整体` 区分版本范围，再按产品、Agent、工程等领域分类；Discussion 不预设版本。图片等非文档资源保存在 `assets/`。
-
-## Discussion
-
-[讨论文档](./discussion/README.md)回答“有哪些可选方向、代价和未决问题”。它保存经过提炼的头脑风暴，不是聊天原文，也不构成实现基线。讨论收敛后，正式方案进入 Design。
+项目文档分为 Design 和 Review 两类，先按 `V1`、`V2`、`整体` 区分版本范围，再按产品、Agent、工程等领域分类。已经确认的方案进入 Design；带日期的检查、问题和阶段结论进入 Review。图片等非文档资源保存在 `assets/`。
 
 ## 设计
 
@@ -21,7 +17,7 @@
 
 [Review 文档](./review/README.md)回答“实际检查到了什么”，按产品评审、Agent 评审、工程评审和综合评审记录带日期的检查、反思、Bug、验证证据和阶段结论。
 
-Review 发现需要系统性解决的问题时，可以先进入 Discussion 比较方案；形成决定后写入 Design。解决方案本身不在 Review 中长期维护。
+Review 发现需要系统性解决的问题时，在相应 Review 中记录依据与结论；形成正式决定后同步写入 Design。解决方案本身不在 Review 中长期维护。
 
 ## 资源
 

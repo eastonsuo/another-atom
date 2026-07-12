@@ -104,6 +104,22 @@ def test_supported_request_auto_authorizes_build(client: TestClient) -> None:
     assert "approval.required" not in event_types
 
 
+def test_reviewer_rework_blocks_version_and_preserves_report(client: TestClient) -> None:
+    run = _create_run(
+        client,
+        {
+            "prompt": "Build a product catalog for lamps [review:rework]",
+            "mode": "team",
+        },
+    )
+
+    assert run["status"] == "failed"
+    assert run["error_code"] == "REVIEW_REJECTED"
+    assert run["review_report"]["verdict"] == "rework"
+    assert run["review_report"]["issues"][0]["severity"] == "blocker"
+    assert run["version_id"] is None
+
+
 def test_adapted_request_waits_for_approval(queued_client: TestClient) -> None:
     run = _create_run(
         queued_client,

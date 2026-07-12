@@ -31,6 +31,7 @@ class RunStatus(StrEnum):
     BUILD_QUEUED = "build_queued"
     BUILDING = "building"
     DATA_RUNNING = "data_running"
+    REVIEW_RUNNING = "review_running"
     COMPLETED = "completed"
     COMPLETED_DEGRADED = "completed_degraded"
     NEEDS_INPUT = "needs_input"
@@ -59,7 +60,10 @@ class ArtifactType(StrEnum):
     BLUEPRINT = "blueprint"
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
+    DATA_PROFILE = "data_profile"
     VALIDATION_REPORT = "validation_report"
+    REVIEW_REPORT = "review_report"
+    # Read-only compatibility for runs created before Reviewer became a role.
     DATA_REVIEW = "data_review"
 
 
@@ -164,14 +168,44 @@ class ValidationReport(BaseModel):
     checks: list[ValidationCheck]
 
 
-class DataReview(BaseModel):
+class DataCheck(BaseModel):
+    check_id: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=160)
+    status: Literal["pass", "warning", "not_applicable"]
+    detail: str = Field(min_length=1, max_length=400)
+
+
+class DataProfile(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
-    summary: str
-    data_checks: list[str]
-    engineering_checks: list[str]
-    warnings: list[str] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=500)
+    sources: list[str] = Field(default_factory=list, max_length=12)
+    entities: list[str] = Field(default_factory=list, max_length=20)
+    checks: list[DataCheck] = Field(default_factory=list, max_length=20)
+    insights: list[str] = Field(default_factory=list, max_length=12)
+    warnings: list[str] = Field(default_factory=list, max_length=12)
+    analyst_mode: Literal["agent_analysis", "deterministic_only"] = "agent_analysis"
+
+
+class ReviewIssue(BaseModel):
+    severity: Literal["blocker", "warning", "info"]
+    root_cause: Literal[
+        "requirements", "architecture", "data", "implementation", "platform", "unknown"
+    ] = "unknown"
+    summary: str = Field(min_length=1, max_length=300)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ReviewReport(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    summary: str = Field(min_length=1, max_length=500)
+    verdict: Literal["accept", "rework", "needs_input"] = "accept"
+    requirement_checks: list[str] = Field(default_factory=list, max_length=20)
+    engineering_checks: list[str] = Field(default_factory=list, max_length=20)
+    data_findings: list[str] = Field(default_factory=list, max_length=20)
+    issues: list[ReviewIssue] = Field(default_factory=list, max_length=20)
+    warnings: list[str] = Field(default_factory=list, max_length=12)
     suggested_actions: list[Literal["edit", "resolve", "retry", "accept"]]
-    analyst_mode: Literal["agent_review", "deterministic_only"] = "agent_review"
+    reviewer_mode: Literal["agent_review", "deterministic_only"] = "agent_review"
 
 
 class RunCreate(BaseModel):
@@ -235,8 +269,9 @@ class RunView(BaseModel):
     blueprint: Blueprint | None = None
     architecture_spec: ArchitectureSpec | None = None
     app_spec: AppSpec | None = None
+    data_profile: DataProfile | None = None
     validation_report: ValidationReport | None = None
-    data_review: DataReview | None = None
+    review_report: ReviewReport | None = None
     build_job_id: str | None = None
     version_id: str | None = None
     error_code: str | None = None

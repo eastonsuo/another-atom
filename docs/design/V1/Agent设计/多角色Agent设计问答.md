@@ -1,0 +1,736 @@
+# Another Atom V1 多角色 Agent 设计问答
+
+[toc]
+
+- 主设计：[多角色 Agent 设计](./Agent设计.md)
+- 当前实现检查：[关键设计与实现检查](../../../review/V1/综合评审/2026-07-12-关键设计与实现检查.md)
+- 代码 Contract：[schemas.py](../../../../another_atom/contracts/schemas.py)
+- Provider 实现：[provider.py](../../../../another_atom/agent/provider.py)
+
+本文集中记录对 V1 多角色 Agent 设计的具体提问。回答以当前代码、Contract 和正式设计为依据；“当前实现”和“后续设计”分开描述。
+
+## 1. Pydantic Schema 和 Provider 接口，如何约束大模型按 Contract 输出？
+
+### 简短回答
+
+系统不能保证大模型第一次就正确理解并输出 Contract。当前真正保证的是：**不符合 Contract 的输出不能被保存为 Artifact，也不能进入下一角色。**
+
+
+```text
+Pydantic Model
+    -> 生成 JSON Schema
+    -> Provider 请求结构化 JSON
+    -> 提取 JSON 对象约束链路如下：
+
+    -> Pydantic 再校验
+         |-- 通过 -> 保存 Artifact -> 下一阶段再次按类型读取
+         `-- 失败 -> 携带校验错误要求模型修正一次
+                      -> 仍失败则抛错
+                      -> Runtime 最多重试该阶段 3 次
+                      -> 持续失败则停止 Run
+```
+
+### 当前实现
+
+1. **Schema 进入模型请求。** Provider 使用 `contract.model_json_schema()` 生成 JSON Schema，并在系统指令中要求模型只返回一个符合 Schema 的 JSON 对象。
+
+2. **Ollama 使用字段级结构化约束。** Ollama 请求把完整 Schema 放入 `format`。DeepSeek 官方兜底目前只使用 JSON Object 模式，因此字段、枚举和数量限制仍以本地 Pydantic 校验为最终标准。
+
+3. **返回结果必须通过本地校验。** Provider 先从返回文本中提取括号平衡的 JSON，再执行 `contract.model_validate_json(...)`。类型、必填字段、枚举、字段长度和数组数量不符合 Schema 时，结果不会被接受。
+
+4. **结构错误有有限修正和重试。** 第一次 Pydantic 校验失败后，Provider 会把具体校验错误返回给模型，要求只修正 JSON；第二次仍失败则抛出 `LLMProviderError`。Orchestrator 对整个 Agent 阶段最多尝试 3 次，不会无限修正。
+
+5. **只有类型化结果可以持久化。** `save_artifact` 接收已经通过校验的 Pydantic 对象，并保存其 `model_dump(mode="json")`。恢复已完成阶段时，已有 Artifact 还会再次通过对应 Pydantic Model 校验。
+
+6. **语义约束由多层共同完成。** Schema 只能证明“形状正确”，不能证明模型真正理解用户。角色 Prompt 约束职责，Risk Policy 判断是否需要确认，Validator 检查可确定的工程规则；Git、配额、状态推进和发布权限始终由 Runtime 控制，模型没有直接副作用权限。
+
+### 不能保证的部分
+
+- Schema 正确不等于内容正确，模型仍可能产生语义上不合适但字段合法的内容。
+- 当前 Pydantic Model 没有统一设置 `extra="forbid"`，额外字段默认不会成为强失败条件。
+- DeepSeek 官方兜底不是完整 JSON Schema 解码，硬约束仍发生在服务端校验阶段。
+- Prompt 版本和本次调用的完整 Context 引用尚未形成独立可重放记录。
+
+### 结论
+
+当前设计不是“让大模型一定正确”，而是“让错误输出不能越过 Contract 边界”。可信边界是本地 Pydantic 校验、确定性 Validator 和 Runtime 权限，而不是模型对结构化输出的承诺。
+
+## 2. Memory 应该怎么设计？哪些是长期、哪些是短期？是否使用 RAG？
+
+### 简短回答
+
+目标设计中，Memory 不是一段不断增长的聊天记录，也不等同于向量数据库。它由两部分组成：
+
+1. **保存事实：** 数据库、Artifact Storage 和 Git 保存经过确认、校验或实际执行产生的项目事实；
+2. **选择事实：** Context Service 根据当前 Task，从这些事实中选择最小必要输入。只有确定性索引无法有效定位时，RAG 才作为补充检索层。
+
+因此，RAG 不是当前已实现能力，也不应成为 Memory 的事实源。当前应先补齐 Project 对话、ContextEnvelope、版本关联和失效规则，再按实际规模引入 Project 内 RAG。
+
+### 2.1 Memory 的作用域
+
+Memory 必须先按作用域隔离，再讨论长短期：
+
+```text
+Request / Call
+  当前一次模型调用
+
+Task / Run
+  当前任务与一次执行过程
+
+Project
+  同一软件项目的需求、代码、版本、证据和对话
+
+User
+  用户显式保存的跨项目偏好；默认不启用推断式画像
+```
+
+Another Atom 当前最需要的是 **Project 连续性**。跨 Project 猜测用户喜欢什么技术或视觉风格，不是项目 Memory 的前置能力，也会增加误判和隐私成本。
+
+### 2.2 短期 Memory
+
+短期 Memory 服务于当前调用、Task 或 Run，生命周期结束后不自动成为可复用项目事实：
+
+- 用户最新消息和本轮明确意图；
+- 当前 Task Contract、角色 instruction 和 prompt version；
+- 本 Task 被分配的 Artifact 版本；
+- 用户本轮选择的文件及其 base version；
+- 当前失败 check、Evidence 摘要和本轮 retry 原因；
+- 当前 Task 的 Tool Observation；
+- 剩余调用、token、时间和并发预算；
+- 为避免重复请求保留的短期 provider/request/idempotency 状态。
+
+这些内容可以作为 `ContextEnvelope` 或 Trace 持久化以便审计和恢复，但默认不能被其他 Task 当作长期语义事实。尤其是模型推测、临时计划和 Tool 原始输出，必须先经过 Contract、Validator 或用户确认。
+
+### 2.3 长期 Project Memory
+
+长期 Memory 按 Project 生命周期保存，主要包括：
+
+- **Request Memory：** 用户原始请求、明确确认、拒绝和后续范围修改；Agent 不能改写原始输入。
+- **Contract Memory：** 当前已接受的 Blueprint、ArchitectureSpec、Capability Policy，以及它们的历史版本和替代关系。
+- **Code / Version Memory：** ProjectVersion、Git commit、源码 hash、变更来源和当前工作版本。
+- **Deployment Memory：** 当前发布指针、公开版本以及 Publish/Update/Unpublish 的用户操作事实。
+- **Evidence Memory：** 未解决的 deterministic check、Build/Test/Security Evidence 和最终处理结果。
+- **Episodic Memory：** 某次 Run 为什么失败、尝试了什么修复、哪个 Evidence 发生变化、最后是否解决。
+- **Project Preference：** 用户明确要求在该 Project 中持续保留的品牌、交互或技术偏好。
+
+长期不等于所有内容永久进入 Prompt。长期 Memory 只是可被检索的项目事实；每次调用仍应按任务选择其中很小一部分。
+
+### 2.4 不应成为长期 Memory 的内容
+
+- 模型私有 Chain of Thought；
+- 未经验证的模型猜测和候选方案；
+- 已被接受 Contract 替代的中间草稿；
+- 完整终端输出、完整构建日志和重复 Event；
+- 其他 Agent 的私有 Context；
+- Secret、Cookie、Authorization 或 Sandbox 临时凭证；
+- 系统根据多个 Project 擅自推断的用户画像。
+
+日志和旧草稿可以按审计策略保留，但“仍可查询”不等于“可作为当前语义事实自动注入模型”。
+
+### 2.5 Memory 必须有来源、状态和失效关系
+
+项目型 AI Coding 最大风险不是忘记，而是把已经失效的设计重新当成当前事实。每条可复用 Memory 至少需要：
+
+```text
+memory_id
+scope: user | project | run | task
+kind: request | contract | version | evidence | episode | preference
+source_ref
+project_id
+base_version_id?
+content_hash
+status: proposed | accepted | rejected | obsolete
+superseded_by?
+created_by: user | runtime | agent
+created_at
+```
+
+失效规则示例：
+
+- 用户修改 Blueprint 后，旧 Blueprint 保留历史，但状态变为 obsolete；
+- ArchitectureSpec 依赖的 Blueprint hash 改变后，必须重新验证，不能继续作为当前 Accepted 输入；
+- Restore 到旧版本后，基于较新版本产生的修改建议仍保留，但不再匹配当前 base version；
+- 某个失败 check 已通过新 Evidence 解决后，旧失败进入 resolved episode，不能继续触发返工；
+- RAG 命中 obsolete/rejected 内容时只能作为历史说明，不能覆盖当前 Contract。
+
+### 2.6 Context 读取顺序
+
+Context Service 不应一开始就做语义检索，而应先读取确定事实：
+
+```text
+1. 用户最新明确请求
+2. 当前 Project / base ProjectVersion / 发布指针
+3. 当前已接受的 Blueprint 与 ArchitectureSpec
+4. Task 显式依赖的 Artifact
+5. 未解决的 mandatory Evidence
+6. 用户选中的文件或符号
+7. 最近一次相关失败摘要
+8. RAG 检索到的补充历史
+```
+
+Contract、版本指针、用户选择文件和 mandatory Evidence 必须按 ID/hash 精确读取，不能用相似度搜索替代。RAG 只补充“过去讨论过什么、类似问题如何处理、较大代码库中还有哪些相关位置”。
+
+### 2.7 当前有没有使用 RAG
+
+没有。当前代码没有 Embedding、Vector Store、Retriever 或 Reranker；各阶段 Context 由 Provider 参数直接组装。现有 Project、Run、Artifact、Version、Git 和 Event 是持久化事实，但没有形成 RAG 索引。
+
+对当前固定 Pipeline，这不是立即阻塞项。当前更直接的缺口是：LeadMessage 尚未和 Project/Run 形成完整线程，文件选择和版本没有进入统一 Context，失败历史也没有标准 Episodic Summary。
+
+### 2.8 准备如何使用 RAG
+
+只有当单个 Project 的对话、Artifact、Evidence 和源码规模已经无法通过结构化 ID、文件路径和版本关系有效定位时，再增加 Project 内 RAG。建议流程是：
+
+```text
+当前 Task / 用户问题
+       |
+       v
+权限与范围过滤
+user_id + project_id + base_version + status
+       |
+       v
+确定性读取
+当前 Contract / 版本 / 显式文件 / 未解决 Evidence
+       |
+       v
+混合检索（需要时）
+关键词 / 路径 / 符号 + Vector similarity
+       |
+       v
+版本、状态和任务相关性重排
+       |
+       v
+带 source_ref 的有限片段
+       |
+       v
+Context Builder 按 token 预算组装
+```
+
+建议索引范围：
+
+- Project 对话消息和结构化摘要；
+- README、项目文档和用户上传的文字资料；
+- 源码按文件/符号切分的片段，并绑定 commit SHA 或 ProjectVersion；
+- Artifact 的用户可读摘要及其原始 Artifact ID；
+- 已解决/未解决 Evidence 和失败 episode。
+
+不建议把完整 Build Log、Chain of Thought、Secret、其他 Project 内容或没有版本信息的代码片段放入向量索引。
+
+### 2.9 RAG 结果的可信边界
+
+RAG 返回的是候选证据，不是当前事实。每个检索片段必须带：
+
+- `project_id` 和资源归属；
+- `source_ref`；
+- `base_version_id` 或 commit SHA；
+- `status` 和 `superseded_by`；
+- 检索得分与截断信息。
+
+模型回答或修改提案应引用这些 source refs。真正改变项目 Contract、源码或版本时，Runtime 仍需读取原始 Artifact/文件、检查 base version、生成 Diff 并重新 Validation，不能直接把向量片段写入仓库。
+
+### 2.10 实施顺序
+
+1. 先实现 Project ConversationMessage，把 Lead、Run、Artifact、版本和 Follow-up 串成时间线。
+2. 引入 ContextEnvelope，记录每次调用使用的 prompt version、Artifact refs、base version 和 Evidence refs。
+3. 补 Episodic Summary 与 Memory 失效/替代状态。
+4. 使用结构化查询和文件/符号索引完成大部分 Context 选择。
+5. 有真实规模和召回问题后，再引入 Project 内混合 RAG，并用命中率、错误引用率和 token 成本验证价值。
+6. 跨 Project 用户偏好只在用户显式设置、可查看和可删除时考虑，不从项目行为中默认推断。
+
+### 结论
+
+目标 Memory 设计应以 Project 事实为中心：短期 Memory 支撑当前 Task，长期 Memory 保存用户确认的 Contract、代码版本、发布状态和带 Evidence 的历史。RAG 只是长历史和大代码库下的补充选择机制，不替代数据库、Git、Artifact ID 和版本关系，也不应在基础对话连续性尚未实现前提前引入。
+
+## 3. 为什么使用多 Agent？角色有什么区别？Context 如何传递？
+
+### 简短回答
+
+当前拆分多角色的主要价值不是让多个 Agent 自由讨论，也不是证明“Agent 越多越聪明”，而是把需求、架构、实现和复核拆成不同的可检查 Contract。这样用户和 Runtime 能知道每一步接受了什么输入、产出了什么结果、失败发生在哪里，以及重启后应从哪里继续。
+
+但这个收益目前主要来自**职责分离、结构化产物和持久化状态机**，不能据此断言多 Agent 的最终质量一定高于单 Agent。项目尚未完成足够的真实 Provider 对照测试，无法给出这种经验结论。
+
+### 3.1 当前不是外部多 Agent 框架
+
+当前没有使用 LangGraph、CrewAI 等通用框架，也没有多个长期在线、拥有独立记忆的 Agent 进程。实现方式是：
+
+- 自研 Orchestrator 控制固定执行顺序、状态、重试、配额和持久化；
+- 同一个 LLM Provider 按角色使用不同 instruction、输入 payload 和 Pydantic 输出类型；
+- 每次角色调用彼此独立，角色身份是 Runtime 定义的职责边界，不是不同训练模型或长期人格；
+- 角色不能相互发消息，也不能自主增加任务、改变顺序或调用 Tool。
+
+因此，更准确的描述是 **Contract-first 的固定多角色 Pipeline**。
+
+### 3.2 为什么要拆成多个角色
+
+#### 1. 不同阶段解决不同问题
+
+用户原始需求通常把产品目标、页面结构、实现细节和质量判断混在一起。当前 Pipeline 把它们逐层收敛：
+
+```text
+用户想做什么
+    -> 产品范围和需求是否明确
+    -> 页面、状态和视觉如何组织
+    -> 具体生成什么 HTML / CSS / JavaScript
+    -> 生成结果是否通过确定性检查、还存在哪些问题
+```
+
+如果由一次模型调用同时完成，Runtime 只能得到一个最终答案，很难判断问题是需求理解、架构约束、代码生成还是校验解释造成的。
+
+#### 2. 中间结果可以检查和恢复
+
+Blueprint、ArchitectureSpec、AppSpec、DataProfile、ValidationReport 和 ReviewReport 都以独立 Artifact 保存。用户可以检查关键产品方案，Runtime 可以逐阶段校验；Worker 重启后也可以复用已提交 Artifact，而不是从原始 Prompt 重新生成全部内容。
+
+#### 3. 权限和证据不交给模型
+
+角色只返回结构化判断。状态推进、配额、确定性 Validator、Git、版本和发布由 Runtime 控制。Data Analyst 只分析应用数据和本地状态；Reviewer 可以引用 ValidationReport，但不能把失败检查改成通过。这使“模型意见”和“工程证据”保持分离。
+
+#### 4. Context 可以按职责缩小
+
+每个角色只接收当前任务所需输入，避免所有角色都读取完整聊天、全部源码和运行日志。这样 Prompt 更稳定，也减少无关信息和过期事实进入下一阶段。
+
+### 3.3 不同 Agent 的实际区别
+
+#### Lead：判断是否进入构建
+
+- **回答的问题：** 用户是在询问/澄清，还是明确要求构建、修改或恢复产品？
+- **输入：** 当前一条用户消息；`force_team=true` 时由 Runtime 直接指定 team。
+- **输出：** `LeadDecision`，包括 `route=direct|team`、用户可见回复和原因。
+- **边界：** direct 不得声称已经创建 Project 或文件；Lead 不设计页面、不生成代码。
+
+LeadDecision 本身不作为下游 Agent Artifact 传递。它只决定是否创建 Project/Run；进入 team 后，原始用户消息成为 `Run.prompt`。
+
+#### Product Manager：把原始需求整理为可执行产品方案
+
+- **回答的问题：** 原始目标是什么？当前 Web Runtime 能否直接实现？需要哪些页面、模块、交互、数据和视觉方向？
+- **输入：** `Run.prompt` 和 `Run.mode`。
+- **输出：** `Blueprint`，包括产品类型、支持级别、范围理由、需求映射、删减项、页面、模块、视觉方向和数据要求。
+- **边界：** 保留用户产品目标；不能把游戏或工具擅自改成目录；不输出代码和运行结果。
+
+#### Architect：把产品方案收敛为实现结构
+
+- **回答的问题：** 页面、组件、状态、数据边界和视觉 Token 如何组织，才能在受限浏览器 Runtime 中实现？
+- **输入：** 已通过 Schema 校验的 `Blueprint`。
+- **输出：** `ArchitectureSpec`，包括架构摘要、页面策略、数据实体、颜色、字体、密度和风格。
+- **边界：** 当前只设计自包含浏览器架构，不引入生成后端、远程资源、网络调用或依赖安装；不直接生成最终源码。
+
+#### Engineer：生成可运行源码 Contract
+
+- **回答的问题：** 如何把原始需求、产品方案和架构约束实现为具体 Web 应用？
+- **输入：** 原始 `Run.prompt`、`Blueprint`、`ArchitectureSpec`。
+- **输出：** `AppSpec`，包括页面元数据、HTML、CSS、JavaScript，以及当前 Contract 中保留的展示数据字段。
+- **边界：** 代码必须自包含，不能使用外部 URL、网络请求、动态 import、`eval`、包依赖或后端调用；视觉颜色必须与 ArchitectureSpec 对齐。
+
+#### Data Analyst：分析应用数据和本地状态
+
+- **回答的问题：** 应用包含哪些结构化数据、页面内容和浏览器本地状态？是否存在缺失、重复或明显不一致？
+- **输入：** 原始 `Run.prompt`、`Blueprint`、`ArchitectureSpec`、`AppSpec`。
+- **输出：** `DataProfile`，包括数据来源、实体、检查、观察和警告。
+- **边界：** 不审查代码质量，不读取 ValidationReport，不决定是否通过，也不能修改源码。
+
+这里的 Data Analyst 不是 Reviewer，也不是通用商业分析平台。它的价值是把应用中的数据事实先独立整理出来，供确定性校验和最终 Reviewer 使用。
+
+#### Reviewer：独立复核是否可以交付
+
+- **回答的问题：** 用户目标、产品方案、架构、代码、数据事实和确定性证据是否一致？当前结果应接受、返工还是补充输入？
+- **输入：** 原始 `Run.prompt`、`Blueprint`、`ArchitectureSpec`、`AppSpec`、`DataProfile`、`ValidationReport`。
+- **输出：** `ReviewReport`，包括 verdict、需求检查、工程检查、数据发现、问题、警告和建议动作。
+- **边界：** 不能执行修复，不能覆盖 Validator 的失败，不能替用户发布；`verdict != accept` 或 blocker 会阻止创建版本。
+
+### 3.4 Context 实际如何传递
+
+角色之间不直接传聊天消息。Orchestrator 接收上一个角色的 Pydantic 对象，保存为 Artifact，再把选定字段作为下一个 Provider 调用的 payload：
+
+```text
+用户消息
+   |
+   v
+Lead(message) -> LeadDecision
+   |
+   `-- team：创建 Run，用户消息保存为 Run.prompt
+                         |
+                         v
+PM(prompt, mode) -> Blueprint Artifact
+                         |
+                         v
+Architect(Blueprint) -> ArchitectureSpec Artifact
+                         |
+                         v
+Engineer(prompt, Blueprint, ArchitectureSpec) -> AppSpec Artifact
+                         |
+                         v
+Data Analyst(prompt, Blueprint, ArchitectureSpec, AppSpec) -> DataProfile Artifact
+                         |
+                         v
+确定性 Validator(prompt, Blueprint, ArchitectureSpec, AppSpec)
+                         |
+                         v
+ValidationReport Artifact
+                         |
+                         v
+Reviewer(prompt, Blueprint, ArchitectureSpec, AppSpec, DataProfile, ValidationReport)
+                         |
+                         v
+ReviewReport Artifact
+                         |
+                         v
+Git commit + ProjectVersion
+```
+
+传递过程中有四个关键约束：
+
+1. **传的是结构化 Artifact，不是其他角色的完整对话或私有推理。**
+2. **每个输出先通过对应 Pydantic Schema，已有 Artifact 在恢复时也会重新校验。**
+3. **下游不会自动看到所有上游内容。** 例如 Architect 当前不接收原始 Prompt；Reviewer 只接收已定义的 Contract 和 Evidence，不接收其他角色的私有推理。
+4. **Event、完整日志、Project 历史和旧版本默认不进入模型 Context。** 它们是持久化事实，但尚未由统一 Context Manager 选择和注入。
+
+### 3.5 代价和适用边界
+
+当前多角色设计的代价包括：
+
+- 一次构建需要更多模型请求，延迟和用量高于单次生成；
+- 上游 Artifact 的语义错误可能沿 Pipeline 传递；
+- 固定完整团队对简单任务可能过重；
+- 角色没有协商和返工能力，Validator 失败后当前也不会自动让 Engineer 定向修复；
+- Context 传递虽然明确，但缺少统一 ContextEnvelope、Prompt 版本和输入 Artifact 引用记录。
+
+因此，V1 使用多角色的合理边界是：优先证明**产物可检查、阶段可恢复、错误可定位、权限可控制**。动态角色选择、局部并行和结构化返工属于后续演进，不能作为当前收益宣称。
+
+### 结论
+
+当前多 Agent 的核心价值是把一次黑箱生成改造成有职责、有 Contract、有检查点的交付链。各 Agent 的区别来自不同问题、不同输入、不同输出 Schema 和不同语义边界；Context 则由 Orchestrator 通过持久化 Artifact 定向传递，而不是由 Agent 共享一段不断增长的聊天历史。
+
+## 4. 动态任务图是怎么设计的？
+
+### 简短回答
+
+动态任务图属于 V2，当前 V1 尚未实现。它不是让 Leader 直接控制 Worker，而是分成四层：
+
+```text
+Leader Agent
+  -> 提交 TaskGraphProposal：建议有哪些任务、依赖谁、由哪个角色完成
+
+Orchestrator Runtime
+  -> 校验无环、角色权限、预算、审批、并发和写冲突
+
+Durable Scheduler
+  -> 持久化 Task，计算 Ready，预留预算，签发 lease
+
+Specialist Agent / Sandbox
+  -> 每次只执行一个 Task Contract，产出 Artifact + Evidence + Handoff
+```
+
+核心原则是：**Leader 有规划建议权，没有状态、预算、工具和发布的最终执行权。** 动态性来自任务和依赖可以随当前 Blueprint、Artifact 与 Evidence 改变，不来自放宽 Runtime 权限。
+
+### 4.1 为什么从固定 Pipeline 改成 TaskGraph
+
+V1 固定执行：
+
+```text
+Product Manager -> Architect -> Engineer -> Data Analyst -> Validator -> Reviewer
+```
+
+这种方式容易理解和恢复，但每个 team 请求都会经过完整角色链，也不能表达以下情况：
+
+- 简单任务只需要 Engineer 修改并重新验证；
+- Architect 与独立的数据准备没有依赖，可以局部并行；
+- Validator 发现实现问题后，应直接返工 Engineer，而不是重跑所有上游阶段；
+- 某个分支失败时，其他已经完成且仍有效的 Artifact 应继续保留。
+
+TaskGraph 要解决的是“当前真正需要做哪些任务，以及它们之间有什么依赖”，不是增加更多角色动画。
+
+### 4.2 任务图如何产生
+
+当前 V2 设计是两阶段收敛：
+
+1. 用户消息先由 Lead 判断 direct 或 team。
+2. team 请求先形成 Blueprint；`adapted`、范围变化或预算风险仍经过 Risk Policy。
+3. Leader 根据当前有效 Blueprint、已有 Artifact、运行状态和预算摘要提交 `TaskGraphProposal`。
+4. Runtime 校验 proposal；通过后才持久化为可执行 TaskGraph 和 AgentTask。
+5. 后续出现 Handoff Reject、Validation Evidence 或部分失败时，Leader可以提交重排、返工或仲裁建议；Runtime 再次校验后形成新的图版本或 Task attempt。
+
+Leader 不能直接把某个 Task 标成 Ready/Completed，也不能通过任务图自动批准范围变化、追加预算、执行越权 Tool 或 Publish。
+
+### 4.3 一个正常任务图的形态
+
+V2 设计中第一条允许验证的局部并行路径是：Architect 与 Data Analyst 的独立数据准备任务并行，Engineer 等待两者交付被接受后再执行。
+
+```text
+已确认 Blueprint
+       |
+       +--------------------+
+       |                    |
+       v                    v
+架构设计 Task          数据准备 Task
+Architect             Data Analyst
+       |                    |
+       v                    v
+ArchitectureSpec        DataProfile
+       |                    |
+       +---------+----------+
+                 |
+                 v
+             实现 Task
+             Engineer
+                 |
+                 v
+       Build / Test / Validation
+                 |
+                 v
+          结果复核 Task
+          Data Analyst
+                 |
+                 v
+        Git commit + ProjectVersion
+```
+
+只有数据准备确实不依赖最终 ArchitectureSpec 时才能并行。如果两个 Task 会修改同一份源码或同一个 Sandbox 基线，Runtime 必须拒绝并行。
+
+### 4.4 Runtime 如何判断 Task 可以执行
+
+一个 Task 不是被 Leader 点名后立即运行。设计要求同时满足：
+
+- 所有前置 Task 已完成；
+- 依赖的 Artifact/Handoff 已明确 Accepted；
+- Task 角色和 Tool 权限在 allowlist 内；
+- 精确绑定的 Approval 仍有效；
+- 父 RunBudget 和子任务预算已经原子预留；
+- 没有同一基线的并发写冲突；
+- 未超过账户、Run、角色、Worker 和 Sandbox 并发上限。
+
+满足后，状态按以下路径推进：
+
+```text
+Pending -> Ready -> Reserved -> Running -> Completed
+                    |            |          |
+                    v            v          `-> ReworkRequested
+                 Cancelled     Failed
+```
+
+Agent Worker 通过数据库 lease 领取 Ready Task。`lease + attempt + idempotency key` 用于避免 Worker 崩溃或重领后重复执行和重复结算。
+
+### 4.5 Context 和 Handoff 如何配合任务图
+
+每个 Task 有独立 Context，不继承完整团队聊天：
+
+```text
+Task Context
+  = role instruction + prompt version
+  + assigned Task Contract
+  + accepted input Artifact versions
+  + Evidence summary
+  + 本 Task 的 Tool observations
+  + task/run 剩余预算
+```
+
+任务之间只能通过持久化 Handoff 交接。Handoff 至少需要引用发送/接收 Task、Artifact、Evidence、Contract 版本、内容 hash 和接受状态。接收方只有明确 Accept 后，对应 Artifact 才能满足下游依赖；Reject 会生成 ReworkRequest，不会修改或删除上游 Artifact。
+
+### 4.6 动态返工怎样避免无限循环
+
+Validator 或下游 Agent 必须依据 Evidence 给出结构化根因：
+
+- `implementation` -> Engineer；
+- `architecture` / `data_contract` / `visual` / `interaction` -> Architect；
+- `requirements` / `scope` -> Product Manager，必要时请求用户；
+- `platform` -> Runtime 错误处理，不交给 Agent 猜测修复。
+
+返工创建新的 Task attempt 和 Artifact version，不原地覆盖旧结果。Runtime 通过总返工轮次、单 Artifact 修订次数、相同 Evidence 重复次数、Agent 调用数、token 预算和 deadline 强制收敛。连续返工没有实质变化或预算耗尽时停止，而不是让 Agent 继续互相退回。
+
+### 4.7 并行与部分失败如何处理
+
+并行不是每个分支各自读取余额后自行启动。Runtime 在启动 ready group 前锁定账户和 RunBudget，为全部子 Task 原子预留预算；任何一支无法预留时，整个并行组不启动，或者缩小并行范围。
+
+一支成功、一支失败时：
+
+- 成功 Artifact 保留为 Accepted 或 PendingMerge；
+- 已经发生的 Provider/Tool 用量照常结算；
+- 失败分支在子预算内重试，或生成 ReworkRequest；
+- 未开始的依赖任务取消并释放预算；
+- Leader 可以建议重排任务图，但不能删除成功事实来伪装整体回滚。
+
+这不是数据库事务意义上的“全部回滚”，而是有记录的部分失败与补偿。
+
+### 4.8 任务图与源码写入如何隔离
+
+- 每个 Engineer Task 从指定 base version 创建独立可写 Sandbox 快照；
+- ToolResult 先形成 PatchArtifact，不直接写主 Project 仓库；
+- Data Analyst 只读取对应快照，不能写入；
+- 多个写分支需要独立快照和 Merge Task；
+- 合并候选通过 Build、Test、安全和 mandatory Validation 后，Repository Service 才创建 Git commit 和 ProjectVersion。
+
+因此 TaskGraph 调度的是 Task、Artifact、Patch 和 Evidence，不是让多个 Agent 直接共享并发修改的工作目录。
+
+### 4.9 当前实现状态与尚未定义的部分
+
+当前代码仍只有 Run、阶段状态、BuildJob、Artifact 和 ProjectVersion，没有以下实现：
+
+- `TaskGraph` / `TaskGraphProposal` Pydantic Schema；
+- `task_graphs`、`agent_tasks`、`handoffs`、`run_budgets` 等数据库表；
+- Ready Task 计算、Task lease、任务级幂等和图版本；
+- 独立 Agent Worker、任务级 Sandbox 和 Patch merge；
+- 动态返工、仲裁、并行预算及对应 UI。
+
+现有 V2 文档已经确定控制权和状态语义，但**还没有确定字段级 TaskGraph Contract**。至少仍需明确：Task 节点字段、图版本与替换规则、Leader proposal 被拒绝后的确定性降级图、PM 首次 Blueprint 与后续图修订的边界，以及具体收敛数值。这些没有代码或运行数据支持，当前不能补设定成已定方案。
+
+### 结论
+
+动态任务图的设计本质是：Leader 根据当前项目事实提出一张有依赖的工作计划，Runtime 把它变成受预算、权限、审批、并发和恢复约束的持久化任务状态机。它允许角色子集、局部并行和定向返工，但不允许 Leader 绕过平台控制面。当前这是 V2 设计，不是已经落地的 V1 能力。
+
+## 5. Human-in-the-loop 应该怎么设计？
+
+### 简短回答
+
+Human-in-the-loop 采用**风险驱动确认**，不是固定在每个 Agent 阶段都让用户点一次 Approve。用户明确要求 Build/Modify，已经授权系统在已知范围和基础预算内完成受控工作；只有系统准备改变用户已知目标、增加成本、扩大权限、执行破坏性操作或改变线上状态时才暂停。
+
+核心流程是：
+
+```text
+Agent / Runtime 提出动作
+        |
+        v
+确定性 Risk Policy 判断
+        |-- 无新增风险 -> 自动继续
+        `-- 有新增风险 -> 创建精确 Approval Subject
+                              |
+                              v
+                       Run / Task 持久化暂停
+                              |
+                   用户查看影响并决定
+                    | approve | reject/edit
+                    v         v
+              Runtime CAS     保留事实并停止/重规划
+              校验后恢复
+```
+
+Agent 只能提出需要确认的事项，不能自己批准，也不能通过改写描述绕过 Risk Policy。
+
+### 5.1 哪些情况不需要再次确认
+
+- 用户已经明确要求创建、修改或修复应用；
+- Blueprint 为 `supported`，没有改变产品目标；
+- 调用量和 Tool 使用在基础预算与默认权限内；
+- 预览、读取文件、查看日志和确定性校验；
+- 在不改变已确认范围的前提下生成 Artifact；
+- 用户点击已经明确说明后果的 Save Version。
+
+这些动作属于用户已授权的正常路径。继续重复弹窗只会让 Approval 变成无信息量流程，并不能真正提高控制力。
+
+### 5.2 哪些情况必须暂停
+
+- **范围适配：** `support_level=adapted`，必须展示哪些能力被本地演示、替代或省略；
+- **关键澄清：** 无法判断用户是否要求执行，或缺少不能安全推断的输入；
+- **范围变化：** Follow-up、修复或返工将改变用户已确认 Blueprint；
+- **预算变化：** 超出基础调用、token、deadline 或 Tool 预算；
+- **权限扩大：** 新依赖、网络访问、Secret、超出角色 allowlist 的 Tool；
+- **破坏性源码操作：** 丢弃未提交修改、强制重置、删除 Project 等；
+- **版本指针变化：** Restore 会创建恢复版本并改变当前工作基线；
+- **公开状态变化：** Publish、Update、Unpublish；
+- **无法仲裁：** V2 中角色冲突无法在现有 Contract 内解决，而且选择会改变用户目标。
+
+`unsupported` 本身不是“批准后绕过能力限制”。原 Run 应停止；PM 可以生成保留原目标的可构建草案，用户确认或修改后创建新的 Run。
+
+### 5.3 用户确认的不是一句“同意”
+
+每个 Approval 必须绑定一个精确对象和后果：
+
+```text
+approval_id
+approval_type
+project_id / run_id / task_id?
+subject_type: artifact | budget | tool_request | worktree | version | deployment
+subject_id
+subject_version
+subject_hash
+risk_level
+effect_summary
+requested_by_stage
+decided_by_user_id
+status: pending | approved | rejected | cancelled | expired
+created_at / decided_at
+```
+
+界面至少应告诉用户：
+
+- 准备做什么；
+- 为什么正常授权不足以覆盖；
+- 会影响哪个需求、文件、版本、预算或公开地址；
+- 哪些能力会被删减或新增；
+- Approve、Reject、Edit/Adjust 各自会产生什么结果。
+
+Approval 不能只绑定 Run 的一个布尔值。Artifact、预算、Tool 参数、worktree hash 或目标版本发生变化后，旧批准必须失效。
+
+### 5.4 Runtime 如何暂停和恢复
+
+1. Risk Policy 命中风险后，先持久化 Approval、subject refs 和 `approval.required` Event。
+2. Run/Task 进入 `AwaitingRiskApproval`，不启动下游模型、Tool 或 Build Job，也不预占未获批准的新增预算。
+3. 页面刷新、SSE 重连或服务重启后，从数据库恢复 pending Approval，不能自动批准。
+4. 用户决定时，API 重新校验资源归属、subject version/hash、当前状态和 Approval 是否仍 pending。
+5. Approve 使用状态 CAS 抢占推进权，并在同一事务中写决定、预算预留或后续 Job；并发点击只能成功一次。
+6. 事务提交后再派发 Worker；Worker 只执行已经持久化的授权事实。
+7. subject 已变化时返回 stale/conflict，让用户查看新后果，不能把旧批准套到新对象上。
+
+### 5.5 Reject、Cancel 和 Edit 后发生什么
+
+- 保留用户输入、Artifact、Evidence、仓库、当前版本和 Approval 决定；
+- 不执行目标 Tool、破坏性操作或公开变更；
+- 不预占新的额度，已经发生的真实用量照常结算；
+- 如果用户编辑范围或预算，创建新 subject/Artifact 和新 Approval，不覆盖旧记录；
+- 可以继续在原 Contract 内工作时，Runtime/Leader 重新规划；无法继续时进入 NeedsInput、BudgetExhausted 或明确结束状态。
+
+拒绝不应把 Project 清空，也不应表现成构建系统错误。
+
+### 5.6 Approval 与显式操作的关系
+
+不是所有高影响动作都需要“按钮后再弹第二个确认框”。如果 Publish 或 Save Version 页面已经明确展示目标版本和后果，用户点击本身可以构成该对象的显式确认，并留下 Deployment/Version 命令记录。
+
+但以下情况仍适合二次确认：
+
+- 不可逆或难恢复的删除；
+- 会丢弃未保存源码的操作；
+- 当前页面无法完整展示影响范围；
+- subject 在用户查看后发生变化。
+
+判断标准不是操作名称，而是用户点击时是否已经知道精确对象和后果。
+
+### 5.7 V2 如何继承和扩展
+
+V2 保留 V1 的风险门禁，并增加：
+
+- `tool_request`：依赖、网络、Secret 或越权 Tool；
+- `budget_change`：并行、返工或 deadline 需要追加预算；
+- `arbitration`：角色冲突需要改变用户已确认目标；
+- `deployment`：Publish/Update/Unpublish。
+
+Leader 和 Specialist 只能提交结构化请求。Tool Gateway、Budget Service、Risk Policy 和 Deployment 状态机分别执行硬规则；Leader 不能因为认为“这样更好”而代用户确认。
+
+### 5.8 当前实现与目标设计的差距
+
+当前代码已经实现：
+
+- `supported` Blueprint 在基础路径自动继续；
+- `adapted` 进入 `awaiting_approval`；
+- Blueprint 确认使用 `awaiting_approval -> build_queued` 状态 CAS；
+- `Approval.run_id` 和 `BuildJob.run_id` 唯一约束防止重复排队；
+- API 校验当前用户拥有 Run；
+- `unsupported` 替代草案确认会创建新 Run；
+- Publish 由用户显式调用，不由 Agent 自动执行。
+
+但当前 `Approval` 表仍只有 `run_id / user_id / artifact_id / approved / payload`，尚未实现统一的 `subject_type / subject_version / subject_hash / risk_level / status` Contract。额外预算、ToolRequest、worktree、Restore、删除和 Deployment 也没有全部统一到同一 Risk Approval 状态机。因此“风险驱动原则”已经进入产品和部分代码，但通用 Approval 控制面尚未完整落地。
+
+### 5.9 设计收益与代价
+
+收益：
+
+- 正常 Golden Path 不被无意义确认打断；
+- 用户在真正改变范围、成本、权限和线上状态时拥有决定权；
+- Approval 可恢复、可审计、可防并发重复执行；
+- Agent 自主性增加时，Runtime 权限边界仍保持稳定。
+
+代价：
+
+- 必须为每类风险定义 subject、hash、失效和恢复语义；
+- UI 需要准确解释影响，不能只显示通用“是否继续”；
+- TaskGraph、预算、Tool 和发布各自状态变化都可能使旧 Approval 失效；
+- Risk Policy 漏判会越权，过度判定又会退化成固定 Gate，需要用真实事件持续校准。
+
+### 结论
+
+Human-in-the-loop 的目标不是让人审批每个 Agent 产物，而是让用户控制新增风险。正常受控工作在已有授权内自动推进；范围、预算、权限、破坏性操作和线上状态发生变化时，Runtime 用绑定精确对象的持久化 Approval 暂停并恢复。当前 V1 已实现 adapted Blueprint 的并发安全确认，但统一的多 subject Approval Contract 仍是设计目标，不应宣称已经完整完成。

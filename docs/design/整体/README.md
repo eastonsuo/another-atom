@@ -16,4 +16,4 @@
 
 ## 相关讨论
 
-- [Agent Runtime 边界与演进讨论](../../discussion/Agent讨论/2026-07-12-Agent-Runtime边界与演进讨论.md)
+- [Agent Runtime 边界与演进讨论](../V1/Agent设计/2026-07-12-Agent-Runtime边界与演进讨论.md)

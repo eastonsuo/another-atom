@@ -5,13 +5,12 @@
 - This project is developed by one person. By default, commit and push changes directly to `main`; create a separate branch or pull request only when the user explicitly asks for one.
 - Implement the project in V1 -> V2 order. V1 is the current implementation and acceptance baseline.
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
-- V1 uses a fixed sequential role pipeline: Product Manager -> Architect -> Engineer -> Data Analyst.
+- V1 uses a fixed sequential role pipeline: Product Manager -> Architect -> Engineer -> Data Analyst -> Reviewer. Runtime Validator remains a deterministic non-Agent stage between Data Analyst and Reviewer.
 - V2 autonomous multi-agent behavior is a planned implementation version after V1 acceptance; it is not implemented yet.
 - User requirements may describe any product goal. V1 implements the goal as a self-contained browser application using generated HTML/CSS/JavaScript. Preserve the product identity; do not convert games or tools into catalogs. Server-side auth, payments, persistent database writes, external services, native runtimes, and unrestricted package/Shell execution remain capability boundaries and must be marked adapted or unsupported.
 
 ## Documentation Governance
 
-- `docs/discussion/` stores unresolved, structured discussion: competing options, tradeoffs, current lean, and open questions. It is not a raw chat transcript and is not a design baseline. Discussion is not split by version because version ownership may itself be undecided; record `V1`, `V2`, `整体`, or `待定` in document metadata.
 - `docs/design/` is the normative, continuously maintained design source. Put product requirements, Agent contracts and runtime design, engineering architecture and deployment design, and other stable design/reference material there.
 - `docs/review/` records dated inspections, reflections, bugs, verification evidence, and milestone findings. A Review states what was checked and what was found; it does not become the long-term home of a solution design.
 - When a Review finds a problem that needs a dedicated solution, create or update the corresponding document under `docs/design/`, then link the Review finding and the design decision in both directions.
@@ -19,7 +18,6 @@
 - Design domain folders are `产品设计`, `Agent设计`, `工程设计`, and `参考资料`. Review domain folders are `产品评审`, `Agent评审`, `工程评审`, and `综合评审`. Classify by the main question the document answers, not by its author or temporary workflow stage.
 - Use Chinese directory names, file names, document titles, and prose by default. Keep English only for established technical names such as Agent, Runtime, Context, Sandbox, API, and Git. Dated Review files use `YYYY-MM-DD-中文短主题.md`.
 - Design documents may be revised as the baseline changes. Dated Review findings remain historical evidence; add a dated Update with code/test/deployment evidence instead of rewriting the original finding.
-- Discussion domain folders are `产品讨论`, `Agent讨论`, `工程讨论`, and `综合讨论`. When a discussion reaches a decision, mark it `已收敛`, link the resulting design document, and maintain the accepted Contract only under `docs/design/`.
 
 ## Evaluation Criteria
 

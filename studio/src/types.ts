@@ -66,7 +66,8 @@ export interface RunView {
     page_strategy: string[];
     data_entities: string[];
   } | null;
-  data_review: { summary: string; warnings: string[]; suggested_actions: string[] } | null;
+  data_profile: { summary: string; entities: string[]; insights: string[]; warnings: string[] } | null;
+  review_report: { summary: string; verdict: "accept" | "rework" | "needs_input"; warnings: string[]; suggested_actions: string[] } | null;
   build_job_id: string | null;
   version_id: string | null;
   error_code: string | null;

@@ -50,7 +50,7 @@
 当前已经具备：
 
 - ProjectSession 和 Run；
-- Blueprint、ArchitectureSpec、AppSpec、ValidationReport 和 DataReview；
+- Blueprint、ArchitectureSpec、AppSpec、DataProfile、ValidationReport 和 ReviewReport；
 - ProjectVersion 与 Git commit；
 - Project 文件查看；
 - Validator、Build Worker、SSE 和持久化 Event。

@@ -40,7 +40,7 @@ from another_atom.contracts.schemas import (
     Blueprint,
     BlueprintApproval,
     BuildStatus,
-    DataReview,
+    DataProfile,
     DeploymentView,
     EventView,
     HealthView,
@@ -56,6 +56,7 @@ from another_atom.contracts.schemas import (
     PublicationStrategy,
     PublishRequest,
     QuotaView,
+    ReviewReport,
     RevisionRequest,
     RewriteConfirmation,
     RunCreate,
@@ -153,6 +154,30 @@ def _artifact_model(db: Session, run_id: str, kind: ArtifactType, model):
     return model.model_validate(artifact.payload) if artifact else None
 
 
+def _coerce_review_report(payload: dict | None) -> ReviewReport | None:
+    if payload is None:
+        return None
+    if "verdict" in payload:
+        return ReviewReport.model_validate(payload)
+    return ReviewReport(
+        summary=str(payload.get("summary") or "Legacy review result"),
+        verdict="accept",
+        engineering_checks=list(payload.get("engineering_checks") or []),
+        data_findings=list(payload.get("data_checks") or []),
+        warnings=list(payload.get("warnings") or []),
+        suggested_actions=list(payload.get("suggested_actions") or ["accept"]),
+        reviewer_mode="deterministic_only",
+    )
+
+
+def _run_review_report(db: Session, run_id: str) -> ReviewReport | None:
+    artifact = get_artifact(db, run_id, ArtifactType.REVIEW_REPORT)
+    if artifact:
+        return ReviewReport.model_validate(artifact.payload)
+    legacy = get_artifact(db, run_id, ArtifactType.DATA_REVIEW)
+    return _coerce_review_report(legacy.payload if legacy else None)
+
+
 def _run_view(db: Session, run: Run) -> RunView:
     build_job = db.scalar(
         select(BuildJob)
@@ -179,10 +204,11 @@ def _run_view(db: Session, run: Run) -> RunView:
             db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
         ),
         app_spec=_artifact_model(db, run.id, ArtifactType.APP_SPEC, AppSpec),
+        data_profile=_artifact_model(db, run.id, ArtifactType.DATA_PROFILE, DataProfile),
         validation_report=_artifact_model(
             db, run.id, ArtifactType.VALIDATION_REPORT, ValidationReport
         ),
-        data_review=_artifact_model(db, run.id, ArtifactType.DATA_REVIEW, DataReview),
+        review_report=_run_review_report(db, run.id),
         build_job_id=build_job.id if build_job else None,
         version_id=version.id if version else None,
         error_code=run.error_code,
@@ -589,9 +615,7 @@ def confirm_alternative_blueprint(
 ) -> RunView:
     source_run = _owned_run(db, run_id, user.id)
     if source_run.status != RunStatus.NEEDS_INPUT.value:
-        raise AppError(
-            "ALTERNATIVE_NOT_ALLOWED", "This run is not waiting for an alternative", 409
-        )
+        raise AppError("ALTERNATIVE_NOT_ALLOWED", "This run is not waiting for an alternative", 409)
     source_artifact = get_artifact(db, source_run.id, ArtifactType.BLUEPRINT)
     if source_artifact is None:
         raise AppError("MISSING_INPUT", "Source Blueprint could not be loaded", 409)
@@ -939,8 +963,10 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
+    ArtifactType.DATA_PROFILE: ".another-atom/generated/data-profile.json",
     ArtifactType.VALIDATION_REPORT: ".another-atom/generated/validation-report.json",
-    ArtifactType.DATA_REVIEW: ".another-atom/generated/data-review.json",
+    ArtifactType.REVIEW_REPORT: ".another-atom/generated/review-report.json",
+    ArtifactType.DATA_REVIEW: ".another-atom/generated/legacy-data-review.json",
 }
 
 
@@ -1011,7 +1037,11 @@ def get_project_file_content(
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Project Run was not found", 404)
     artifact_type = next(
-        (artifact_type for artifact_type, file_path in _ARTIFACT_FILE_PATHS.items() if file_path == path),
+        (
+            artifact_type
+            for artifact_type, file_path in _ARTIFACT_FILE_PATHS.items()
+            if file_path == path
+        ),
         None,
     )
     if artifact_type is None:
@@ -1110,8 +1140,13 @@ def revise_project(
     )
     if not validation.passed:
         raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
-    data_review = DataReview.model_validate(current.data_review).model_copy(
-        update={"engineering_checks": [check.label for check in validation.checks]}
+    review_report = _coerce_review_report(current.review_report)
+    assert review_report is not None
+    review_report = review_report.model_copy(
+        update={
+            "engineering_checks": [check.label for check in validation.checks],
+            "reviewer_mode": "deterministic_only",
+        }
     )
     latest_number = db.scalar(
         select(func.max(ProjectVersion.version_number)).where(
@@ -1124,8 +1159,9 @@ def revise_project(
         version_number=(latest_number or 0) + 1,
         source=VersionSource.EDIT.value,
         app_spec=app_spec.model_dump(mode="json"),
+        data_profile=current.data_profile,
         validation_report=validation.model_dump(mode="json"),
-        data_review=data_review.model_dump(mode="json"),
+        review_report=review_report.model_dump(mode="json"),
     )
     db.add(version)
     db.flush()
@@ -1185,8 +1221,9 @@ def restore_version(
         version_number=(latest_number or 0) + 1,
         source=VersionSource.RESTORE.value,
         app_spec=source_version.app_spec,
+        data_profile=source_version.data_profile,
         validation_report=validation.model_dump(mode="json"),
-        data_review=source_version.data_review,
+        review_report=source_version.review_report,
     )
     db.add(restored)
     db.flush()
@@ -1527,8 +1564,9 @@ def save_project_sandbox(
             version_number=(latest_number or 0) + 1,
             source=VersionSource.EDIT.value,
             app_spec=app_spec.model_dump(mode="json"),
+            data_profile=current.data_profile,
             validation_report=validation.model_dump(mode="json"),
-            data_review=current.data_review,
+            review_report=current.review_report,
         )
         db.add(version)
         db.flush()

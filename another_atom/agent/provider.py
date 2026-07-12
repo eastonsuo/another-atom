@@ -12,12 +12,15 @@ from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
     Blueprint,
-    DataReview,
+    DataCheck,
+    DataProfile,
     LeadDecision,
     LeadRoute,
     Mode,
     PageSpec,
     ProductItem,
+    ReviewIssue,
+    ReviewReport,
     SupportLevel,
     ValidationReport,
 )
@@ -89,9 +92,23 @@ class LLMProvider(Protocol):
         self, blueprint: Blueprint, architecture_spec: ArchitectureSpec, prompt: str
     ) -> AppSpec: ...
 
-    def analyze(
-        self, app_spec: AppSpec, validation_report: ValidationReport, prompt: str
-    ) -> DataReview: ...
+    def analyze_data(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        prompt: str,
+    ) -> DataProfile: ...
+
+    def review(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        data_profile: DataProfile,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> ReviewReport: ...
 
 
 class MockLLMProvider:
@@ -177,7 +194,9 @@ class MockLLMProvider:
             term in normalized
             for term in ("catalog", "storefront", "shop", "store", "商品目录", "商品站", "商店")
         )
-        product_type = "web_game" if is_game else "product_catalog" if is_catalog else "web_application"
+        product_type = (
+            "web_game" if is_game else "product_catalog" if is_catalog else "web_application"
+        )
         omitted = (
             ["Server-side authentication, payment, and persistent backend writes are excluded"]
             if support_level == SupportLevel.ADAPTED
@@ -216,7 +235,9 @@ class MockLLMProvider:
             support_reasons=[self._support_reason(support_level)],
             mapped_requirements=mapped,
             omitted_requirements=omitted,
-            rewrite_suggestion=(self._web_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None),
+            rewrite_suggestion=(
+                self._web_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None
+            ),
             capability_policy_version="web-v1",
             pages=pages,
             modules=modules,
@@ -279,7 +300,9 @@ class MockLLMProvider:
                 primary_color=architecture_spec.primary_color,
                 accent_color=architecture_spec.accent_color,
                 background_color=architecture_spec.background_color,
-                pages=[PageSpec(route="/", name="Game", sections=["status", "minefield", "controls"])],
+                pages=[
+                    PageSpec(route="/", name="Game", sections=["status", "minefield", "controls"])
+                ],
                 html=html,
                 css=css,
                 javascript=javascript,
@@ -298,7 +321,10 @@ class MockLLMProvider:
                     PageSpec(
                         route="/",
                         name=blueprint.pages[0],
-                        sections=[module.casefold().replace(" ", "-")[:40] for module in blueprint.modules[:6]],
+                        sections=[
+                            module.casefold().replace(" ", "-")[:40]
+                            for module in blueprint.modules[:6]
+                        ],
                     )
                 ],
                 html=html,
@@ -328,34 +354,104 @@ class MockLLMProvider:
             products=self._products(),
         )
 
-    def analyze(
-        self, app_spec: AppSpec, validation_report: ValidationReport, prompt: str
-    ) -> DataReview:
+    def analyze_data(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        prompt: str,
+    ) -> DataProfile:
         self._record_request()
         self._raise_if_requested(prompt, "data-provider")
         forced_warning = "[fail:data]" in prompt.lower()
-        warnings = [
-            check.detail or check.label
-            for check in validation_report.checks
-            if check.status != "pass"
-        ]
+        warnings: list[str] = []
         if forced_warning:
-            warnings.append(
-                "Mock Data review requested a degraded completion for acceptance testing"
-            )
-        return DataReview(
-            summary=(
-                f"Analyzed {app_spec.project_name}: deterministic checks "
-                f"{'passed' if validation_report.passed else 'found blocking issues'}."
-            ),
-            data_checks=(
-                ["Product identifiers are unique", "Catalog data is complete"]
-                if app_spec.products
-                else ["Application state is local", "Interactive controls have visible feedback"]
-            ),
-            engineering_checks=[check.label for check in validation_report.checks],
+            warnings.append("Mock Data Analyst warning requested for acceptance testing")
+        if app_spec.products:
+            identifiers = [item.id for item in app_spec.products]
+            checks = [
+                DataCheck(
+                    check_id="unique-record-identifiers",
+                    label="Product identifiers are unique",
+                    status="pass" if len(identifiers) == len(set(identifiers)) else "warning",
+                    detail="Checked product records emitted by AppSpec.",
+                ),
+                DataCheck(
+                    check_id="catalog-record-completeness",
+                    label="Catalog records contain the required display fields",
+                    status="pass",
+                    detail="Name, category, price, description, and image fields are populated.",
+                ),
+            ]
+            sources = ["AppSpec.products"]
+            entities = sorted({item.category for item in app_spec.products})
+            insights = [
+                f"{len(app_spec.products)} product records across {len(entities)} categories"
+            ]
+        else:
+            checks = [
+                DataCheck(
+                    check_id="structured-dataset-not-required",
+                    label="No standalone structured dataset is required",
+                    status="not_applicable",
+                    detail="The application uses local browser state rather than catalog records.",
+                )
+            ]
+            sources = ["AppSpec local browser state"]
+            entities = architecture_spec.data_entities
+            insights = ["Application state remains local to the browser preview"]
+        return DataProfile(
+            summary=f"Analyzed the data model and local content for {blueprint.project_name}.",
+            sources=sources,
+            entities=entities,
+            checks=checks,
+            insights=insights,
             warnings=warnings,
-            suggested_actions=["edit"] if warnings else ["accept"],
+        )
+
+    def review(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        data_profile: DataProfile,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> ReviewReport:
+        self._record_request()
+        self._raise_if_requested(prompt, "reviewer-provider")
+        forced_rework = "[review:rework]" in prompt.lower()
+        failed_checks = [check for check in validation_report.checks if check.status == "fail"]
+        issues = [
+            ReviewIssue(
+                severity="blocker",
+                root_cause="implementation",
+                summary=check.detail or check.label,
+                evidence_refs=[f"validation:{check.check_id}"],
+            )
+            for check in failed_checks
+        ]
+        if forced_rework:
+            issues.append(
+                ReviewIssue(
+                    severity="blocker",
+                    root_cause="implementation",
+                    summary="Mock Reviewer requested rework for acceptance testing",
+                    evidence_refs=["reviewer:forced-rework"],
+                )
+            )
+        warnings = list(data_profile.warnings)
+        verdict = "rework" if issues else "accept"
+        return ReviewReport(
+            summary=f"Reviewed {app_spec.project_name} against the accepted product and engineering evidence.",
+            verdict=verdict,
+            requirement_checks=[f"Page covered: {page}" for page in blueprint.pages]
+            + [f"Module covered: {module}" for module in blueprint.modules],
+            engineering_checks=[check.label for check in validation_report.checks],
+            data_findings=data_profile.insights,
+            issues=issues,
+            warnings=warnings,
+            suggested_actions=["resolve"] if issues else (["edit"] if warnings else ["accept"]),
         )
 
     @staticmethod
@@ -420,7 +516,7 @@ class MockLLMProvider:
             '<button id="reset">Reset demo state</button></aside><section class="workspace">'
             '<header><div><strong>Workspace</strong><span id="status">Ready</span></div></header>'
             f'<div class="tool-grid">{modules}</div><article id="detail"><h2>Select a feature</h2>'
-            '<p>The generated interface keeps all demo state inside this browser preview.</p></article>'
+            "<p>The generated interface keeps all demo state inside this browser preview.</p></article>"
             "</section></main>"
         )
         css = """:root{font-family:Inter,system-ui,sans-serif;color:#17152b;background:#fff7de}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(#ded7ff 1px,transparent 1px);background-size:20px 20px}.app-shell{min-height:100vh;display:grid;grid-template-columns:minmax(220px,300px) 1fr}aside{padding:36px 28px;border-right:3px solid #17152b;background:#e8f8f1}h1{font-size:clamp(34px,5vw,64px);line-height:.95;margin:8px 0 16px}.eyebrow{font-size:11px;font-weight:900;letter-spacing:.12em;color:#d94f45}p{color:#625d72;line-height:1.6}button{font:inherit}.tool,#reset{border:2px solid #17152b;border-radius:9px;box-shadow:3px 3px 0 #17152b;cursor:pointer}#reset{margin-top:20px;padding:10px 12px;background:#ffd45c;font-weight:800}.workspace{padding:28px}.workspace header{display:flex;justify-content:space-between;padding:16px;border:2px solid #17152b;border-radius:10px;background:#fff}.workspace header div{display:flex;justify-content:space-between;width:100%}.tool-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:20px 0}.tool{min-height:110px;padding:18px;display:flex;flex-direction:column;justify-content:space-between;align-items:start;background:#ded7ff;text-align:left}.tool.active{background:#ff6f61}#detail{min-height:220px;padding:24px;border:2px solid #17152b;border-radius:12px;background:#fff;box-shadow:5px 5px 0 #17152b}@media(max-width:720px){.app-shell{grid-template-columns:1fr}aside{border-right:0;border-bottom:3px solid #17152b}.workspace{padding:16px}}"""
@@ -520,7 +616,7 @@ class OllamaCloudProvider:
                 "create, generate, revise, or restore a product. Use direct for questions, "
                 "clarification, capability discussion, or ambiguous intent. Direct must not claim "
                 "that files or a Project were created. Team invokes the complete fixed Product "
-                "Manager, Architect, Engineer, and Data Analyst pipeline."
+                "Manager, Architect, Engineer, Data Analyst, and Reviewer pipeline."
             ),
             {"message": message},
             timeout_seconds=self.lead_timeout,
@@ -590,20 +686,55 @@ class OllamaCloudProvider:
             },
         )
 
-    def analyze(
-        self, app_spec: AppSpec, validation_report: ValidationReport, prompt: str
-    ) -> DataReview:
+    def analyze_data(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        prompt: str,
+    ) -> DataProfile:
         return self._structured_chat(
-            DataReview,
+            DataProfile,
             "Data Analyst",
             (
-                "Analyze application state/content completeness and summarize the immutable engineering "
-                "validation. You cannot change failed checks to pass. Separate data_checks from "
-                "engineering_checks."
+                "Analyze the application's actual structured data, local state model, content records, "
+                "data quality, and useful data findings. Do not perform code review or decide whether "
+                "engineering validation passes. Use not_applicable when the application has no standalone "
+                "dataset, and keep findings grounded in the supplied contracts."
             ),
             {
                 "request": prompt,
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
                 "app_spec": app_spec.model_dump(mode="json"),
+            },
+        )
+
+    def review(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        data_profile: DataProfile,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> ReviewReport:
+        return self._structured_chat(
+            ReviewReport,
+            "Reviewer",
+            (
+                "Independently review whether the implementation covers the accepted Blueprint and "
+                "ArchitectureSpec, using the immutable ValidationReport and DataProfile as evidence. "
+                "You cannot change failed checks to pass. Return rework for unresolved blockers, "
+                "needs_input only when user intent is genuinely required, otherwise accept with any "
+                "non-blocking warnings. Every issue must cite an evidence reference."
+            ),
+            {
+                "request": prompt,
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
+                "app_spec": app_spec.model_dump(mode="json"),
+                "data_profile": data_profile.model_dump(mode="json"),
                 "validation_report": validation_report.model_dump(mode="json"),
             },
         )
@@ -728,9 +859,7 @@ class OllamaCloudProvider:
                     "temperature": 0.2,
                 }
                 if think is not None:
-                    request_body["thinking"] = {
-                        "type": "enabled" if think else "disabled"
-                    }
+                    request_body["thinking"] = {"type": "enabled" if think else "disabled"}
                 response = httpx.post(
                     f"{self.deepseek_host}/chat/completions",
                     headers={"Authorization": f"Bearer {self.deepseek_api_key}"},

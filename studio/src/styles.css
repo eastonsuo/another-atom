@@ -270,7 +270,8 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .role-leader { --avatar-color: var(--sky); }.role-product { --avatar-color: var(--coral); }
 .role-architect { --avatar-color: var(--yellow); }.role-engineer { --avatar-color: var(--mint); }
 .role-data { --avatar-color: var(--violet); }
-.role-user { --avatar-color: #fff; }.role-renderer { --avatar-color: var(--sky); }
+.role-reviewer { --avatar-color: var(--coral); }
+.role-user { --avatar-color: #fff; }.role-renderer, .role-validator { --avatar-color: var(--sky); }
 .avatar-small { width: 34px; height: 34px; box-shadow: 1px 2px 0 var(--ink); }
 .avatar-large { width: 58px; height: 58px; }.avatar-hero { width: 108px; height: 108px; border-width: 3px; box-shadow: 6px 7px 0 var(--ink); }
 .role-avatar > b { position: absolute; bottom: -7px; z-index: 5; min-width: 24px; padding: 2px 4px; border: 1.5px solid var(--ink); border-radius: 4px; background: #fff; font: 700 8px "Fredoka", sans-serif; }
@@ -285,6 +286,7 @@ button, input, textarea { font-family: "Nunito", Arial, sans-serif; }
 .role-leader::after { content: "★"; position: absolute; top: -10px; color: var(--yellow); font-size: 17px; text-shadow: 1px 1px 0 var(--ink); }
 .role-architect::after { content: "✦"; position: absolute; top: -9px; right: -7px; color: var(--coral); font-size: 18px; text-shadow: 1px 1px 0 var(--ink); }
 .role-data .role-face { border-radius: 45% 45% 55% 55%; }.role-data::after { content: "▥"; position: absolute; top: -7px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 4px; background: #fff; font-size: 10px; font-weight: 900; }
+.role-reviewer .role-face { border-radius: 50%; }.role-reviewer::after { content: "✓"; position: absolute; top: -7px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 50%; background: #fff; font-size: 10px; font-weight: 900; }
 
 .composer-box {
   border: 2px solid var(--ink);

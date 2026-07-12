@@ -52,7 +52,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语
 ### 多智能体协作
 
 - **[单一入口]** 用户主要与 Lead 对话，不需要先理解内部角色、模式和流程。
-- **[专业分工]** Product Manager、Architect、Engineer、Data Analyst 分别处理需求、结构、实现和验证；角色价值由交付结果证明，不靠头像或对话表演。
+- **[专业分工]** Product Manager、Architect、Engineer、Data Analyst、Reviewer 分别处理需求、结构、实现、数据和独立审查；确定性 Validator 提供不可由 Agent 改写的工程证据。
 - **[按任务演进]** 简单任务应走短路径，复杂任务再调用更多角色、工具和返工；多智能体的目的不是增加 Agent 数量，而是降低不同类型的不确定性。
 - **[用户介入]** 用户可以查看、修改和确认关键方案；系统只在范围、预算、破坏性操作和发布等真实风险处停下。
 
@@ -119,7 +119,7 @@ Project 是需求、Agent 产物、代码仓库、预览、版本和发布状态
 
 ### 【多智能体协作】角色通过产物交接，不进行角色扮演
 
-Lead 是用户入口；Product Manager、Architect、Engineer、Data Analyst 等专业角色处理不同问题。角色价值由 Blueprint、架构、源码、校验和数据解读等可查看结果证明，不由头像数量或对话长度证明。
+Lead 是用户入口；Product Manager、Architect、Engineer、Data Analyst、Reviewer 分别处理产品、架构、代码、数据和独立审查。角色价值由 Blueprint、架构、源码、DataProfile、确定性校验和 ReviewReport 证明，不由头像数量或对话长度证明。
 
 ### 【Context 交接】角色只接收当前任务需要的信息
 
@@ -213,8 +213,8 @@ Studio / Preview / 文件与终端界面
                工具请求（ToolRequest）-> 隔离环境（Sandbox）
                               |
                               v
-                 校验 + 执行证据 + 数据解读
-          （Validation + Evidence + DataReview）
+              数据分析 + 校验 + 独立审查
+       （DataProfile + Validation + ReviewReport）
                               |
                               v
                  Git 提交 + 项目版本（ProjectVersion）
@@ -327,9 +327,9 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 
 ## 文档导航
 
+- **完整知识库：** [项目完整设计知识库](./PROJECT_KNOWLEDGE_BASE.md)
 - **整体产品：** [整体产品目标与定位](./docs/design/整体/产品设计/整体产品目标与定位.md)
 - **设计：** [设计文档规范与索引](./docs/design/README.md)
-- **讨论：** [未决讨论规范与索引](./docs/discussion/README.md)
 - **Review：** [检查、反思与 Bug 索引](./docs/review/README.md)
 - **部署：** [本地运行与 Railway 部署说明](./docs/design/V1/工程设计/本地运行与Railway部署.md)
 - **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/参考资料/Atoms参考产品分析.md)

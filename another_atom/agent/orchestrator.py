@@ -13,9 +13,10 @@ from another_atom.contracts.schemas import (
     ArtifactType,
     Blueprint,
     BuildStatus,
-    DataReview,
+    DataProfile,
     Mode,
     ProjectStatus,
+    ReviewReport,
     RunStatus,
     SupportLevel,
     ValidationReport,
@@ -62,6 +63,7 @@ class Orchestrator:
             RunStatus.ENGINEER_RUNNING.value,
             RunStatus.BUILDING.value,
             RunStatus.DATA_RUNNING.value,
+            RunStatus.REVIEW_RUNNING.value,
             RunStatus.COMPLETED.value,
             RunStatus.COMPLETED_DEGRADED.value,
             RunStatus.FAILED.value,
@@ -93,12 +95,15 @@ class Orchestrator:
                 Blueprint,
                 lambda: self._provider(run).create_blueprint(run.prompt, Mode(run.mode)),
             )
-            regenerate_only = self.db.scalar(
-                select(RunEvent.id).where(
-                    RunEvent.run_id == run.id,
-                    RunEvent.event_type == "alternative.regeneration_requested",
+            regenerate_only = (
+                self.db.scalar(
+                    select(RunEvent.id).where(
+                        RunEvent.run_id == run.id,
+                        RunEvent.event_type == "alternative.regeneration_requested",
+                    )
                 )
-            ) is not None
+                is not None
+            )
             if regenerate_only:
                 if blueprint.rewrite_suggestion:
                     draft = blueprint.rewrite_suggestion
@@ -111,7 +116,8 @@ class Orchestrator:
                 else:
                     draft = (
                         f"Build {blueprint.project_name} as a {blueprint.product_type}. "
-                        f"Screens: {', '.join(blueprint.pages)}. Features: {', '.join(blueprint.modules)}. "
+                        f"Screens: {', '.join(blueprint.pages)}. "
+                        f"Features: {', '.join(blueprint.modules)}. "
                         f"Visual direction: {blueprint.visual_direction}."
                     )
                 blueprint = blueprint.model_copy(
@@ -224,6 +230,7 @@ class Orchestrator:
             RunStatus.ENGINEER_RUNNING.value,
             RunStatus.BUILDING.value,
             RunStatus.DATA_RUNNING.value,
+            RunStatus.REVIEW_RUNNING.value,
         }:
             return
         project = self.db.get(Project, run.project_id)
@@ -252,6 +259,7 @@ class Orchestrator:
                     ),
                 )
             app_spec = self._run_engineer(run, blueprint, architecture_spec)
+            data_profile = self._run_data(run, blueprint, architecture_spec, app_spec)
             validation_report, build_job = self._run_build(
                 run, project, blueprint, architecture_spec, app_spec
             )
@@ -265,19 +273,38 @@ class Orchestrator:
                 )
                 return
 
-            data_review = self._run_data(run, app_spec, validation_report)
+            review_report = self._run_reviewer(
+                run,
+                blueprint,
+                architecture_spec,
+                app_spec,
+                data_profile,
+                validation_report,
+            )
+            if review_report.verdict != "accept" or any(
+                issue.severity == "blocker" for issue in review_report.issues
+            ):
+                build_job.status = BuildStatus.FAILED.value
+                build_job.error_message = "Reviewer requested rework or user input"
+                self._fail_run(
+                    run,
+                    "REVIEW_REJECTED",
+                    "The independent Reviewer found unresolved issues",
+                )
+                return
             version = self._create_version(
                 run,
                 project,
                 app_spec,
+                data_profile.model_dump(mode="json"),
                 validation_report.model_dump(mode="json"),
-                data_review.model_dump(mode="json"),
+                review_report.model_dump(mode="json"),
                 VersionSource.BUILD,
             )
             build_job.status = BuildStatus.SUCCEEDED.value
             run.status = (
                 RunStatus.COMPLETED_DEGRADED.value
-                if data_review.warnings
+                if data_profile.warnings or review_report.warnings
                 else RunStatus.COMPLETED.value
             )
             run.current_stage = "complete"
@@ -432,39 +459,96 @@ class Orchestrator:
         self.db.commit()
         return validation_report, build_job
 
-    def _run_data(self, run: Run, app_spec: AppSpec, validation_report):
+    def _run_data(
+        self,
+        run: Run,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+    ) -> DataProfile:
         run.status = RunStatus.DATA_RUNNING.value
         run.current_stage = "data"
         self._record_event_once(
             run,
             "stage.started",
-            "Data Analyst is checking application state and validation evidence",
+            "Data Analyst is analyzing application data and local state",
             "data",
         )
-        data_review, artifact, _ = self._run_agent_stage(
+        data_profile, artifact, _ = self._run_agent_stage(
             run,
             "data",
-            ArtifactType.DATA_REVIEW,
-            DataReview,
-            lambda: self._provider(run).analyze(app_spec, validation_report, run.prompt),
+            ArtifactType.DATA_PROFILE,
+            DataProfile,
+            lambda: self._provider(run).analyze_data(
+                blueprint,
+                architecture_spec,
+                app_spec,
+                run.prompt,
+            ),
         )
         self._record_event_once(
             run,
             "stage.completed",
-            "DataReview is ready",
+            "DataProfile is ready",
             "data",
-            {"artifact_id": artifact.id, "warnings": len(data_review.warnings)},
+            {"artifact_id": artifact.id, "warnings": len(data_profile.warnings)},
         )
         self.db.commit()
-        return data_review
+        return data_profile
+
+    def _run_reviewer(
+        self,
+        run: Run,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        data_profile: DataProfile,
+        validation_report: ValidationReport,
+    ) -> ReviewReport:
+        run.status = RunStatus.REVIEW_RUNNING.value
+        run.current_stage = "reviewer"
+        self._record_event_once(
+            run,
+            "stage.started",
+            "Reviewer is checking requirement coverage and immutable evidence",
+            "reviewer",
+        )
+        review_report, artifact, _ = self._run_agent_stage(
+            run,
+            "reviewer",
+            ArtifactType.REVIEW_REPORT,
+            ReviewReport,
+            lambda: self._provider(run).review(
+                blueprint,
+                architecture_spec,
+                app_spec,
+                data_profile,
+                validation_report,
+                run.prompt,
+            ),
+        )
+        self._record_event_once(
+            run,
+            "stage.completed",
+            "ReviewReport is ready",
+            "reviewer",
+            {
+                "artifact_id": artifact.id,
+                "verdict": review_report.verdict,
+                "warnings": len(review_report.warnings),
+            },
+        )
+        self.db.commit()
+        return review_report
 
     def _create_version(
         self,
         run: Run,
         project: Project,
         app_spec: AppSpec,
+        data_profile: dict,
         validation_report: dict,
-        data_review: dict,
+        review_report: dict,
         source: VersionSource,
     ) -> ProjectVersion:
         if source == VersionSource.BUILD:
@@ -488,8 +572,9 @@ class Orchestrator:
             version_number=(latest_number or 0) + 1,
             source=source.value,
             app_spec=app_spec.model_dump(mode="json"),
+            data_profile=data_profile,
             validation_report=validation_report,
-            data_review=data_review,
+            review_report=review_report,
         )
         self.db.add(version)
         self.db.flush()

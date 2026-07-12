@@ -172,7 +172,9 @@ def _validate_web_code_app(
             status="fail" if forbidden else "pass",
             root_cause="app_spec",
             resolvable=True,
-            detail=("Forbidden browser capabilities: " + ", ".join(forbidden) if forbidden else None),
+            detail=(
+                "Forbidden browser capabilities: " + ", ".join(forbidden) if forbidden else None
+            ),
         ),
         ValidationCheck(
             check_id="visual-tokens",
@@ -193,7 +195,11 @@ def _validate_web_code_app(
                 status="fail" if missing_pages else "pass",
                 root_cause="app_spec",
                 resolvable=True,
-                detail=(f"Missing Blueprint screens: {', '.join(missing_pages)}" if missing_pages else None),
+                detail=(
+                    f"Missing Blueprint screens: {', '.join(missing_pages)}"
+                    if missing_pages
+                    else None
+                ),
             )
         )
         checks.append(
@@ -280,11 +286,12 @@ def _ensure_contrast(color: str, background: str, minimum: float) -> str:
     return "#FFFFFF" if lighten else "#000000"
 
 
-def _distinct_contrast_color(
-    background: str, minimum: float, excluded: set[str]
-) -> str:
+def _distinct_contrast_color(background: str, minimum: float, excluded: set[str]) -> str:
     for candidate in ("#000000", "#FFFFFF", "#003366", "#5A2400", "#FFD166"):
-        if candidate.casefold() not in excluded and _contrast_ratio(candidate, background) >= minimum:
+        if (
+            candidate.casefold() not in excluded
+            and _contrast_ratio(candidate, background) >= minimum
+        ):
             return candidate
     return "#000000"
 

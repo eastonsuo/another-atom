@@ -239,7 +239,7 @@ def test_mid_pipeline_recovery_reuses_completed_stage_artifacts(
             )
         )
         assert run.status == "completed"
-        assert run.quota_spent == 4
+        assert run.quota_spent == 5
         assert job.attempt == 2
         assert architect_settles == 1
         assert (
