@@ -1,9 +1,9 @@
-# Another Atom V1 Agent 设计
+# Another Atom V1 多角色 Agent 设计
 
 [toc]
 
 - 文档状态：V1 实施基线
-- 更新日期：2026-07-11
+- 更新日期：2026-07-13
 - 产品文档：[Another Atom V1 产品需求文档](../产品设计/产品需求.md)
 - 工程架构：[Another Atom V1 架构设计](../工程设计/架构设计.md)
 - 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/V1/综合评审/2026-07-12-关键设计与实现检查.md)
@@ -29,7 +29,7 @@ Lead Agent -> LeadDecision(route=direct|team)
              Runtime Build / Validator -> Data Analyst
 ```
 
-三种范式的区别：
+四种范式的区别：
 
 | 范式 | V1 是否采用 | 原因 |
 | --- | --- | --- |
@@ -38,61 +38,174 @@ Lead Agent -> LeadDecision(route=direct|team)
 | Lead 二选一路由 | 是 | Lead 只决定直接回答/澄清，或调用完整固定团队；用户可以覆盖为“调用团队” |
 | Contract-first Plan -> Execute -> Validate | 是 | 团队产生显式产物，平台按固定状态机执行，Validator 决定确定性结果 |
 
-这里的 “Plan” 不是一次生成完整任务图，而是 Blueprint、ArchitectureSpec、AppSpec 逐层收敛；“Execute” 由平台完成；“Validate” 先由确定性 Validator 执行，再由 Data Analyst Agent 解释。
+V1 把一次构建拆成三个边界清楚的步骤：
+
+- **[Plan｜逐步明确做什么]** Product Manager 先用 Blueprint 定义产品范围，Architect 再用 ArchitectureSpec 明确页面、状态和视觉约束，Engineer 最后用 AppSpec 给出可执行源码。它不是由 Lead 一次生成完整任务图，而是三个专业角色逐层把需求收敛成代码。
+- **[Execute｜平台执行已确认方案]** Agent 只提交结构化产物，不直接运行 Shell、修改宿主文件或发布。Runtime 负责保存 Artifact、写入 Project 源码、创建 Build Job，并在受控环境中完成构建。
+- **[Validate｜工程证据先于 Agent 解释]** 确定性 Validator 先检查源码、页面交接、能力边界和视觉约束，产生不可由模型改写的 ValidationReport；只有检查通过后，Data Analyst 才解释结果并提出下一步建议，不能把失败改成成功。
 
 ## 2. V1 角色与 Contract
 
-### 2.1 Lead 与固定团队
+本节以当前 [Pydantic Schema](../../../../another_atom/contracts/schemas.py) 和 [Provider 接口](../../../../another_atom/agent/provider.py) 为硬 Contract。字段长度、枚举和数量限制来自代码；角色应做什么、不得做什么属于语义约束，由 Prompt、Orchestrator、Risk Policy 和 Validator 共同执行。
 
-| 角色 | 输入上下文 | 结构化输出 | 可决定 | 不可决定 |
+### 2.1 固定团队总览
+
+| 角色/阶段 | 要回答的核心问题 | 当前实际输入 | 结构化输出 | 持久化位置 |
 | --- | --- | --- | --- | --- |
-| Lead | 用户消息、当前 Project 摘要、能力边界、基础预算 | `LeadDecision`、直接回复或团队摘要 | `direct` / `team` 二选一路由；direct 内回答或提出澄清 | 不自由挑选角色，不创建动态任务图，不执行 Tool，不代替专业角色生成 Contract，不发布 |
-| Product Manager | Prompt、附件元数据、Web Runtime 能力范围 | `Blueprint`；unsupported 时包含可确认的 `rewrite_suggestion` | 保留原始产品目标，补全页面、交互、状态和视觉；判断浏览器能力是否足够 | 不确认 Blueprint，不创建 Build Job，不把游戏、工具或看板改成商品目录 |
-| Architect | 当前 Blueprint、Web Runtime Capability Contract | `ArchitectureSpec` | 页面策略、状态实体、布局、视觉和交互约束 | 不擅自改变产品目标，不虚构后端或原生能力 |
-| Engineer | Blueprint、ArchitectureSpec、Web Code Contract | 包含 HTML/CSS/JavaScript 的 `AppSpec` | 生成自包含浏览器源码和页面元数据 | 不安装依赖，不调用网络，不生成 Shell 命令，不发布 |
-| Data Analyst | AppSpec、不可变 ValidationReport | `DataReview` | 检查数据完整性，解释工程校验，引用证据并提出建议 | 不修改 engineering check，不宣布失败结果通过 |
+| Lead | 用户是在询问，还是明确要求构建？ | `message`、`force_team` | `LeadDecision` | `LeadMessage` |
+| Product Manager | 在 V1 能力范围内，具体要构建什么？ | `Run.prompt`、`Run.mode` | `Blueprint` | Blueprint Artifact |
+| Architect | 如何把 Blueprint 落成受控浏览器架构？ | `Blueprint` | `ArchitectureSpec` | ArchitectureSpec Artifact |
+| Engineer | 需要生成哪些页面元数据和可运行源码？ | 原始 Prompt、`Blueprint`、`ArchitectureSpec` | `AppSpec` | AppSpec Artifact |
+| Runtime Validator | AppSpec 是否符合范围、交接和源码安全规则？ | Prompt、Blueprint、ArchitectureSpec、AppSpec | `ValidationReport` | ValidationReport Artifact |
+| Data Analyst | 如何解释应用数据和不可变校验证据？ | Prompt、`AppSpec`、`ValidationReport` | `DataReview` | DataReview Artifact |
 
-Product Manager 的 Blueprint 范围判定至少包含：
+Lead 只决定是否进入团队；进入 `team` 后角色和顺序固定，不由 Lead 自由选择。Runtime Validator 不是 Agent，但它位于 Engineer 与 Data Analyst 之间，决定工程事实能否继续，因此必须和角色 Contract 一起定义。
+
+### 2.2 Lead：区分询问与明确构建
+
+**职责：** Lead 是用户入口，只判断本条消息走 `direct` 还是 `team`。`direct` 返回回答或澄清；`team` 表示进入完整固定团队。它不生成 Blueprint，不选择专业角色，不执行 Tool，也不改变 Project、版本或发布状态。
+
+**当前输入 Contract：**
+
+| 字段 | 类型与硬约束 | 含义 |
+| --- | --- | --- |
+| `message` | `str`，去空白后 1–4000 字符 | 用户本条原始消息 |
+| `force_team` | `bool`，默认 `false` | 用户显式选择“调用团队”；为 `true` 时直接覆盖模型路由 |
+| `model` | 可选 `str`，1–100 字符 | 选择允许的 Provider 模型；它用于运行配置，不作为 LeadDecision 字段 |
+
+当前实现没有把 Project 摘要、历史对话、能力边界或预算摘要传给 Lead。因而 Lead 只能判断当前消息，不能声称自己已经理解完整 Project Context；Project 对话线程完成后才扩展这一输入。
+
+**输出 `LeadDecision`：**
+
+| 字段 | 类型与硬约束 | 语义 |
+| --- | --- | --- |
+| `route` | `direct \| team` | 唯一路由决定 |
+| `response` | `str`，1–800 字符 | 展示给用户的回答、澄清或团队交接说明 |
+| `reason` | `str`，1–300 字符 | 可展示、可审计的简短路由依据，不是 Chain of Thought |
+
+API 返回的 `LeadDecisionView` 额外包含 `message_id`、实际 `model` 和可选 `fallback_provider`。原文曾列出的 `intent_summary`、`risk_flags`、`estimated_provider_calls` 和 `clarification_question` 不在当前 Schema 中，不能作为已实现字段引用。
+
+### 2.3 Product Manager：把请求整理成可检查 Blueprint
+
+**职责：** Product Manager 保留用户目标，把 Prompt 整理成页面、模块、视觉和数据要求，并提出 `supported / adapted / unsupported` 范围判断。LLM 只提出 Blueprint；Risk Policy 和 Runtime 决定是否自动继续、请求确认或停止。
+
+**当前实际输入：** `Run.prompt` 和 `Run.mode`。当前 Provider 尚未接收附件元数据、Project 历史或已存在源码，因此不能在 Blueprint 中声称检查过这些内容。
+
+**输出 `Blueprint`：**
+
+| 字段 | 类型与硬约束 | 语义 |
+| --- | --- | --- |
+| `schema_version` | 固定 `"1.0"` | Contract 版本 |
+| `project_name` | `str`，1–80 字符 | 用户可识别的 Project 名称 |
+| `product_type` | `str`，1–80 字符，默认 `web_application` | 产品类型标签；该字段本身不扩大 V1 验收范围 |
+| `support_level` | `supported \| adapted \| unsupported` | 当前能力匹配结论 |
+| `support_reasons` | `list[str]`，最多 8 项 | 范围结论的可展示依据 |
+| `mapped_requirements` | `list[str]`，最多 12 项 | 已映射到受控实现的用户要求 |
+| `omitted_requirements` | `list[str]`，最多 12 项 | 当前实现明确不包含的要求 |
+| `rewrite_suggestion` | 可选 `str`，最多 500 字符 | 需要用户确认的替代草案；不能只写“请重新描述” |
+| `capability_policy_version` | `catalog-v1 \| web-v1`，默认 `web-v1` | 生成 Blueprint 时依据的能力策略版本 |
+| `pages` | `list[str]`，1–12 项，禁止空标签 | 页面或主要界面 |
+| `modules` | `list[str]`，1–20 项，禁止空标签 | 功能模块与关键交互 |
+| `visual_direction` | `str`，1–240 字符 | 可供 Architect 使用的视觉方向 |
+| `data_requirements` | `list[str]`，最多 8 项 | 页面需要的数据或本地状态要求 |
+
+`support_level` 的语义：
+
+- `supported`：在当前 V1 受控范围与基础预算内可以继续。
+- `adapted`：保留产品目标，但必须删减或演示化真实认证、支付、数据库写入、外部服务等能力，并等待用户确认映射。
+- `unsupported`：主要目标无法由当前 Runtime 表达；原 Run 进入 `NeedsInput`，不创建 Build Job。
+
+`rewrite_suggestion` 必须保持用户语言和原始目标，并明确替代了什么能力。接受草案会创建新 Run 并直接进入 Architect；只有用户显式选择“重新生成需求草案”时才再次调用 Product Manager。
+
+### 2.4 Architect：把产品方案收敛为浏览器架构
+
+**职责：** Architect 把已确认 Blueprint 转换为页面策略、本地状态实体和视觉 Token。它必须保持产品目标与页面范围，不虚构后端、网络、动态依赖或原生能力。
+
+**当前实际输入：** 完整 `Blueprint`。Provider 输出后，Runtime 会规范化视觉 Token，再把最终 ArchitectureSpec 保存为 Artifact。
+
+**输出 `ArchitectureSpec`：**
+
+| 字段 | 类型与硬约束 | 语义 |
+| --- | --- | --- |
+| `schema_version` | 固定 `"1.0"` | Contract 版本 |
+| `architecture_summary` | `str`，1–300 字符 | 整体页面、状态和运行方式摘要 |
+| `page_strategy` | `list[str]`，1–8 项 | 页面/界面的组织与导航策略 |
+| `data_entities` | `list[str]`，1–8 项 | 浏览器本地状态中的核心实体 |
+| `primary_color` | `#RRGGBB` | 主文字或主界面颜色 |
+| `accent_color` | `#RRGGBB` | 强调色 |
+| `background_color` | `#RRGGBB` | 背景色 |
+| `typography` | `sans \| serif`，默认 `sans` | 字体方向，不代表具体远程字体依赖 |
+| `density` | `compact \| comfortable`，默认 `comfortable` | 界面信息密度 |
+| `style` | `str`，1–120 字符 | Engineer 必须继承的视觉风格说明 |
+
+当前 Contract 没有独立组件树、状态转移图或 API Schema；这些内容不能只写进自由文本后假装已被 Runtime 验证。V1 Validator 只验证已进入显式字段和源码的约束。
+
+### 2.5 Engineer：生成 AppSpec 与自包含 Web 源码
+
+**职责：** Engineer 将 Blueprint 和 ArchitectureSpec 实现为完整 `AppSpec`。输出必须能被 Runtime 组合为单个 sandboxed HTML 文档；不得使用远程资源、网络请求、动态 import、`eval`、包依赖、后端调用或 Shell 命令。
+
+**当前实际输入：** 原始 Prompt、完整 `Blueprint` 和 `ArchitectureSpec`。Runtime 会强制把 AppSpec 的三项颜色对齐到 ArchitectureSpec，模型不能通过输出改变这些视觉 Token。
+
+**输出 `AppSpec`：**
+
+| 字段 | 类型与硬约束 | 语义 |
+| --- | --- | --- |
+| `schema_version` | 固定 `"1.0"` | Contract 版本 |
+| `project_name` | `str` | Project 展示名，应与 Blueprint 保持一致 |
+| `tagline` | `str`，1–160 字符 | 简短产品描述 |
+| `hero_title` | `str`，1–120 字符 | 主标题 |
+| `hero_body` | `str`，1–300 字符 | 主说明 |
+| `primary_color` | `#RRGGBB` | 必须与 ArchitectureSpec 一致 |
+| `accent_color` | `#RRGGBB` | 必须与 ArchitectureSpec 一致 |
+| `background_color` | `#RRGGBB` | 必须与 ArchitectureSpec 一致 |
+| `pages` | `list[PageSpec]`，1–12 项 | 与用户体验对应的路由和页面区块 |
+| `products` | `list[ProductItem]`，最多 12 项 | 仅商品目录使用的受控数据；其他产品类型应为空 |
+| `html` | `str`，最多 40,000 字符 | 不含 Markdown fence 的语义化 body fragment |
+| `css` | `str`，最多 40,000 字符 | 完整本地样式 |
+| `javascript` | `str`，最多 40,000 字符 | 使用浏览器 API 的本地交互逻辑 |
+
+`PageSpec` 的字段：`route` 必须匹配 `/[a-z0-9/_-]*`，`name` 为 1–80 字符，`sections` 为 1–10 个字符串。当前 Schema 没有像 Blueprint 那样额外拒绝空白 `sections`，这仍是 Contract 加固点。
+
+`ProductItem` 的字段：`id` 只允许小写字母、数字和连字符；同时包含 `name`、`category`、`price`、`description` 和 `image_url`。其中 `image_url` 在当前 Schema 中只是普通字符串，没有 URL 来源或离线安全校验；不能仅凭 ProductItem 通过 Pydantic 校验就声称资源边界已经满足。
+
+### 2.6 Runtime Validator：生成不可由 Agent 改写的工程证据
+
+**职责：** Validator 不是 LLM 角色。它读取 Prompt、Blueprint、ArchitectureSpec 和 AppSpec，检查范围映射、页面交接、源码完整性、离线边界、视觉 Token 和颜色对比度。`passed=false` 时构建停止，Data Analyst 无权覆盖。
+
+**输出 `ValidationReport`：**
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `schema_version` | 固定 `"1.0"` | Contract 版本 |
+| `passed` | `bool` | 所有强制门禁是否通过 |
+| `checks` | `list[ValidationCheck]` | 每项确定性检查及证据 |
+
+每个 `ValidationCheck` 包含：`check_id`、`label`、`status(pass/fail/warning)`、`root_cause(app_spec/renderer/platform/unknown)`、`resolvable` 和可选 `detail`。这些字段为自动修复、用户 Resolve 或平台处理提供路由依据；当前 Worker 遇到 `passed=false` 仍直接停止，尚未按 `root_cause/resolvable` 自动分派修复。
+
+### 2.7 Data Analyst：解释数据完整性和校验证据
+
+**职责：** Data Analyst 检查应用状态/内容是否完整，并把不可变 ValidationReport 转换成用户可理解的质量摘要和下一步建议。它不能把 failed check 改成 pass，也不能替用户发布。
+
+**当前实际输入：** 原始 Prompt、完整 `AppSpec` 和 `ValidationReport`。
+
+**输出 `DataReview`：**
+
+| 字段 | 类型与硬约束 | 语义 |
+| --- | --- | --- |
+| `schema_version` | 固定 `"1.0"` | Contract 版本 |
+| `summary` | `str` | 面向用户的质量结论 |
+| `data_checks` | `list[str]` | 数据、内容和交互状态检查 |
+| `engineering_checks` | `list[str]` | 对 ValidationReport 的忠实转述，不能改写结果 |
+| `warnings` | `list[str]`，默认空 | 非阻断问题和降级说明 |
+| `suggested_actions` | `list[edit \| resolve \| retry \| accept]` | 下一步建议枚举，不是自动执行命令 |
+| `analyst_mode` | `agent_review \| deterministic_only`，默认 `agent_review` | 真实 Agent 解读或确定性降级模式 |
+
+`DataReview` 是解释层，不是新的验证层。最终 Run 使用 `ValidationReport.passed` 判断工程门禁；DataReview 只能补充 warning 和建议。
+
+### 2.8 固定交接链路
 
 ```text
-support_level: supported | adapted | unsupported
-support_reasons[]
-mapped_requirements[]
-omitted_requirements[]
-rewrite_suggestion
-capability_policy_version
-```
-
-LLM 提出判定，Runtime 使用固定 Capability Policy 校验浏览器本地状态、网络、后端、原生能力、依赖和预算边界，而不是校验产品名称白名单。同一 Policy 版本必须维持一致的允许/拒绝边界。
-
-`rewrite_suggestion` 不是“请重新描述需求”一类空泛建议。`unsupported` 时，Product Manager 必须输出与用户输入同语言、保持同一产品目标的 Web 实现草案，并明确哪些原生或服务端能力无法保留。Runtime 将原 Run 停在 `NeedsInput`。接受草案会创建新 Run并直接进入 Architect；只有用户显式点击“重新生成需求草案”时才再次调用 Product Manager，且重新生成本身不创建 Build Job。
-
-DataReview 至少包含：
-
-```text
-summary
-data_checks[]
-engineering_checks[]     mirrors ValidationReport
-warnings[]
-suggested_actions[]      edit | resolve | retry | accept
-analyst_mode: agent_review | deterministic_only
-```
-
-`LeadDecision` 最小 Contract：
-
-```text
-route: direct | team
-intent_summary
-reason_summary
-risk_flags[]
-estimated_provider_calls
-clarification_question?   only when route=direct
-```
-
-固定交接链路：
-
-```text
-Lead            -> direct reply | fixed team
+Lead            -> LeadDecision（direct reply | fixed team）
 Product Manager -> Blueprint
 Architect       -> ArchitectureSpec
 Engineer        -> AppSpec
@@ -101,7 +214,9 @@ Validator       -> ValidationReport
 Data Analyst    -> DataReview
 ```
 
-### 2.2 二选一路由边界
+每个 Agent Artifact 都先经过 Pydantic Schema 校验再持久化；下一阶段读取已保存 Artifact，而不是依赖上一角色的隐藏对话或 Chain of Thought。
+
+### 2.9 二选一路由边界
 
 V1 不再让用户先理解 Engineer Mode / Team Mode。默认入口只有 Lead：
 
@@ -146,7 +261,7 @@ Created
 - 同一时刻一个 Run 只有一个主阶段；重试和修复创建新的 stage attempt。
 - 每个阶段必须先持久化输入 Artifact 引用，再调用模型。
 - 每个阶段必须先持久化输出，再发送 `stage.completed`。
-- Approval 是否需要由确定性 Risk Policy 决定，Lead 只能提交 risk flag，不能自行绕过或强制审批。
+- Approval 是否需要由确定性 Risk Policy 根据 Blueprint、预算和目标操作决定；当前 LeadDecision 不包含 risk flag，Lead 不能自行绕过或强制审批。
 - Publish 不属于 Agent Run，由用户通过独立发布状态机触发。
 
 ## 4. Human-in-the-loop
@@ -198,30 +313,26 @@ decided_at
 
 ### 5.1 Context 不是完整聊天历史
 
-V1 不把整个 Session 对话、所有日志和其他角色的隐藏推理直接传给下一角色。Runtime 按阶段组装最小上下文：
+V1 不把整个 Session 对话、所有日志和其他角色的隐藏推理直接传给下一角色。当前 Provider 输入由角色 instruction、Pydantic JSON Schema 和阶段 payload 组成：
 
 ```text
 Stage Context
-  = role instruction + prompt version
-  + current user request snapshot
-  + accepted upstream Artifact references
-  + platform capability contract
-  + bounded failure evidence (only on retry/repair)
+  = role instruction
+  + current Contract JSON Schema
+  + current stage payload
 ```
 
-### 5.2 各阶段上下文
+### 5.2 各阶段当前实际 Context
 
-| 阶段 | 必须包含 | 明确不包含 |
+| 阶段 | 当前实际传入 Provider | 当前没有传入 |
 | --- | --- | --- |
-| Lead | 当前消息、Project/Version 摘要、能力边界、基础预算 | 其他用户项目、完整源码、密钥、专业角色隐藏推理 |
-| Product Manager | 当前 Prompt、附件名称/大小、支持范围 | 附件二进制、其他用户数据、旧 Build 日志 |
-| Architect | 当前 Blueprint、视觉 token 范围 | 原始完整会话、Engineer/Data Analyst 内容 |
-| Engineer | 当前 Blueprint、ArchitectureSpec、Renderer Capability Contract | 任意宿主文件、密钥、未接受需求 |
-| Data Analyst | AppSpec、ValidationReport、evidence refs | 私有 Chain of Thought、可写执行权限 |
-| Repair | 当前 AppSpec、失败 ValidationReport、DataReview、repair attempt | 无关历史版本、完整构建日志、范围外需求 |
-| Follow-up | 当前 ProjectVersion Artifact、用户最新修改请求 | 从项目创建开始的全部原始消息 |
+| Lead | 当前 `message`；`force_team=true` 时 Runtime 直接覆盖路由 | Project/Version 摘要、历史对话、源码、附件、预算摘要 |
+| Product Manager | `Run.prompt`、`Run.mode` | 附件元数据、Project 历史、已有源码、旧 Build 日志 |
+| Architect | 当前 `Blueprint` | 原始 Prompt、完整会话、源码、后续角色内容 |
+| Engineer | 原始 Prompt、`Blueprint`、`ArchitectureSpec` | 宿主文件、密钥、未接受 Artifact、构建日志 |
+| Data Analyst | 原始 Prompt、`AppSpec`、`ValidationReport` | Blueprint、ArchitectureSpec、私有推理、可写执行权限 |
 
-附件在 V1 只向 Agent 提供名称、类型和大小等元数据，不把附件内容上传给第三方模型。
+`RunCreate` 可以保存附件名称、大小和 content type，但当前 Product Manager Provider 尚未接收这些元数据，附件内容也不会发送给第三方模型。Project Context、Repair Context 和 Follow-up Context 属于后续对话式 AI Coding Contract，不能作为当前固定构建链路的已实现输入。
 
 ### 5.3 Context 持久化与裁剪
 
