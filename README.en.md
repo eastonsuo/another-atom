@@ -26,11 +26,11 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Current runtime boundary:** The runnable slice is single-instance only. User requirements may describe any product goal; Product Manager preserves that goal and the team generates self-contained HTML/CSS/JavaScript. Supported offline Web behavior continues automatically, while server auth, payments, persistent writes, external services, native capabilities, or added risk require adaptation or stop before build. Committed stage artifacts, quota settlement, Build Jobs, source commits, and versions remain replay-safe across Worker restart.
 
-> **Provider fallback:** Structured role calls use DeepSeek V4 through Ollama Cloud first, with non-thinking mode for Lead. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API; ordinary HTTP errors do not trigger this fallback. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled. See the [local and Railway guide](./docs/v1/local-run-and-railway-deployment.md#24-配置真实模型与-deepseek-兜底) for configuration.
+> **Provider fallback:** Structured role calls use DeepSeek V4 through Ollama Cloud first, with non-thinking mode for Lead. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API; ordinary HTTP errors do not trigger this fallback. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled. See the [local and Railway guide](./docs/design/V1/工程设计/本地运行与Railway部署.md#24-配置真实模型与-deepseek-兜底) for configuration.
 
-> **Design baselines:** [V1 engineering architecture](./docs/v1/architecture-design.md) · [V1 agent design](./docs/v1/agent-design.md)
+> **Design baselines:** [V1 engineering architecture](./docs/design/V1/工程设计/架构设计.md) · [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md)
 
-> **Delivery summary:** [中文说明](./V1-简要交付说明.md)
+> **Delivery summary:** [中文说明](./docs/design/V1/产品设计/简要交付说明.md)
 
 ## Version Roadmap
 
@@ -295,7 +295,7 @@ The benefit is a shorter Golden Path and a clearer one-Lead interaction model. T
 - Provider idempotency keys where supported, closing the narrow crash window between an external response and the Artifact transaction commit.
 - Edit/Restore billing policy, Export pagination/streaming, and SPA-fallback 404 hardening.
 
-See the [V1 architecture design](./docs/v1/architecture-design.md) for components, states, data, security, and deployment details. See the [V1 agent design](./docs/v1/agent-design.md) for execution semantics, human-in-the-loop, context, tools, sandbox boundaries, validation, and repair.
+See the [V1 architecture design](./docs/design/V1/工程设计/架构设计.md) for components, states, data, security, and deployment details. See the [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md) for execution semantics, human-in-the-loop, context, tools, sandbox boundaries, validation, and repair.
 
 ## V1 Deployment and Access Architecture
 
@@ -353,7 +353,7 @@ Railway can host the Control Plane, but Railway alone is not assumed to provide 
 
 ### V2: Autonomous Multi-Agent (Planned Implementation)
 
-V2 is the next implementation version after V1, not an optional showcase direction. It upgrades the V1 Lead from binary routing to dynamic task graphs, independent specialist contexts, role subsets, selective parallel execution, structured rework, arbitration, and run-level budgets. Product, engineering, and behavior baselines are defined in the [V2 PRD](./docs/v2/another-atom-v2-prd.md), [V2 architecture](./docs/v2/architecture-design.md), and [V2 agent design](./docs/v2/agent-design.md).
+V2 is the next implementation version after V1, not an optional showcase direction. It upgrades the V1 Lead from binary routing to dynamic task graphs, independent specialist contexts, role subsets, selective parallel execution, structured rework, arbitration, and run-level budgets. Product, engineering, and behavior baselines are defined in the [V2 PRD](./docs/design/V2/产品设计/产品需求.md), [V2 architecture](./docs/design/V2/工程设计/架构设计.md), and [V2 agent design](./docs/design/V2/Agent设计/Agent设计.md).
 
 ### Unassigned Version: Local Agent Runtime
 
@@ -411,15 +411,18 @@ Not completed:
 
 - Source repository: [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - Online version: Railway deployment and public access have been accepted; the service domain is managed by the Railway deployment environment.
-- [V1 product requirements](./docs/v1/another-atom-v1-prd.md)
-- [V1 architecture design](./docs/v1/architecture-design.md)
-- [V1 agent design](./docs/v1/agent-design.md)
-- [Local run and Railway deployment guide (Chinese)](./docs/v1/local-run-and-railway-deployment.md)
-- [V1 implementation summary](./review/阶段总结/2026-07-11-v1-implementation-review.md)
-- [V2 product requirements](./docs/v2/another-atom-v2-prd.md)
-- [V2 architecture design](./docs/v2/architecture-design.md)
-- [V2 agent design](./docs/v2/agent-design.md)
-- [Atoms reference analysis](./docs/reference/atoms-reference-analysis.md)
+- [Discussion documentation index](./docs/discussion/README.md)
+- [Design documentation index](./docs/design/README.md)
+- [V1 product requirements](./docs/design/V1/产品设计/产品需求.md)
+- [V1 architecture design](./docs/design/V1/工程设计/架构设计.md)
+- [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md)
+- [Local run and Railway deployment guide (Chinese)](./docs/design/V1/工程设计/本地运行与Railway部署.md)
+- [Review documentation index](./docs/review/README.md)
+- [V1 implementation inspection](./docs/review/V1/综合评审/2026-07-11-首次可运行版本检查.md)
+- [V2 product requirements](./docs/design/V2/产品设计/产品需求.md)
+- [V2 architecture design](./docs/design/V2/工程设计/架构设计.md)
+- [V2 agent design](./docs/design/V2/Agent设计/Agent设计.md)
+- [Atoms reference analysis](./docs/design/整体/参考资料/Atoms参考产品分析.md)
 
 ## Appendix
 

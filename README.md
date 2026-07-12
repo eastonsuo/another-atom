@@ -52,7 +52,7 @@
 
 - **前置要求：** Python ≥ 3.12、[uv](https://docs.astral.sh/uv/)、Node.js ≥ 22 和 npm。
 
-- **默认配置：** 本地使用 SQLite 和确定性 Mock Provider，不需要 API Key。Ollama Cloud / DeepSeek 等真实模型是可选配置，详见[本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md)。
+- **默认配置：** 本地使用 SQLite 和确定性 Mock Provider，不需要 API Key。Ollama Cloud / DeepSeek 等真实模型是可选配置，详见[本地运行与 Railway 部署说明](./docs/design/V1/工程设计/本地运行与Railway部署.md)。
 
 ### 1. 安装后端依赖
 
@@ -126,7 +126,7 @@ Another Atom 是一个通过自然语言创建网页应用的 AI Agent 工作台
 
 - **角色延续：** V2 不新增没有定义的展示型角色，而是升级 Lead 的协调能力，并让现有四个专业 Agent 按真实依赖执行。
 
-- **详细设计：** V1 的具体取舍见 [`docs/v1/`](./docs/v1/)，V2 的 TaskGraph、Context、Tool、Sandbox 和预算设计见 [`docs/v2/`](./docs/v2/)。
+- **文档治理：** 未决方案进入 [`docs/discussion/`](./docs/discussion/README.md)，正式产品、Agent 和工程方案进入 [`docs/design/`](./docs/design/README.md)，检查、反思和 Bug 证据进入 [`docs/review/`](./docs/review/README.md)。
 
 ## 4. V1 用户体验
 
@@ -144,7 +144,7 @@ Another Atom 是一个通过自然语言创建网页应用的 AI Agent 工作台
 
 - **文件可见：** Workspace 右侧通过受用户归属校验的 HTTP API 实时列出 Project Git 的真实 Web 源码和当前 Run 的结构化产物，并支持刷新与内容查看。尚未形成版本的 Blueprint、ArchitectureSpec、AppSpec 和 ValidationReport 标记为“本次生成产物”，不伪装成已提交代码。
 
-- **Provider 兜底：** 所有结构化角色调用优先通过 Ollama Cloud 使用 DeepSeek V4，Lead 关闭无必要的 thinking。配置 `DEEPSEEK_API_KEY` 后，Ollama 单次请求超过 30 秒才切换一次 DeepSeek 官方 API；普通 HTTP 错误不会触发该兜底。界面显示“服务商切换中”，Run 阶段保存 `provider.fallback` 事件，两次请求用量一起结算。完整配置见[本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md#24-配置真实模型与-deepseek-兜底)。
+- **Provider 兜底：** 所有结构化角色调用优先通过 Ollama Cloud 使用 DeepSeek V4，Lead 关闭无必要的 thinking。配置 `DEEPSEEK_API_KEY` 后，Ollama 单次请求超过 30 秒才切换一次 DeepSeek 官方 API；普通 HTTP 错误不会触发该兜底。界面显示“服务商切换中”，Run 阶段保存 `provider.fallback` 事件，两次请求用量一起结算。完整配置见[本地运行与 Railway 部署说明](./docs/design/V1/工程设计/本地运行与Railway部署.md#24-配置真实模型与-deepseek-兜底)。
 
 - **版本与恢复：** Build、Edit、Vim Save 和 Restore 都创建新的 ProjectVersion 与 Git commit；Restore 只新增恢复版本，不删除或重写历史。
 
@@ -432,11 +432,11 @@ V2 是 V1 验收后的下一实施版本。它不推翻 V1 的 Session、Project
 
 - **关键取舍：** V2 增加并行能力，同时接受配额事务、部分失败、资源峰值和部署成本上升；是否继续扩展并行度由压测与真实成本数据决定。
 
-- **详细设计：** 产品目标见 [V2 PRD](./docs/v2/another-atom-v2-prd.md)，组件与调度见 [V2 架构设计](./docs/v2/architecture-design.md)，角色、Context、Handoff 和 Tool 行为见 [V2 Agent 设计](./docs/v2/agent-design.md)。
+- **详细设计：** 产品目标见 [V2 产品需求](./docs/design/V2/产品设计/产品需求.md)，组件与调度见 [V2 架构设计](./docs/design/V2/工程设计/架构设计.md)，角色、Context、Handoff 和 Tool 行为见 [V2 Agent 设计](./docs/design/V2/Agent设计/Agent设计.md)。
 
 ## 9. 技术设计
 
-本章描述 Another Atom 的最终逻辑架构，不等同于当前 V1 的单实例部署。V1 和 V2 都实现这套 Contract 的不同子集，具体裁剪分别记录在 `docs/v1/` 和 `docs/v2/`。
+本章描述 Another Atom 的最终逻辑架构，不等同于当前 V1 的单实例部署。V1 和 V2 都实现这套 Contract 的不同子集，具体裁剪按产品、Agent 和工程领域记录在 `docs/design/`。
 
 ### 9.1 整体逻辑架构
 
@@ -648,22 +648,30 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **在线版本：** Railway 已部署并完成公开访问验收；具体服务域名由 Railway 部署环境管理。
 
-- **V1 产品：** [V1 产品需求](./docs/v1/another-atom-v1-prd.md)
+- **设计导航：** [设计文档规范与索引](./docs/design/README.md)
 
-- **V1 工程：** [V1 架构设计](./docs/v1/architecture-design.md)
+- **讨论导航：** [未决讨论规范与索引](./docs/discussion/README.md)
 
-- **V1 Agent：** [V1 Agent 设计](./docs/v1/agent-design.md)
+- **V1 产品：** [V1 产品需求](./docs/design/V1/产品设计/产品需求.md)
 
-- **V1 部署：** [本地运行与 Railway 部署说明](./docs/v1/local-run-and-railway-deployment.md)
+- **V1 工程：** [V1 架构设计](./docs/design/V1/工程设计/架构设计.md)
 
-- **V1 简要交付说明：** [查看说明](./V1-简要交付说明.md)
+- **V1 Agent：** [V1 Agent 设计](./docs/design/V1/Agent设计/Agent设计.md)
 
-- **V1 Review：** [V1 实现阶段总结](./review/阶段总结/2026-07-11-v1-implementation-review.md)
+- **V1 对话式 AI Coding：** [初版设计](./docs/design/V1/Agent设计/对话式AI-Coding初版设计.md)
 
-- **V2 产品：** [V2 产品需求](./docs/v2/another-atom-v2-prd.md)
+- **V1 部署：** [本地运行与 Railway 部署说明](./docs/design/V1/工程设计/本地运行与Railway部署.md)
 
-- **V2 工程：** [V2 架构设计](./docs/v2/architecture-design.md)
+- **V1 简要交付说明：** [查看说明](./docs/design/V1/产品设计/简要交付说明.md)
 
-- **V2 Agent：** [V2 Agent 设计](./docs/v2/agent-design.md)
+- **Review 导航：** [检查、反思与 Bug 索引](./docs/review/README.md)
 
-- **参考分析：** [Atoms 参考分析](./docs/reference/atoms-reference-analysis.md)
+- **V1 Review：** [V1 首次可运行版本检查](./docs/review/V1/综合评审/2026-07-11-首次可运行版本检查.md)
+
+- **V2 产品：** [V2 产品需求](./docs/design/V2/产品设计/产品需求.md)
+
+- **V2 工程：** [V2 架构设计](./docs/design/V2/工程设计/架构设计.md)
+
+- **V2 Agent：** [V2 Agent 设计](./docs/design/V2/Agent设计/Agent设计.md)
+
+- **参考分析：** [Atoms 参考分析](./docs/design/整体/参考资料/Atoms参考产品分析.md)
