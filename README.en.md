@@ -47,6 +47,38 @@ See the [overall product goal and positioning](./docs/design/整体/产品设计
 - **Generated results are hard to continue:** One-off code or screenshots do not support sustained iteration. A Project must retain code files, current state, and version history so work can continue in place.
 - **Insufficient control of code and production:** Vibe Coding must not hide source code or let new output silently replace the live version. Users inspect and edit code and explicitly choose what to publish.
 
+## Core Product Capabilities
+
+### Multi-agent Collaboration
+
+- **Single entry point:** Users primarily talk to Lead and do not need to understand internal roles, modes, or workflows first.
+- **Specialized responsibilities:** Product Manager, Architect, Engineer, and Data Analyst handle requirements, structure, implementation, and validation. Their value is demonstrated by deliverables, not avatars or staged conversations.
+- **Task-based evolution:** Simple tasks should take a short path, while complex work may involve more roles, tools, and rework. The purpose of multiple Agents is to reduce different uncertainties, not maximize Agent count.
+- **User involvement:** Users can inspect, edit, and confirm key plans. The system pauses only for real changes in scope, budget, destructive operations, or publishing.
+
+### Vibe Coding Workspace
+
+- **Natural-language development:** Users create, explain, modify, and repair Projects through conversation without first locating files or specifying implementation steps.
+- **Interactive Preview:** Generated results run directly and can be checked at desktop and mobile sizes rather than represented by static screenshots.
+- **Visual and code entry points:** Users can select interface elements to change content and styles, then inspect or edit source files when precise control is needed.
+- **File management:** A Project exposes source, generated Artifacts, and media files for inspection, refresh, selection, and later create/update/delete workflows.
+- **Continue from the current object:** Users can ask Agents to modify the current page, element, file, error, or version without describing the entire Project again.
+
+### Project, Code, and Versions
+
+- **Project as the core asset:** A Project is a persistent software project, not a chat transcript. Requirements, code, Agent Artifacts, versions, and publishing state all belong to it.
+- **Repository ownership:** Every Project binds to a repository. Users retain visibility, editability, and portability of source code, while platform versions remain traceable to Git commits.
+- **Changes create versions:** Agent Builds, user Edits, source saves, automated repairs, and Restores create new versions without overwriting history.
+- **Restore preserves history:** Restoring an older version creates a new current version while retaining all earlier versions and operations.
+- **Independent publish pointer:** Users may publish the latest or a selected version. Drafts, new Builds, and Restores must not silently change the live result.
+
+### From Build to Online Product
+
+- **Quality loop:** Build results go through explainable validation. Errors should be locatable, repairable, and verifiable instead of ending with a generic failure message.
+- **Public access:** Users publish a confirmed version to a stable URL and explicitly Update it after later changes.
+- **Later capabilities:** Databases, authentication, payments, domains, analytics, SEO, third-party connections, and sharing move an application prototype toward an online product, but must remain attached to the same Project and published version.
+- **Continuous iteration:** Publishing is not the end. Users return to the Project to continue conversations, modifications, validation, and later releases.
+
 ## Product Interface
 
 Login establishes a server-side Session; Projects, source repositories, versions, and Sandbox Sessions are isolated by account.
