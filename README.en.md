@@ -4,9 +4,18 @@
 
 > Turn a rough idea into a software project whose code you can inspect, edit, version, and publish.
 
+## Product Conclusion
+
 Another Atom is a multi-agent Vibe Coding workspace. Users express intent in natural language; specialist Agents plan, implement, and validate, while the Project workspace keeps interactive preview, code files, version history, and publishing in one continuous development loop.
 
 The core path is **idea → plan → multi-agent build → preview and code editing → validation and repair → version → publish → continue iterating**. See the [overall product goal and positioning](./docs/design/整体/产品设计/整体产品目标与定位.md).
+
+## Core Problems
+
+- **From idea to implementation:** Users may start with only a goal, not a complete specification, architecture, or codebase. The system should fill the necessary gaps and produce a runnable result.
+- **An opaque AI process:** A single prompt does not show what the model understood, why it implemented a solution, or where failure occurred. Specialist roles and inspectable artifacts make the process understandable and correctable.
+- **Generated results are hard to continue:** One-off code or screenshots do not support sustained iteration. A Project must retain code files, current state, and version history so work can continue in place.
+- **Insufficient control of code and production:** Vibe Coding must not hide source code or let new output silently replace the live version. Users inspect and edit code and explicitly choose what to publish.
 
 ## Product Interface
 
