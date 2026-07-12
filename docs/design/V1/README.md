@@ -5,9 +5,9 @@
 
 ## 版本目标与范围
 
-V1 用最小实现证明完整产品闭环：用户从 Lead 提交受控商品目录/店铺需求，检查 Blueprint，经过固定专业团队构建，获得 Preview 和 Project 源码，再通过 Edit、Restore 和显式 Publish 管理版本与公开结果。
+V1 用最小实现证明完整产品闭环：用户从 Lead 提交产品需求，检查 Blueprint，经过固定专业团队构建，获得 Preview 和 Project 源码，再通过 Edit、Restore 和显式 Publish 管理版本与公开结果。
 
-- **[产品范围]** 生成范围是受控商品目录/店铺，不宣称任意应用、真实后端、支付、OAuth、外部网络或动态依赖已经支持。
+- **[产品范围]** V1 接受游戏、工具、看板、目录等不同产品目标，但只交付自包含 HTML/CSS/JavaScript 浏览器应用；不宣称真实后端、支付、OAuth、外部网络、原生 Runtime 或动态依赖已经支持。
 - **[Agent 范围]** Lead 只做 `direct/team` 二选一路由；`team` 固定执行 Product Manager → Architect → Engineer → Data Analyst，不做动态角色子集、并行或自主仲裁。
 - **[工程范围]** 当前部署基线是本地单实例或 Railway 单副本；使用进程内调度、单 Worker、持久化 Job/Artifact/版本和服务端 Project Git。
 - **[交付范围]** Build、Edit 和 Restore 创建 ProjectVersion 与 Git commit，但不会自动改变线上发布指针；Publish、Update 和 Unpublish 由用户明确触发。

@@ -596,4 +596,4 @@ Pydantic Contract 仍统一放在 `another_atom/contracts/`。Agent 目录只能
 - **[固定顺序执行]** V1 不并行执行 Agent，也不允许多个角色共享可写工作区，以减少部分失败、并发配额和 Artifact 合并变量。
 - **[阶段级 Context]** Runtime 为每个阶段组装所需的 Blueprint、ArchitectureSpec、AppSpec 和 Evidence，不维护一段无限增长的共享聊天记录，也不实现独立 Agent 长期记忆。
 - **[Runtime 控制返工]** 固定状态机、重试上限和失败出口决定是否返工；Lead 不能修改流程或无限重试。V2 才允许 Lead 提交结构化返工与仲裁建议。
-- **[受控生成范围]** V1 Agent 围绕受控商品目录/店铺 Contract 生成结果；不通过 Prompt 暗示任意产品、动态依赖、网络、Shell、后端或自动发布已经可用。
+- **[受控生成范围]** V1 Agent 必须保留游戏、工具、看板、目录等原始产品目标，并将 supported 需求收敛为自包含浏览器应用；不通过 Prompt 暗示任意技术栈、动态依赖、网络、Shell、后端或自动发布已经可用。
