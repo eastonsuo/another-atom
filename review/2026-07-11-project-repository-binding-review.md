@@ -3,6 +3,28 @@
 > 评审对象：`another-atom` 当前代码（`another_atom/storage/models.py`、`api/routes.py`、`agent/orchestrator.py`、`contracts/schemas.py`）。
 > 本文可独立阅读。一句话背景：用户天然期望“一个项目对应一个（自己可掌控的）代码仓库”，这关系到**代码归属、交付与掌控**；本文查证当前设计里“项目”与“仓库”到底是什么关系。
 
+## Update（2026-07-12，基于当前 `main`）
+
+本评审正文记录的是 2026-07-11 的旧状态。之后已落地“Project ↔ 平台服务端本地 Git 仓库”的 V1 绑定；因此第 2、3 节中“平台内没有 repo 概念”的结论已不再成立。需要区分：**平台内仓库绑定已完成**，**用户自有 GitHub/GitLab remote 绑定尚未实现**。
+
+| 原评审要点 | 当前状态 | 当前代码与验证依据 |
+| --- | --- | --- |
+| Project 没有仓库绑定 | 已修复（V1 平台内绑定） | `Project` 已有 `repository_path`、`repository_branch`；创建 Run 时同步初始化仓库，启动时会为存量 Project 回填。|
+| 一个 Project 默认对应一个仓库 | 已修复（V1 一对一） | 仓库路径由 `project_id` 决定；`initialize_repository(project.id)` 创建独立本地 Git 仓库。|
+| 平台 Version 与 Git 历史断开 | 已修复 | `ProjectVersion.git_commit` 保存 commit SHA；Build、Edit、Restore 都创建新 commit 并映射新版本。|
+| 用户无法查看项目代码 | 已修复（只读查看） | 已提供按当前用户校验的 Project 文件列表与文件内容接口；Studio 可刷新并查看 Repository 文件和本次 Artifact，`.git` 元数据不可读取。|
+| 存量 Project 无法迁移 | 已修复（最小回填） | 数据库启动时会为缺失仓库的 Project 初始化本地仓库，并为已有 Version 回填 commit。|
+| 项目可推送到用户自己的仓库 | 未实现 | V1 不配置 Git remote，也没有 GitHub/GitLab OAuth、`repo_url`、push 状态或用户仓库凭证管理。当前仓库是平台托管的服务端本地 Git。|
+| 仓库连接状态、分支与最近 push 可追溯 | 部分实现 | 有内部默认分支与 Version→commit 映射；没有 remote provider、连接状态、最近 push commit/时间等外部交付状态。|
+
+本轮验证：`tests/integration/test_repository_and_sandbox.py` 已通过 7 项测试，覆盖 Version→commit、存量回填、文件浏览、跨用户隔离和 `.git` 隐藏。
+
+### 更新后的结论
+
+V1 已经满足“打开一个 Project = 打开一个平台托管、与该 Project 一对一绑定的代码仓库”，并能让 Build、Edit、Restore 对应可追溯的 Git commit。原评审中关于“平台内完全没有 repo 概念”的问题已关闭。
+
+但“打开一个 Project = 打开我自己 GitHub/GitLab 下可 clone、可 push 的仓库”仍未满足。这不是遗漏修复，而是当前 V1 的明确边界；若下一阶段要解决，应新增 RemoteRepository/Connection 模型、OAuth/凭证管理、push Job 与 ProjectVersion→remote commit 状态，而不是把 remote URL 临时挂在 Project 字段上。
+
 ## 1. 背景：为什么「项目 ↔ 仓库」值得单独审视
 
 对用户而言，“项目”和“我的代码仓库”几乎是同一件事的两面：**打开一个项目 = 打开我的一个代码库**。他期望的心智模型是：
@@ -88,26 +110,4 @@
 4. 建立 ProjectVersion ↔ git commit 映射，恢复版本可追溯；
 5. 提供存量项目回填绑定路径，并与可信身份/授权协同管理仓库凭证。
 
-> 本文件为新增的独立设计评审稿，仅基于当前代码事实撰写，未改动仓库任何代码或其他评审文档。对现状不确定处已标注“待确认”。
-
-## Update（2026-07-12，基于当前 `main`）
-
-本评审描述的是 2026-07-11 时的旧状态。之后已落地“Project ↔ 平台服务端本地 Git 仓库”的 V1 绑定；因此第 2、3 节中“平台内没有 repo 概念”的结论已不再成立。需要区分：**平台内仓库绑定已完成**，**用户自有 GitHub/GitLab remote 绑定尚未实现**。
-
-| 原评审要点 | 当前状态 | 当前代码与验证依据 |
-| --- | --- | --- |
-| Project 没有仓库绑定 | 已修复（V1 平台内绑定） | `Project` 已有 `repository_path`、`repository_branch`；创建 Run 时同步初始化仓库，启动时会为存量 Project 回填。|
-| 一个 Project 默认对应一个仓库 | 已修复（V1 一对一） | 仓库路径由 `project_id` 决定；`initialize_repository(project.id)` 创建独立本地 Git 仓库。|
-| 平台 Version 与 Git 历史断开 | 已修复 | `ProjectVersion.git_commit` 保存 commit SHA；Build、Edit、Restore 都创建新 commit 并映射新版本。|
-| 用户无法查看项目代码 | 已修复（只读查看） | 已提供按当前用户校验的 Project 文件列表与文件内容接口；Studio 可刷新并查看 Repository 文件和本次 Artifact，`.git` 元数据不可读取。|
-| 存量 Project 无法迁移 | 已修复（最小回填） | 数据库启动时会为缺失仓库的 Project 初始化本地仓库，并为已有 Version 回填 commit。|
-| 项目可推送到用户自己的仓库 | 未实现 | V1 不配置 Git remote，也没有 GitHub/GitLab OAuth、`repo_url`、push 状态或用户仓库凭证管理。当前仓库是平台托管的服务端本地 Git。|
-| 仓库连接状态、分支与最近 push 可追溯 | 部分实现 | 有内部默认分支与 Version→commit 映射；没有 remote provider、连接状态、最近 push commit/时间等外部交付状态。|
-
-本轮验证：`tests/integration/test_repository_and_sandbox.py` 已通过 7 项测试，覆盖 Version→commit、存量回填、文件浏览、跨用户隔离和 `.git` 隐藏。
-
-### 更新后的结论
-
-V1 已经满足“打开一个 Project = 打开一个平台托管、与该 Project 一对一绑定的代码仓库”，并能让 Build、Edit、Restore 对应可追溯的 Git commit。原评审中关于“平台内完全没有 repo 概念”的问题已关闭。
-
-但“打开一个 Project = 打开我自己 GitHub/GitLab 下可 clone、可 push 的仓库”仍未满足。这不是遗漏修复，而是当前 V1 的明确边界；若下一阶段要解决，应新增 RemoteRepository/Connection 模型、OAuth/凭证管理、push Job 与 ProjectVersion→remote commit 状态，而不是把 remote URL 临时挂在 Project 字段上。
+> 本文件为新增的独立设计评审稿，仅基于当时代码事实撰写，未改动仓库任何代码或其他评审文档。对现状不确定处已标注“待确认”；后续修复状态以上方 Update 为准。
