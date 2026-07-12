@@ -49,25 +49,35 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语
 
 ## 产品界面
 
-![Another Atom 中文登录页：用户名密码登录与账号级项目隔离说明](./docs/assets/readme/login-zh.png)
-
 登录页通过用户名和密码建立会话；Project、源码仓库、版本和 Sandbox Session 都按账号隔离。
 
-![Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态](./docs/assets/readme/studio-home-v2-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/login-zh.png" alt="Another Atom 中文登录页：用户名密码登录与账号级项目隔离说明" width="640">
+</p>
 
 Studio 将 Lead 对话、专业 Agent、Project 历史、模型选择和账号配额放在同一工作区。
 
-![Another Atom 构建工作区：阶段流水线、移动端预览、项目文件树和运行日志](./docs/assets/readme/studio-build-workspace-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-home-v2-zh.png" alt="Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态" width="640">
+</p>
 
 构建工作区同时展示可持久化进度、可交互 Preview、Project Repository、当前 Run Artifact 和运行日志。
 
-![Another Atom 已完成的贪吃蛇游戏：可交互预览、阶段流水线、运行日志与 Project 文件](./docs/assets/readme/studio-game-preview-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-build-workspace-zh.png" alt="Another Atom 构建工作区：阶段流水线、移动端预览、项目文件树和运行日志" width="640">
+</p>
 
 生成结果直接作为网页应用运行；用户可以检查真实交互、项目源码和结构化产物。
 
-![Another Atom 版本历史：Build、Edit 和 Restore 都创建新版本](./docs/assets/readme/version-history-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-game-preview-zh.png" alt="Another Atom 已完成的贪吃蛇游戏：可交互预览、阶段流水线、运行日志与 Project 文件" width="640">
+</p>
 
 Build、Edit 和 Restore 分别形成新版本；历史不会被覆盖，线上版本仍由用户显式选择。
+
+<p align="center">
+  <img src="./docs/assets/readme/version-history-zh.png" alt="Another Atom 版本历史：Build、Edit 和 Restore 都创建新版本" width="640">
+</p>
 
 ## 整体设计原则
 

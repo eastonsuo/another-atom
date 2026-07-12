@@ -49,25 +49,35 @@ See the [overall product goal and positioning](./docs/design/整体/产品设计
 
 ## Product Interface
 
-![Another Atom Chinese login with password Session and account-level Project isolation](./docs/assets/readme/login-zh.png)
-
 Login establishes a server-side Session; Projects, source repositories, versions, and Sandbox Sessions are isolated by account.
 
-![Another Atom Chinese Studio home with Lead, specialist Agents, Project history, and real LLM status](./docs/assets/readme/studio-home-v2-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/login-zh.png" alt="Another Atom Chinese login with password Session and account-level Project isolation" width="640">
+</p>
 
 Studio keeps Lead chat, specialist Agents, Project history, model selection, and account quota in one workspace.
 
-![Another Atom build workspace with stage progress, mobile preview, Project files, and Run logs](./docs/assets/readme/studio-build-workspace-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-home-v2-zh.png" alt="Another Atom Chinese Studio home with Lead, specialist Agents, Project history, and real LLM status" width="640">
+</p>
 
 The build workspace shows durable progress, interactive Preview, Project Repository, current Run Artifacts, and logs.
 
-![Another Atom generated Snake game with interactive Preview, Run logs, and Project files](./docs/assets/readme/studio-game-preview-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-build-workspace-zh.png" alt="Another Atom build workspace with stage progress, mobile preview, Project files, and Run logs" width="640">
+</p>
 
 Generated output runs as a real Web application; users inspect interactions, source files, and structured artifacts.
 
-![Another Atom version history where Build, Edit, and Restore create separate versions](./docs/assets/readme/version-history-zh.png)
+<p align="center">
+  <img src="./docs/assets/readme/studio-game-preview-zh.png" alt="Another Atom generated Snake game with interactive Preview, Run logs, and Project files" width="640">
+</p>
 
 Build, Edit, and Restore create separate versions. History remains intact, and users explicitly choose the live version.
+
+<p align="center">
+  <img src="./docs/assets/readme/version-history-zh.png" alt="Another Atom version history where Build, Edit, and Restore create separate versions" width="640">
+</p>
 
 ## Overall Design Principles
 
