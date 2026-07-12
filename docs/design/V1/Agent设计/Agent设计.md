@@ -476,3 +476,13 @@ Pydantic Contract 仍统一放在 `another_atom/contracts/`。Agent 目录只能
 - 进程重启或 SSE 重连后，Run、pending risk approval、StageRun 和事件可以恢复。
 - Editor Session 只能访问当前用户当前 Project 的临时 worktree；`.git`、Secret、其他用户目录和宿主 Shell 均不可见。
 - 跨用户或跨 Project 的 Context、Artifact、日志和事件泄漏数量为 0。
+
+## 13. V1 Agent 边界与演进取舍
+
+本节承接原 README 中的 V1 Agent 版本取舍。它们是 V1 为完成闭环而做的约束，不是整体产品的长期限制。
+
+- **[固定完整团队]** 每个 `team` 请求固定执行 Product Manager → Architect → Engineer → Data Analyst。V1 先验证专业 Contract 与产物交接是否有效，角色子集留给 V2。
+- **[固定顺序执行]** V1 不并行执行 Agent，也不允许多个角色共享可写工作区，以减少部分失败、并发配额和 Artifact 合并变量。
+- **[阶段级 Context]** Runtime 为每个阶段组装所需的 Blueprint、ArchitectureSpec、AppSpec 和 Evidence，不维护一段无限增长的共享聊天记录，也不实现独立 Agent 长期记忆。
+- **[Runtime 控制返工]** 固定状态机、重试上限和失败出口决定是否返工；Lead 不能修改流程或无限重试。V2 才允许 Lead 提交结构化返工与仲裁建议。
+- **[受控生成范围]** V1 Agent 围绕受控商品目录/店铺 Contract 生成结果；不通过 Prompt 暗示任意产品、动态依赖、网络、Shell、后端或自动发布已经可用。

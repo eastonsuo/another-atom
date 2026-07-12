@@ -567,3 +567,15 @@ V2 不通过直接替换 `orchestrator.py` 获得；Runtime、数据模型、预
 - 各回退边、总预算和 deadline 的压测结果。
 - V2 是否扩展商品目录站以外的应用类型。
 - Web、Agent Worker、Object Storage 和 Sandbox Provider 的实际部署成本。
+
+## 18. V2 Agent 演进取舍摘要
+
+本节承接原 README 中的 V2 Agent 版本说明；具体 Contract、状态和验收仍以前文为准。
+
+- **[动态 TaskGraph]** Lead 提交任务、依赖、角色、并行组和预算建议；Runtime 拒绝环、未知角色和越权计划。
+- **[角色子集]** Product Manager、Architect、Engineer、Data Analyst 按实际任务参与，不再要求每个请求机械运行完整团队。
+- **[独立 Context]** 每个 Agent 只接收当前 Task 所需 Artifact、Evidence、Tool Observation 和预算摘要，通过 Handoff Package 交接，不共享隐藏记忆或 Chain of Thought。
+- **[选择性并行]** Runtime 只并行无依赖冲突、无共享写入且已原子预留预算的节点，不把“多 Agent”直接等同于并行。
+- **[结构化返工]** Handoff 可以基于 Contract 和 Evidence 拒收；Lead 可建议返工和仲裁，Runtime 控制预算、次数与状态收敛。
+- **[受控 Tool]** Agent 只提交 ToolRequest；Tool Gateway 校验角色、参数、路径、网络、预算和 Sandbox 后返回可审计 ToolResult。
+- **[核心取舍]** V2 的自主性来自可验证 TaskGraph、Handoff 和 Tool，而不是放宽 Runtime 权限；并行收益必须由真实成功率、耗时和成本数据证明。

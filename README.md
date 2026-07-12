@@ -8,7 +8,7 @@
 
 Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语言表达目标，专业 Agent 负责规划、实现和校验；Project 工作区把可交互预览、代码文件、版本历史和发布状态放在同一条持续开发链路中。
 
-它与 Atoms 面向同一个核心目标：让用户从意图出发，得到一个可以运行、可以修改、可以管理代码并可以发布的软件项目。Another Atom 使用自己的品牌、交互、Contract 和工程实现，不复用 Atoms 的源代码、私有 Prompt 或未公开基础设施。
+它与 [Atoms](https://help.atoms.dev/en) 面向同一个核心目标：让用户从意图出发，得到一个可以运行、可以修改、可以管理代码并可以发布的软件项目。Another Atom 使用自己的品牌、交互、Contract 和工程实现，不复用 Atoms 的源代码、私有 Prompt 或未公开基础设施。
 
 ```text
 想法 / 资料 / 现有项目
@@ -79,6 +79,10 @@ Project 是需求、Agent 产物、代码仓库、预览、版本和发布状态
 
 Lead 是用户入口；Product Manager、Architect、Engineer、Data Analyst 等专业角色处理不同问题。角色价值由 Blueprint、架构、源码、校验和数据解读等可查看结果证明，不由头像数量或对话长度证明。
 
+### 【Context 交接】角色只接收当前任务需要的信息
+
+Agent 不共享一段无限增长的聊天记录。Runtime 根据当前任务组装必要 Context，并通过版本化 Artifact、Evidence 和 Handoff 传递结果，使输入、产出和失败原因可以检查、恢复和追溯。
+
 ### 【Vibe Coding】自然语言、视觉编辑和代码文件属于同一工作区
 
 用户可以通过对话表达意图，通过 Preview 检查结果，通过视觉工具快速修改，也可以查看和编辑源码文件。不同入口最终都作用于同一个 Project 和版本历史。
@@ -98,6 +102,10 @@ Lead 是用户入口；Product Manager、Architect、Engineer、Data Analyst 等
 ### 【Runtime 控制】模型提出内容，平台控制权限与副作用
 
 LLM 负责理解、规划、生成和解释；Runtime 负责身份、配额、状态、工具权限、仓库写入、Sandbox 和发布。生成代码与平台控制面保持不同权限边界。
+
+### 【统一权限】API、预览和终端遵循同一归属规则
+
+REST、SSE、私有 Preview 和 Terminal WebSocket 都通过统一 Gateway 识别 Session，并校验 Run、Project、Version 和 Sandbox Session 的用户归属。Public Route 单独建模，只读取用户已经明确发布的版本。
 
 ### 【可恢复】进度、产物和版本对应持久化事实
 
@@ -138,6 +146,92 @@ Studio / Preview / 文件与终端界面
 - **Repository：** 保存 Project 源码、Git 历史和 commit/version 映射。
 - **Tool Gateway：** 根据用户、Project、Agent 角色、路径、网络和预算检查工具请求。
 - **Sandbox：** 执行不可信文件修改、构建和测试，无权改变身份、配额和发布状态。
+
+### Agent 与 Runtime 执行链
+
+```text
+用户消息
+    |
+    v
+入口判断（LeadDecision） -- 直接处理（direct） --> 回答 / 澄清
+    |
+团队执行（team）
+    v
+产品方案（Blueprint） -> 风险策略（Risk Policy）
+                              |
+                              v
+                   动态任务图 / 固定流水线
+                  （TaskGraph / Fixed Pipeline）
+                              |
+                              v
+            Agent 最小上下文 + 结构化产物交接
+             （Context + Artifact Handoff）
+                              |
+                              v
+               工具请求（ToolRequest）-> 隔离环境（Sandbox）
+                              |
+                              v
+                 校验 + 执行证据 + 数据解读
+          （Validation + Evidence + DataReview）
+                              |
+                              v
+                 Git 提交 + 项目版本（ProjectVersion）
+                              |
+                              v
+                  用户明确发布 / 更新（Publish / Update）
+                              |
+                              v
+                    公开访问路由（Public Route）
+```
+
+- **规划与执行分离：** Lead 可以提出 direct、team 或 TaskGraph 建议，但 Runtime 校验角色、依赖、预算、Approval 和 Tool 权限。
+- **模型与证据分离：** Agent 产生结构化判断；Renderer、Test、Validator 和 ToolResult 提供不可由模型自行改写的执行证据。
+- **工作与发布分离：** Agent Run 和 ProjectVersion 可以持续推进，Public Route 只响应用户最后一次明确确认的发布指针。
+
+### 部署与分享架构
+
+这里区分两件事：开发者部署 Another Atom 平台；用户在平台内发布和分享某个 ProjectVersion。前者创建可信服务边界，后者只改变产品内发布指针。
+
+```text
+平台部署
+
+开发者 -- 推送代码（git push） --> GitHub
+                                  |
+                           部署（Deploy）
+                                  |
+                    +-------------+-------------+
+                    |                           |
+                    v                           v
+              平台主服务                   Agent 执行服务
+           （Control Plane）              （Agent Workers）
+                    |                           |
+          +---------+---------+       +---------+---------+
+          |                   |       |         |         |
+          v                   v       v         v         v
+       状态数据库          产物存储   模型服务   状态/产物   隔离执行服务
+      （State DB）    （Artifact Storage）      读写    （Sandbox Provider）
+
+用户访问与分享
+
+浏览器 -- HTTPS / WSS --> 统一网关（Unified Gateway）
+                               |
+                +--------------+--------------+
+                |                             |
+                v                             v
+          登录后的工作台                  已发布版本路由
+      （Authenticated Studio）          （Published Route）
+       Project / 编辑 / Vim              用户选定的版本
+                |                             |
+                `---- 用户明确发布 ------------'
+                                              |
+                                              v
+                                        稳定公开地址
+                                      （Stable Public URL）
+```
+
+- **统一公网入口：** 浏览器只访问 Control Plane 的 HTTPS/WSS 域名，内部 Worker、数据库、产物存储和 Sandbox 不直接暴露给终端用户。
+- **部署边界：** Control Plane、Agent Worker 和 Sandbox 可以按版本合并或拆分，但可信控制面与不可信执行面不能合并权限。
+- **分享边界：** Public Route 只读取已发布版本，不开放 Project Repository、Agent Context、内部 Event、配额或 Sandbox Session。
 
 详细工程边界由各版本架构设计维护，README 不重复版本实现细节。
 

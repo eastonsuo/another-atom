@@ -8,7 +8,7 @@
 
 Another Atom is a multi-agent Vibe Coding workspace. Users express intent in natural language; specialist Agents plan, implement, and validate, while the Project workspace keeps interactive preview, code files, version history, and publishing in one continuous development loop.
 
-It shares Atoms' core category goal: moving from intent to an online product. Another Atom uses its own brand, interaction model, contracts, and engineering implementation; it does not reuse Atoms source code, private prompts, or undisclosed infrastructure.
+It shares [Atoms'](https://help.atoms.dev/en) core category goal: moving from intent to an online product. Another Atom uses its own brand, interaction model, contracts, and engineering implementation; it does not reuse Atoms source code, private prompts, or undisclosed infrastructure.
 
 ```text
 Idea / materials / existing project
@@ -79,6 +79,10 @@ A Project is the common owner of requirements, Agent artifacts, source repositor
 
 Lead is the user entry point. Product Manager, Architect, Engineer, Data Analyst, and later specialists address different uncertainties. Their value is proven by inspectable plans, architecture, source code, validation, and analysis—not avatars or message count.
 
+### Context handoff: each role receives only what the task requires
+
+Agents do not share an endlessly growing chat transcript. Runtime assembles the necessary Context for the current task and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failures remain inspectable, recoverable, and traceable.
+
 ### Vibe Coding: natural language, visual editing, and source files share one workspace
 
 Users express intent through conversation, inspect behavior through Preview, make quick visual changes, and inspect or edit source files when precision is needed. Every path affects the same Project and version history.
@@ -98,6 +102,10 @@ Working versions may continue changing, while the public route follows the user'
 ### Runtime authority: models propose; the platform controls side effects
 
 LLMs understand, plan, generate, and explain. Runtime owns identity, quota, state, tool authorization, repository writes, Sandbox, and publishing. Generated code and trusted Control Plane authority stay separated.
+
+### Unified authorization: APIs, Preview, and Terminal follow the same ownership rules
+
+REST, SSE, private Preview, and Terminal WebSocket connections all pass through the unified Gateway, resolve the server Session, and verify ownership of Runs, Projects, Versions, and Sandbox Sessions. Public Routes are modeled separately and read only an explicitly published version.
 
 ### Recovery: progress and versions reflect durable facts
 
@@ -138,6 +146,82 @@ Studio / Preview / Files and Terminal UI
 - **Repository:** stores Project source, Git history, and commit/version mappings.
 - **Tool Gateway:** evaluates tool requests against user, Project, Agent role, path, network, and budget policy.
 - **Sandbox:** runs untrusted file changes, builds, and tests without authority over identity, quota, or publishing.
+
+### Agent and Runtime Execution Flow
+
+```text
+User message
+    |
+    v
+LeadDecision -------- direct --------> Answer / clarification
+    |
+   team
+    v
+Blueprint -> Risk Policy -> TaskGraph / Fixed Pipeline
+                              |
+                              v
+                  Minimal Agent Context + Artifact Handoff
+                              |
+                              v
+                    ToolRequest -> Sandbox
+                              |
+                              v
+                Validation + Evidence + DataReview
+                              |
+                              v
+                   Git commit + ProjectVersion
+                              |
+                              v
+                   explicit Publish / Update
+                              |
+                              v
+                         Public Route
+```
+
+- **Planning and execution stay separate:** Lead may propose direct, team, or TaskGraph behavior; Runtime validates roles, dependencies, budget, Approval, and Tool authority.
+- **Models and evidence stay separate:** Agents produce structured judgments; Renderer, Test, Validator, and ToolResult provide execution evidence that models cannot rewrite.
+- **Work and publishing stay separate:** Agent Runs and ProjectVersions may continue evolving, while the Public Route follows only the user's last explicit publish pointer.
+
+### Deployment and Sharing Architecture
+
+This separates two actions: developers deploy the Another Atom platform, while users publish and share a ProjectVersion inside the product. The former creates trusted service boundaries; the latter changes only the product's publish pointer.
+
+```text
+Platform deployment
+
+Developer -- git push --> GitHub
+                           |
+                        Deploy
+                           |
+             +-------------+-------------+
+             |                           |
+             v                           v
+        Control Plane               Agent Workers
+             |                           |
+       +-----+------+              +-----+-----------+
+       |            |              |       |         |
+       v            v              v       v         v
+   State DB   Artifact Storage   LLM    state/data   Sandbox Provider
+
+User access and sharing
+
+Browser -- HTTPS / WSS --> Unified Gateway
+                              |
+               +--------------+--------------+
+               |                             |
+               v                             v
+      Authenticated Studio             Published Route
+       Project / Edit / Vim            selected Version
+               |                             |
+               `---- explicit Publish -------'
+                                             |
+                                             v
+                                      Stable Public URL
+```
+
+- **One public entry:** the browser reaches only the Control Plane HTTPS/WSS domain; internal Workers, databases, artifact storage, and Sandboxes are not exposed to end users.
+- **Deployment boundary:** versions may combine or split Control Plane, Agent Worker, and Sandbox components, but trusted control authority and untrusted execution must not share privileges.
+- **Sharing boundary:** the Public Route reads only the published version and does not expose the Project Repository, Agent Context, internal Events, quota, or Sandbox Sessions.
 
 Version-specific engineering boundaries remain in each architecture document; the README does not duplicate implementation details.
 
