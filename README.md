@@ -2,7 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-> 把产品想法转化为可检查、可修改、可管理版本并可发布的网页原型。
+> 把模糊想法转化为用户可查看和编辑代码、持续迭代、管理版本并自主发布的软件项目。
+
+Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语言表达目标，专业 Agent 负责规划、实现和校验；Project 工作区把可交互预览、代码文件、版本历史和发布状态放在同一条持续开发链路中。
+
+核心路径是：**想法 → 方案 → 多智能体构建 → 预览与代码编辑 → 校验与修复 → 版本 → 发布 → 继续迭代**。长期产品判断见[整体产品目标与定位](./docs/design/整体/产品设计/整体产品目标与定位.md)。
 
 ## 产品界面
 
@@ -31,6 +35,8 @@
 下文会反复出现几个关键词，先用大白话解释一遍：
 
 - **Lead（入口分派）：** 你发的每条消息都先经过 Lead。它判断你是只想询问或澄清——走 `direct`，直接回答且不创建 Project；还是明确要求构建——走 `team`，交给专业团队执行。
+
+- **Project（软件项目）：** Project 不是一段临时 Chat，而是用户持续拥有和推进的软件资产。需求、Agent 产物、代码仓库、预览、版本和发布状态都归入同一个 Project；用户可以查看和编辑代码文件，并从已有版本继续开发。
 
 - **Blueprint（产品方案）：** Product Manager 保留用户原始产品目标，把需求补全为可检查方案，写清页面、模块、交互、状态和视觉方向。`supported` 表示可以直接实现为离线 Web 应用；`adapted` 表示产品目标不变，但真实认证、支付、数据库写入或外部服务需要改成明确的本地演示能力并等待确认；`unsupported` 只用于主要目标无法由 Web Runtime 表达的情况。PM 不得把游戏、工具或看板改写成商品目录。
 
@@ -93,7 +99,7 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 
 ## 1. 产品定位
 
-Another Atom 是一个通过自然语言创建网页应用的 AI Agent 工作台。用户可以提出任意产品需求；团队保留原始目标，将其实现为可运行、可检查、可修改、可管理版本并可发布的 Web 应用。
+Another Atom 定位为多智能体 Vibe Coding 工作台：用户通过自然语言推进软件项目，同时保留对需求、代码文件、版本和发布的检查与控制。当前 V1 将不同产品目标实现为可运行、可修改、可管理版本并可发布的 Web 应用。
 
 本项目受 [Atoms](https://atoms.dev/) 启发，但采用独立的产品与技术设计。它延续多角色协作的产品表达，不复用 Atoms 的源代码、私有 Prompt 或内部基础设施，也不是 Atoms 的复刻或分支。
 
@@ -613,7 +619,7 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 | **版本与发布分离** | 已完成 | 新版本和 Restore 不自动移动线上指针；Publish/Update 由显式接口执行 |
 | **恢复与配额** | 已完成 | Blueprint 后台恢复、Job Lease、阶段 Artifact 复用、实际用量结算、剩余预占释放和并发 Approval 测试通过 |
 | **xterm.js + Sandbox Gateway** | 部分完成 | Studio、Control Plane WSS 代理、独立 Sandbox Host、restricted Vim 镜像和保存版本链已实现；Linux 实机隔离待验收 |
-| **自动化测试** | 已完成 | 当前后端单元/集成测试 73 项通过，包含通用 Web 代码、扫雷交互、离线边界、Golden Path、恢复、并发、身份、Provider 兜底、Git 和 Sandbox 保存 |
+| **自动化测试** | 已完成 | 当前后端单元/集成测试 74 项通过，包含通用 Web 代码、扫雷交互、离线边界、Golden Path、恢复、并发、身份、Provider 兜底、Git 和 Sandbox 保存 |
 | **Railway 公网部署** | 已完成 | 单副本、SQLite/Project Git 持久化 Volume 和公开访问已完成实际验收 |
 
 ## 11. 后续验收目标

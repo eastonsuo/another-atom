@@ -2,7 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-> Turn a product idea into a web prototype that can be reviewed, refined, versioned, and published.
+> Turn a rough idea into a software project whose code you can inspect, edit, version, and publish.
+
+Another Atom is a multi-agent Vibe Coding workspace. Users express intent in natural language; specialist Agents plan, implement, and validate, while the Project workspace keeps interactive preview, code files, version history, and publishing in one continuous development loop.
+
+The core path is **idea → plan → multi-agent build → preview and code editing → validation and repair → version → publish → continue iterating**. See the [overall product goal and positioning](./docs/design/整体/产品设计/整体产品目标与定位.md).
 
 ## Product Interface
 
@@ -18,7 +22,7 @@ The build workspace shows persisted role progress, an interactive Preview, the P
 
 Version history distinguishes Build, Edit, and Restore sources. Restore creates a new ProjectVersion and Git commit without overwriting history; the public version still changes only through explicit Publish/Update.
 
-Another Atom is designed as an AI agent workspace for creating web product prototypes from natural-language requirements. A user describes an idea, reviews the proposed product plan, and follows the result through design, implementation, validation, revision, and publishing.
+Another Atom is a multi-agent Vibe Coding workspace where users advance software projects through natural language while retaining control of requirements, code files, versions, and publishing. V1 currently delivers those product goals as self-contained Web applications.
 
 The project is inspired by [Atoms](https://atoms.dev/), but it is independently designed and implemented. It is not an Atoms fork and does not use Atoms source code or internal infrastructure.
 
@@ -28,7 +32,7 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 > **Provider fallback:** Structured role calls use DeepSeek V4 through Ollama Cloud first, with non-thinking mode for Lead. When `DEEPSEEK_API_KEY` is configured, an Ollama timeout after 30 seconds switches once to the official DeepSeek API; ordinary HTTP errors do not trigger this fallback. The UI reports “switching provider,” Run stages persist a `provider.fallback` event, and usage from both requests is settled. See the [local and Railway guide](./docs/design/V1/工程设计/本地运行与Railway部署.md#24-配置真实模型与-deepseek-兜底) for configuration.
 
-> **Design baselines:** [V1 engineering architecture](./docs/design/V1/工程设计/架构设计.md) · [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md)
+> **Design baselines:** [overall product positioning](./docs/design/整体/产品设计/整体产品目标与定位.md) · [V1 engineering architecture](./docs/design/V1/工程设计/架构设计.md) · [V1 agent design](./docs/design/V1/Agent设计/Agent设计.md)
 
 > **Delivery summary:** [中文说明](./docs/design/V1/产品设计/简要交付说明.md)
 
@@ -36,7 +40,7 @@ The project is inspired by [Atoms](https://atoms.dev/), but it is independently 
 
 | Version | Purpose | Role model | Status |
 | --- | --- | --- | --- |
-| **V1** | Deliver a login-isolated, code-owning, publicly testable product-building flow | Lead chooses `direct` or the complete Product Manager → Architect → Engineer → Data Analyst team | Local vertical slice implemented; Railway and Linux Sandbox acceptance remain |
+| **V1** | Deliver a login-isolated, code-owning, publicly testable product-building flow | Lead chooses `direct` or the complete Product Manager → Architect → Engineer → Data Analyst team | Railway single-replica accepted; target Linux Sandbox isolation acceptance remains |
 | **V2** | Add autonomous task graphs, role subsets, parallel work, rework, and arbitration | Lead dynamically coordinates specialist Agents under Runtime policy | Implement after V1 |
 
 The project is implemented in **V1 -> V2** order. V1 is the current development and acceptance baseline; V2 starts after V1 passes cloud acceptance.
@@ -50,7 +54,7 @@ The project is implemented in **V1 -> V2** order. V1 is the current development 
 5. Every Project owns one server-side local Git repository. Build, Edit, Resolve, and Restore versions map to Git commits.
 6. The user edits through structured controls or an xterm.js + restricted Vim WebIDE whose PTY runs in an isolated Sandbox.
 7. A collapsible right drawer lists real Project Repository files and uncommitted Run Artifacts through ownership-checked HTTP endpoints, supports refresh, and opens restricted Vim only after a version exists.
-7. Save Version validates and builds the worktree before committing; the user then previews and explicitly publishes a selected version.
+8. Save Version validates and builds the worktree before committing; the user then previews and explicitly publishes a selected version.
 
 ### A. Application Generation and Development
 
