@@ -52,7 +52,7 @@ See the [overall product goal and positioning](./docs/design/整体/产品设计
 Login establishes a server-side Session; Projects, source repositories, versions, and Sandbox Sessions are isolated by account.
 
 <p align="center">
-  <img src="./docs/assets/readme/login-zh.png" alt="Another Atom Chinese login with password Session and account-level Project isolation" width="640">
+  <img src="./docs/assets/readme/login-zh.png" alt="Another Atom Chinese login with password Session and account-level Project isolation" width="480">
 </p>
 
 Studio keeps Lead chat, specialist Agents, Project history, model selection, and account quota in one workspace.
@@ -76,7 +76,7 @@ Generated output runs as a real Web application; users inspect interactions, sou
 Build, Edit, and Restore create separate versions. History remains intact, and users explicitly choose the live version.
 
 <p align="center">
-  <img src="./docs/assets/readme/version-history-zh.png" alt="Another Atom version history where Build, Edit, and Restore create separate versions" width="640">
+  <img src="./docs/assets/readme/version-history-zh.png" alt="Another Atom version history where Build, Edit, and Restore create separate versions" width="480">
 </p>
 
 ## Overall Design Principles
