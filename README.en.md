@@ -8,7 +8,37 @@
 
 Another Atom is a multi-agent Vibe Coding workspace. Users express intent in natural language; specialist Agents plan, implement, and validate, while the Project workspace keeps interactive preview, code files, version history, and publishing in one continuous development loop.
 
-The core path is **idea → plan → multi-agent build → preview and code editing → validation and repair → version → publish → continue iterating**. See the [overall product goal and positioning](./docs/design/整体/产品设计/整体产品目标与定位.md).
+The core product flow:
+
+```text
+Idea / materials / existing project
+               |
+               v
+          Talk to Lead
+               |
+               v
+     Multi-agent planning and execution
+               |
+               v
+       Runnable app + project code
+               |
+         +-----+-------------------+
+         |                         |
+         v                         v
+ Preview / visual edit      Inspect / edit / manage files
+         |                         |
+         +-----------+-------------+
+                     v
+          Validate / repair / version
+                     |
+                     v
+              User-approved publish
+                     |
+                     v
+          Continue conversation and iteration
+```
+
+See the [overall product goal and positioning](./docs/design/整体/产品设计/整体产品目标与定位.md) for the full decisions and trade-offs.
 
 ## Core Problems
 
