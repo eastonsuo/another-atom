@@ -2,6 +2,7 @@
 
 ## Delivery Baseline
 
+- This project is developed by one person. By default, commit and push changes directly to `main`; create a separate branch or pull request only when the user explicitly asks for one.
 - Implement the project in V1 -> V2 order. V1 is the current implementation and acceptance baseline.
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
 - V1 uses a fixed sequential role pipeline: Product Manager -> Architect -> Engineer -> Data Analyst.
