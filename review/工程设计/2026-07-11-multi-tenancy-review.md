@@ -1,4 +1,6 @@
-# 多租户设计评审（Multi-Tenancy）
+# 【工程设计】多租户设计评审
+
+> 类型：工程设计｜状态：历史评审，部分结论已更新｜日期：2026-07-11｜范围：用户隔离、授权、配额与审计
 
 > 评审对象：`another-atom` 后端：`storage/models.py`、`api/routes.py`、`api/dependencies.py`、`domain/quota.py`、`agent/orchestrator.py`、`config.py`。
 > 本文可独立阅读。背景一句话：平台生成的是用户资产（项目 / 版本 / 代码产物），一旦面向多个用户或组织，租户之间的数据、配额、权限如何隔离，就直接决定了安全性、计费正确性与可扩展性。

@@ -658,7 +658,7 @@ Studio / 预览（Preview）/ 终端界面（xterm.js）
 
 - **V1 简要交付说明：** [查看说明](./V1-简要交付说明.md)
 
-- **V1 Review：** [V1 实现 Review](./review/2026-07-11-v1-implementation-review.md)
+- **V1 Review：** [V1 实现阶段总结](./review/阶段总结/2026-07-11-v1-implementation-review.md)
 
 - **V2 产品：** [V2 产品需求](./docs/v2/another-atom-v2-prd.md)
 

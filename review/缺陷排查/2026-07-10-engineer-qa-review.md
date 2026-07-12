@@ -1,4 +1,6 @@
-# Another Atom V1 Engineer & QA Bug Review
+# 【Bug】Another Atom V1 Engineer 与 QA 问题评审
+
+> 类型：Bug｜状态：历史评审，已按后续工作树复核｜日期：2026-07-10｜范围：具体缺陷、测试缺口与可复现性
 
 - Review date: 2026-07-10
 - Reviewer roles: Engineer + QA

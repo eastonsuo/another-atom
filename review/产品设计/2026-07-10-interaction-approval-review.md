@@ -1,9 +1,11 @@
-# Another Atom 交互形态评审：Approval 审批式 vs 对话式
+# 【产品设计】Approval 审批式与对话式交互评审
+
+> 类型：产品设计｜状态：历史评审｜日期：2026-07-10｜范围：Approval 交互形态与用户确认方式
 
 - 文档状态：评审意见（只读评审，不修改现有设计）
 - 评审视角：产品经理
 - 评审日期：2026-07-10
-- 关联文档：[V1 产品需求文档](../docs/v1/another-atom-v1-prd.md)、[V1 架构设计](../docs/v1/architecture-design.md)
+- 关联文档：[V1 产品需求文档](../../docs/v1/another-atom-v1-prd.md)、[V1 架构设计](../../docs/v1/architecture-design.md)
 
 ## 1. 背景与问题
 

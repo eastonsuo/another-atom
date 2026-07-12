@@ -415,7 +415,7 @@ Not completed:
 - [V1 architecture design](./docs/v1/architecture-design.md)
 - [V1 agent design](./docs/v1/agent-design.md)
 - [Local run and Railway deployment guide (Chinese)](./docs/v1/local-run-and-railway-deployment.md)
-- [V1 implementation review](./review/2026-07-11-v1-implementation-review.md)
+- [V1 implementation summary](./review/阶段总结/2026-07-11-v1-implementation-review.md)
 - [V2 product requirements](./docs/v2/another-atom-v2-prd.md)
 - [V2 architecture design](./docs/v2/architecture-design.md)
 - [V2 agent design](./docs/v2/agent-design.md)

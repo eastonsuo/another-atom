@@ -1,4 +1,6 @@
-# 项目（Project）概念与「项目 ↔ 代码仓库」绑定设计评审
+# 【工程设计】Project ↔ 代码仓库绑定设计评审
+
+> 类型：工程设计｜状态：部分已修复，详见下方 Update｜日期：2026-07-11｜范围：Project、Git 仓库、Version 与交付归属
 
 > 评审对象：`another-atom` 当前代码（`another_atom/storage/models.py`、`api/routes.py`、`agent/orchestrator.py`、`contracts/schemas.py`）。
 > 本文可独立阅读。一句话背景：用户天然期望“一个项目对应一个（自己可掌控的）代码仓库”，这关系到**代码归属、交付与掌控**；本文查证当前设计里“项目”与“仓库”到底是什么关系。
