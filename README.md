@@ -18,6 +18,10 @@
 
 构建工作区同时展示可持久化的角色进度、可交互 Preview、Project Repository 与当前 Run Artifact。文件/Vim 和运行日志默认收起为右侧工具入口，需要时展开，不持续挤压主画布。
 
+![Another Atom 已完成的贪吃蛇游戏：可交互预览、阶段流水线、运行日志与 Project 文件](./docs/assets/readme/studio-game-preview-zh.png)
+
+完成构建后，Preview 直接运行生成的网页应用；左侧保留角色阶段和 Run 事件，右侧可检查版本化的 Project 文件与本次结构化产物。
+
 ![Another Atom 版本历史：Build、Edit 和 Restore 都创建新版本](./docs/assets/readme/version-history-zh.png)
 
 版本历史区分 Build、Edit 和 Restore 来源。Restore 只创建新的 ProjectVersion 与 Git commit，旧版本不会被覆盖；线上版本仍由用户显式 Publish/Update 决定。
