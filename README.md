@@ -53,7 +53,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语
 
 登录页通过用户名和密码建立会话；Project、源码仓库、版本和 Sandbox Session 都按账号隔离。
 
-![Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态](./docs/assets/readme/studio-home-zh.png)
+![Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态](./docs/assets/readme/studio-home-v2-zh.png)
 
 中文 Studio 将 Lead 对话入口、固定专业团队、Project 历史、模型选择和账号级配额放在同一工作区；进入构建后继续展示阶段进度、运行日志、文件树、预览、版本和发布状态。
 

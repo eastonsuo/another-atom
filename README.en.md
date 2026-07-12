@@ -49,7 +49,7 @@ See the [overall product goal and positioning](./docs/design/整体/产品设计
 
 ## Product Interface
 
-![Another Atom Chinese Studio home with Lead chat, fixed specialist team, project history, and real LLM status](./docs/assets/readme/studio-home-zh.png)
+![Another Atom Chinese Studio home with Lead chat, fixed specialist team, project history, and real LLM status](./docs/assets/readme/studio-home-v2-zh.png)
 
 The Studio keeps Lead chat, the fixed specialist team, Project history, model selection, and account quota in one workspace. During a build it also exposes stage progress, Run logs, a collapsible file/Vim drawer, preview, versions, and publishing state.
 
