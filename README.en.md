@@ -113,45 +113,35 @@ Build, Edit, and Restore create separate versions. History remains intact, and u
 
 ## Overall Design Principles
 
-### Project-centered: deliver a software project, not a response
+These principles separate four concerns—product continuity, Agent collaboration, authority boundaries, and delivery state—so product behavior and engineering mechanisms are not mixed at the same level.
 
-A Project is the common owner of requirements, Agent artifacts, source repository, Preview, versions, and publishing state. Returning users continue from existing code and state rather than starting a new chat from scratch.
+### 1. What persists across the product lifecycle
 
-### Multi-agent collaboration: hand off artifacts, not roleplay messages
+- **[Project is the continuous development unit]** Users receive a persistent software project, not a one-off response. Requirements, Agent artifacts, repository, Preview, versions, and publishing state belong to the Project, so returning users continue from existing code and state.
 
-Lead is the user entry point. Product Manager, Architect, Engineer, Data Analyst, and Reviewer address product, architecture, code, data, and independent review. Their value is proven by inspectable contracts and evidence—not avatars or message count.
+- **[Every editing surface changes the same project]** Conversation captures intent, Preview verifies behavior, visual tools support quick adjustments, and source files provide precise control. Every path updates the same Project and enters the same version history.
 
-### Context handoff: each role receives only what the task requires
+### 2. How Agents collaborate
 
-Agents do not share an endlessly growing chat transcript. Runtime assembles the necessary Context for the current task and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failures remain inspectable, recoverable, and traceable.
+- **[Roles hand off inspectable artifacts]** Lead owns the entry point. Product Manager, Architect, Engineer, Data Analyst, and Reviewer own product, architecture, code, data, and independent review. Their value is demonstrated by Blueprint, ArchitectureSpec, source, DataProfile, ValidationReport, and ReviewReport—not avatar count or conversation length.
 
-### Vibe Coding: natural language, visual editing, and source files share one workspace
+- **[Context is assembled minimally for the current task]** Agents do not share an endlessly growing transcript. Runtime provides only the Context required by the current role and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failure causes remain inspectable, recoverable, and traceable.
 
-Users express intent through conversation, inspect behavior through Preview, make quick visual changes, and inspect or edit source files when precision is needed. Every path affects the same Project and version history.
+- **[Users intervene when risk changes]** Once a user explicitly requests a build, work inside the accepted scope and base budget continues automatically. Scope changes, extra budget, destructive source operations, and public deployment changes require confirmation.
 
-### Human-in-the-loop: routine work continues; users decide real risk
+### 3. Who controls authority and side effects
 
-Once a user explicitly requests a build, work inside the accepted scope and base budget may continue. Scope changes, extra budget, destructive source operations, and public deployment changes require confirmation.
+- **[Models generate content; Runtime executes side effects]** LLMs understand, plan, generate, and explain. Runtime owns identity, quota, state transitions, tool authorization, repository writes, Sandbox, and publishing. Generated code cannot directly acquire Control Plane authority.
 
-### Code ownership: source, Git history, and product versions remain traceable
+- **[Every private surface follows the same ownership check]** REST, SSE, private Preview, and Terminal WebSocket connections pass through the unified Gateway, resolve the server Session, and verify ownership of Runs, Projects, Versions, and Sandbox Sessions. Public Routes are modeled separately and read only an explicitly published version.
 
-Every Project owns a repository. Builds, edits, repairs, and restores create versions mapped to Git commits. Users inspect, edit, manage, and eventually export their code instead of receiving an opaque platform-only result.
+### 4. How delivery remains owned, publishable, and recoverable
 
-### Version and publishing: generation does not equal production
+- **[Source, Git commits, and versions stay traceable]** Every Project owns a repository. Successful builds, user edits, source saves, and Restore create ProjectVersions mapped to Git commits. Intermediate auto-repair Artifacts remain inspectable, while only validated results enter version history.
 
-Working versions may continue changing, while the public route follows the user's last explicit Publish/Update. Restore creates a new version without rewriting history or silently moving the publish pointer.
+- **[Working versions and production versions are independent]** Generation does not equal production. Working versions can keep changing, while the Public Route follows the user's last explicit Publish/Update. Restore creates a new version without rewriting history or silently moving the publish pointer.
 
-### Runtime authority: models propose; the platform controls side effects
-
-LLMs understand, plan, generate, and explain. Runtime owns identity, quota, state, tool authorization, repository writes, Sandbox, and publishing. Generated code and trusted Control Plane authority stay separated.
-
-### Unified authorization: APIs, Preview, and Terminal follow the same ownership rules
-
-REST, SSE, private Preview, and Terminal WebSocket connections all pass through the unified Gateway, resolve the server Session, and verify ownership of Runs, Projects, Versions, and Sandbox Sessions. Public Routes are modeled separately and read only an explicitly published version.
-
-### Recovery: progress and versions reflect durable facts
-
-Visible stages, errors, usage, and versions must come from recoverable state. Refresh, retry, or process restart should not repeat completed work, usage settlement, or version creation.
+- **[Visible state comes from durable facts]** Stages, errors, usage, artifacts, and versions must correspond to recoverable state. Refresh, Worker restart, or recovery execution reuses completed work and avoids duplicate calls, settlement, and version creation.
 
 ## Overall Logical Architecture
 
