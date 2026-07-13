@@ -430,6 +430,13 @@ function AuthView({
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const usernameValidationError = username.length > 0 && !/^[a-zA-Z0-9_-]{3,80}$/.test(username.trim())
+    ? ui(language, "Username must be 3–80 characters and use only letters, numbers, _ or -.")
+    : "";
+  const passwordValidationError = password.length > 0 && password.length < 10
+    ? ui(language, "Password must be at least 10 characters.")
+    : "";
+  const visibleError = error || usernameValidationError || passwordValidationError;
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedUsername = username.trim();
@@ -459,10 +466,10 @@ function AuthView({
       <span>{ui(language, signup ? "Create account" : "Session Gateway")}</span>
       <h1>{ui(language, signup ? "Create your workspace" : "Sign in")}</h1>
       <p>{ui(language, "Projects, repositories, versions, and Sandbox sessions stay isolated by account.")}</p>
-      {signup && <label>{ui(language, "Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" /></label>}
-      <label>{ui(language, "Username")}<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></label>
-      <label>{ui(language, "Password")}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={signup ? "new-password" : "current-password"} /></label>
-      {error && <div className="inline-error auth-error" role="alert" aria-live="assertive"><CircleAlert size={16} /> <span>{error}</span></div>}
+      {signup && <label>{ui(language, "Display name")}<input value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(""); }} autoComplete="name" /></label>}
+      <label>{ui(language, "Username")}<input value={username} onChange={(event) => { setUsername(event.target.value); setError(""); }} autoComplete="username" aria-invalid={Boolean(usernameValidationError)} aria-describedby={visibleError ? "auth-error" : undefined} /></label>
+      <label>{ui(language, "Password")}<input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={signup ? "new-password" : "current-password"} aria-invalid={Boolean(passwordValidationError)} aria-describedby={visibleError ? "auth-error" : undefined} /></label>
+      {visibleError && <div id="auth-error" className="inline-error auth-error" role="alert" aria-live="assertive"><CircleAlert size={16} /> <span>{visibleError}</span></div>}
       <button type="submit" className="primary-action" disabled={submitting}>{submitting && <LoaderCircle className="spin" size={16} />}{ui(language, signup ? "Create account" : "Sign in")}</button>
       <button type="button" className="auth-switch" onClick={() => { setSignup((value) => !value); setError(""); }}>{ui(language, signup ? "Already have an account? Sign in" : "Need an account? Sign up")}</button>
     </form>
