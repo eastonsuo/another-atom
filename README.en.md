@@ -261,8 +261,8 @@ Version-specific engineering boundaries remain in each architecture document; th
 
 | Version | How it advances the overall goal | Status and design sources |
 | --- | --- | --- |
-| **V1** | Proves the complete loop with a fixed specialist team, bounded Web Runtime, Project Git, versions, and explicit publishing | Railway single-replica accepted; target Linux Sandbox isolation acceptance remains. See [V1 product](./docs/design/V1/产品设计/01-核心产品需求与交互.md), [V1 Agent](./docs/design/V1/技术设计/Agent/01-多Agent设计.md), and [V1 architecture](./docs/design/V1/技术设计/工程/01-系统架构.md) |
-| **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/Agent/01-Agent运行机制.md), and [V2 architecture](./docs/design/V2/技术设计/工程/01-系统架构.md) |
+| **V1** | Proves the complete loop with a fixed specialist team, bounded Web Runtime, Project Git, versions, and explicit publishing | Railway single-replica accepted; target Linux Sandbox isolation acceptance remains. See [V1 product](./docs/design/V1/产品设计/01-核心产品需求与交互.md), [V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md), and [V1 architecture](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
+| **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/01-[Agent]-Agent运行机制.md), and [V2 architecture](./docs/design/V2/技术设计/02-[工程]-系统架构.md) |
 
 The current code includes real and Mock LLM providers, user isolation, Project Git, interactive Preview, versions and publishing, durable jobs, and Provider fallback. The backend currently collects 85 unit/integration tests. See the [V1 delivery status snapshot](./docs/review/归档/11-[综合]-2026-07-13-V1交付状态摘要.md) and [V1 review](./docs/review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md) for detailed completion status.
 
@@ -274,7 +274,7 @@ The current code includes real and Mock LLM providers, user isolation, Project G
 - [uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 22 and npm
 
-Local development defaults to SQLite and a deterministic Mock Provider, with no API key required. See the [run and deployment guide](./docs/design/V1/技术设计/工程/02-运行与部署.md) for Ollama Cloud and DeepSeek configuration.
+Local development defaults to SQLite and a deterministic Mock Provider, with no API key required. See the [run and deployment guide](./docs/design/V1/技术设计/04-[工程]-运行与部署.md) for Ollama Cloud and DeepSeek configuration.
 
 ### 1. Install backend dependencies
 
@@ -311,7 +311,7 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 - **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/产品设计/01-整体产品目标与定位.md)
 - **Design:** [Design documentation index](./docs/design/README.md)
 - **Review:** [Inspection, reflection, and bug index](./docs/review/README.md)
-- **Deployment:** [Run and deployment guide](./docs/design/V1/技术设计/工程/02-运行与部署.md)
+- **Deployment:** [Run and deployment guide](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
 - **Atoms reference:** [Atoms reference product analysis](./docs/design/整体/参考资料/01-Atoms参考产品分析.md)
 
 ## Project Status

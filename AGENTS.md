@@ -16,10 +16,10 @@
 - New Review files start under `待办`. Move a Review to `归档` only after every finding is fixed, transferred to a newer pending Review, or made an explicit version-boundary decision; any durable conclusion must first be written into `docs/design/`, and the Review must receive a dated Update with the relevant Design and verification links.
 - When a Review finds a problem that needs a dedicated solution, create or update the corresponding document under `docs/design/`, then link the Review finding and the design decision in both directions.
 - Under `docs/design/`, classify first by version scope: `V1`, `V2`, or `整体`. `V1` is the current implementation baseline, `V2` is the planned post-V1 version, and `整体` is only for system-wide principles, evolution, or references that do not belong to one version.
-- Design domain folders are `产品设计` and `技术设计`; split `技术设计` into `Agent` and `工程` by the main question. `整体/参考资料` stores external design input.
+- Design domain folders are `产品设计` and `技术设计`. Keep each version's `技术设计/` flat; mark the main question in the filename with `[Agent]` or `[工程]` instead of creating domain subdirectories. `整体/参考资料` stores external design input.
 - `docs/review/` has only two flat status directories: `待办` and `归档`. Do not add version or domain subdirectories. Record version scope and product/Agent/engineering/comprehensive review type in the document metadata instead.
 - Use Chinese directory names, file names, document titles, and prose by default. Keep English only for established technical names such as Agent, Runtime, Context, Sandbox, API, and Git. Review files use a stable global number and type tag: `NN-[产品|Agent|工程|综合]-YYYY-MM-DD-中文短主题.md`; moving a file from `待办` to `归档` must not change its name.
-- Stable design files use a two-digit reading-order prefix such as `01-`; dated Review files do not add a second sequence number. Version directories do not contain their own README; `docs/design/README.md` is the single design index.
+- Stable product design files use `NN-中文主题.md`; technical design files use `NN-[Agent|工程]-中文主题.md`. The two-digit number is the reading order within that flat directory. Dated Review files do not add a second sequence number. Version directories do not contain their own README; `docs/design/README.md` is the single design index.
 - Design documents may be revised as the baseline changes. Dated Review findings remain historical evidence; add a dated Update with code/test/deployment evidence instead of rewriting the original finding.
 
 ## Evaluation Criteria

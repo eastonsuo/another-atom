@@ -271,8 +271,8 @@ Studio / Preview / 文件与终端界面
 
 | 版本 | 服务整体目标的方式 | 状态与详细设计 |
 | --- | --- | --- |
-| **V1** | 用固定专业团队、受控 Web Runtime、Project Git、版本和显式发布证明完整闭环 | Railway 单副本已验收；Linux Sandbox 实机安全验收待完成。见 [V1 产品](./docs/design/V1/产品设计/01-核心产品需求与交互.md)、[V1 Agent](./docs/design/V1/技术设计/Agent/01-多Agent设计.md)、[V1 架构](./docs/design/V1/技术设计/工程/01-系统架构.md) |
-| **V2** | 在同一 Project、Artifact 和权限基础上增加动态任务图、角色子集、Tool、局部并行和返工 | 设计完成，待 V1 验收后实施。见 [V2 产品](./docs/design/V2/产品设计/01-产品范围与交互.md)、[V2 Agent](./docs/design/V2/技术设计/Agent/01-Agent运行机制.md)、[V2 架构](./docs/design/V2/技术设计/工程/01-系统架构.md) |
+| **V1** | 用固定专业团队、受控 Web Runtime、Project Git、版本和显式发布证明完整闭环 | Railway 单副本已验收；Linux Sandbox 实机安全验收待完成。见 [V1 产品](./docs/design/V1/产品设计/01-核心产品需求与交互.md)、[V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md)、[V1 架构](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
+| **V2** | 在同一 Project、Artifact 和权限基础上增加动态任务图、角色子集、Tool、局部并行和返工 | 设计完成，待 V1 验收后实施。见 [V2 产品](./docs/design/V2/产品设计/01-产品范围与交互.md)、[V2 Agent](./docs/design/V2/技术设计/01-[Agent]-Agent运行机制.md)、[V2 架构](./docs/design/V2/技术设计/02-[工程]-系统架构.md) |
 
 当前代码包含真实 LLM Provider、Mock Provider、用户级隔离、Project Git、可交互 Preview、版本与发布、持久化任务和 Provider 兜底。当前后端单元/集成测试共 85 项；详细完成度见 [V1 交付状态摘要](./docs/review/归档/11-[综合]-2026-07-13-V1交付状态摘要.md) 和 [V1 Review](./docs/review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md)。
 
@@ -284,7 +284,7 @@ Studio / Preview / 文件与终端界面
 - [uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 22 和 npm
 
-本地默认使用 SQLite 和确定性 Mock Provider，不需要 API Key。真实 Ollama Cloud / DeepSeek 配置见[运行与部署说明](./docs/design/V1/技术设计/工程/02-运行与部署.md)。
+本地默认使用 SQLite 和确定性 Mock Provider，不需要 API Key。真实 Ollama Cloud / DeepSeek 配置见[运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)。
 
 ### 1. 安装后端依赖
 
@@ -321,7 +321,7 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 - **整体产品：** [整体产品目标与定位](./docs/design/整体/产品设计/01-整体产品目标与定位.md)
 - **设计：** [设计文档规范与索引](./docs/design/README.md)
 - **Review：** [检查、反思与 Bug 索引](./docs/review/README.md)
-- **部署：** [运行与部署说明](./docs/design/V1/技术设计/工程/02-运行与部署.md)
+- **部署：** [运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
 - **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/参考资料/01-Atoms参考产品分析.md)
 
 ## 项目状态
