@@ -280,7 +280,12 @@ def signup(
     _, token = _create_auth_session(db, user)
     db.commit()
     _set_session_cookie(response, token)
-    return UserView(id=user.id, username=username, display_name=user.display_name)
+    return UserView(
+        id=user.id,
+        username=username,
+        display_name=user.display_name,
+        role=user.role,
+    )
 
 
 @router.post("/auth/login", response_model=UserView)
@@ -300,7 +305,12 @@ def login(
     _, token = _create_auth_session(db, user)
     db.commit()
     _set_session_cookie(response, token)
-    return UserView(id=user.id, username=username, display_name=user.display_name)
+    return UserView(
+        id=user.id,
+        username=username,
+        display_name=user.display_name,
+        role=user.role,
+    )
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -329,7 +339,12 @@ def logout(
 def me(user: User = Depends(get_current_user)) -> UserView:
     if user.username is None:
         raise AppError("AUTHENTICATION_REQUIRED", "Sign in to continue", 401)
-    return UserView(id=user.id, username=user.username, display_name=user.display_name)
+    return UserView(
+        id=user.id,
+        username=user.username,
+        display_name=user.display_name,
+        role=user.role,
+    )
 
 
 @router.get("/quota", response_model=QuotaView)

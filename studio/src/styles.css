@@ -106,6 +106,8 @@ button { color: inherit; }
 .auth-switch { width: 100%; margin-top: 13px; border: 0; background: transparent; color: #625c72; font-size: 11px; font-weight: 800; cursor: pointer; }
 .account-button { margin-top: 10px; padding: 10px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; text-align: left; cursor: pointer; }
 .account-button span, .account-button small { display: block; }.account-button span { font-weight: 900; }.account-button small { color: #69627d; }
+.admin-console-link { min-height: 40px; margin-top: 10px; padding: 0 10px; display: grid; grid-template-columns: 18px 1fr 15px; align-items: center; gap: 7px; border: 1.5px solid var(--ink); border-radius: 5px; background: var(--yellow); color: var(--ink); box-shadow: 2px 2px 0 var(--ink); font-size: 11px; font-weight: 900; text-decoration: none; }
+.admin-console-link:hover { background: #ffe17f; transform: translate(-1px, -1px); }
 .lead-reply { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: start; margin-top: 18px; padding: 14px; border: 2px solid var(--ink); border-radius: 7px; background: #fff; box-shadow: 4px 4px 0 var(--ink); text-align: left; }
 .lead-reply p { margin: 4px 0; font-size: 13px; line-height: 1.5; }.lead-reply small { color: #69627d; }.lead-reply button { align-self: center; padding: 8px 10px; border: 1.5px solid var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); font-weight: 900; cursor: pointer; }
 .blueprint-snapshot { margin-top: 18px; padding: 10px; border: 1.5px solid var(--ink); border-radius: 6px; background: rgba(255,255,255,.8); }

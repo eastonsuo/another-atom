@@ -147,6 +147,7 @@ export interface UserView {
   id: string;
   username: string;
   display_name: string;
+  role: "user" | "admin";
 }
 
 export interface LeadDecisionView {

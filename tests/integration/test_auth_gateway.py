@@ -21,9 +21,12 @@ def test_signup_session_and_logout_enforce_identity(client: TestClient, monkeypa
         )
         assert signup.status_code == 201
         assert signup.json()["username"] == "alice"
+        assert signup.json()["role"] == "user"
         assert "another_atom_session=" in signup.headers["set-cookie"]
         assert "HttpOnly" in signup.headers["set-cookie"]
-        assert client.get("/api/auth/me").json()["display_name"] == "Alice"
+        current_user = client.get("/api/auth/me").json()
+        assert current_user["display_name"] == "Alice"
+        assert current_user["role"] == "user"
 
         assert client.post("/api/auth/logout").status_code == 204
         assert client.get("/api/projects").status_code == 401

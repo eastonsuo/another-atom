@@ -379,6 +379,7 @@ class UserView(BaseModel):
     id: str
     username: str
     display_name: str
+    role: Literal["user", "admin"]
 
 
 class AdminUserView(UserView):

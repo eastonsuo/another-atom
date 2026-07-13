@@ -83,6 +83,7 @@ def test_admin_can_list_users_projects_and_latest_run(client: TestClient) -> Non
     )
     assert login.status_code == 200
     assert login.json()["role"] == "admin"
+    assert client.get("/api/auth/me").json()["role"] == "admin"
 
     users = client.get("/api/admin/users")
     assert users.status_code == 200

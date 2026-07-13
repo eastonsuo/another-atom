@@ -14,6 +14,7 @@ import {
   Plus,
   Rocket,
   RotateCcw,
+  ShieldCheck,
   Smartphone,
   Sparkles,
   Users,
@@ -163,6 +164,7 @@ const ZH: Record<string, string> = {
   "left": "剩余",
   "LLM usage is isolated to this account.": "LLM 用量按当前账号隔离。",
   "Sign out": "退出登录",
+  "Admin console": "管理后台",
   "Real LLM is active": "真实 LLM 已启用",
   "Mock LLM is active": "Mock LLM 已启用",
   "Your build team": "你的构建团队",
@@ -768,6 +770,7 @@ function Sidebar({
         <div className="quota-track"><span style={{ width: `${quota ? (quota.used / quota.limit) * 100 : 0}%` }} /></div>
         <small>{ui(language, "LLM usage is isolated to this account.")}</small>
       </div>
+      {user.role === "admin" && <a className="admin-console-link" href="/admin"><ShieldCheck size={16} /><span>{ui(language, "Admin console")}</span><ChevronRight size={15} /></a>}
       <button className="account-button" onClick={onLogout}><span>{user.display_name}</span><small>{ui(language, "Sign out")}</small></button>
     </aside>
   );
