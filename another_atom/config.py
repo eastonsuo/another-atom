@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     session_cookie_name: str = "another_atom_session"
     session_ttl_hours: int = 168
     session_cookie_secure: bool = False
+    admin_username: str = "admin"
+    admin_password: str = "admin12345"
+    admin_display_name: str = "Another Atom Admin"
     project_repository_root: Path = Path("data/project-repositories")
     sandbox_host_url: str | None = None
     sandbox_shared_secret: str | None = None

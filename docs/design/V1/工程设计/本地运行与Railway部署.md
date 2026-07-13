@@ -59,6 +59,7 @@ uv run uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 - Studio：<http://127.0.0.1:8000>
 - API 文档：<http://127.0.0.1:8000/docs>
 - 健康检查：<http://127.0.0.1:8000/api/health>
+- 管理员后台：<http://127.0.0.1:8000/admin/login>（开发默认 `admin / admin12345`）
 
 本地默认数据库是 `data/another_atom.db`。停止服务后再次启动，已有项目和版本仍会保留。需要干净数据时，先停止服务，再删除该数据库文件。
 
@@ -86,7 +87,19 @@ DEEPSEEK_HOST=https://api.deepseek.com
 
 Key 不得提交到 Git。曾经出现在聊天、日志或截图中的 Key 应先在服务商侧轮换，再写入本地 `.env` 或 Railway Secret。
 
-### 2.5 本地试用路径
+### 2.5 配置管理员后台
+
+开发环境启动时会初始化只读管理员 `admin / admin12345`。密码只以 PBKDF2 哈希存入数据库。公开部署必须在 Railway Variables 中覆盖：
+
+```text
+ADMIN_USERNAME=<管理员用户名>
+ADMIN_PASSWORD=<独立强密码>
+ADMIN_DISPLAY_NAME=<管理员显示名称>
+```
+
+服务重启时会将这组变量同步到数据库中的管理员账户。普通注册用户不能通过页面将自己升级为管理员。
+
+### 2.6 本地试用路径
 
 1. 在 Home 输入任意产品需求，例如扫雷游戏、计算器、看板或商品目录。
 2. 选择 `Team` 和当前可用模型，点击右侧构建按钮。模型在 Run 创建后固定，不受后续切换影响。

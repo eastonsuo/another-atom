@@ -48,6 +48,29 @@ def get_current_user(
     raise AppError("AUTHENTICATION_REQUIRED", "Sign in to continue", 401)
 
 
+def get_current_admin(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User:
+    """Authenticate an administrator without the test-only user header fallback."""
+    session_token = request.cookies.get(get_settings().session_cookie_name)
+    if not session_token:
+        raise AppError("AUTHENTICATION_REQUIRED", "Administrator sign-in is required", 401)
+    auth_session = db.scalar(
+        select(AuthSession).where(
+            AuthSession.token_hash == hash_session_token(session_token),
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > now_utc(),
+        )
+    )
+    user = db.get(User, auth_session.user_id) if auth_session else None
+    if user is None:
+        raise AppError("AUTHENTICATION_REQUIRED", "Administrator sign-in is required", 401)
+    if user.role != "admin":
+        raise AppError("ADMIN_ACCESS_REQUIRED", "Administrator access is required", 403)
+    return user
+
+
 def get_job_dispatcher() -> Callable[[str], None]:
     # The durable worker polls PostgreSQL. This hook only lets tests wake it synchronously.
     return lambda _job_id: None

@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from another_atom.agent.tasks import recover_interrupted_blueprints
+from another_atom.api.admin_routes import router as admin_router
 from another_atom.api.routes import router
 from another_atom.build.worker import worker_loop
 from another_atom.config import get_settings
@@ -68,6 +69,7 @@ def create_app(*, initialize_database: bool = True) -> FastAPI:
         )
 
     app.include_router(router)
+    app.include_router(admin_router)
     _mount_studio(app, get_settings().studio_dist)
     return app
 

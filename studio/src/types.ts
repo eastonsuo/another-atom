@@ -164,3 +164,54 @@ export interface SandboxSessionView {
   websocket_path: string;
   expires_at: string;
 }
+
+export interface AdminUserView extends UserView {
+  role: "admin";
+}
+
+export interface AdminUserSummary {
+  id: string;
+  username: string;
+  display_name: string;
+  plan: string;
+  quota_limit: number;
+  quota_used: number;
+  quota_reserved: number;
+  project_count: number;
+  created_at: string;
+}
+
+export interface AdminUserList {
+  items: AdminUserSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface AdminRunSummary {
+  id: string;
+  model: string;
+  status: string;
+  current_stage: string;
+  error_code: string | null;
+  error_summary: string | null;
+  quota_spent: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminProjectSummary {
+  id: string;
+  name: string;
+  summary: string;
+  status: string;
+  updated_at: string;
+  support_level: string | null;
+  latest_run: AdminRunSummary | null;
+}
+
+export interface AdminProjectDetail {
+  project: AdminProjectSummary;
+  prompt_summary: string;
+  events: RunEvent[];
+}

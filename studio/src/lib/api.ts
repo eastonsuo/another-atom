@@ -1,5 +1,9 @@
 import type {
   AppSpec,
+  AdminProjectDetail,
+  AdminProjectSummary,
+  AdminUserList,
+  AdminUserView,
   AttachmentMeta,
   Blueprint,
   DeploymentView,
@@ -31,6 +35,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  adminLogin: (username: string, password: string) =>
+    request<AdminUserView>("/api/admin/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  adminMe: () => request<AdminUserView>("/api/admin/me"),
+  adminUsers: (query = "", page = 1, pageSize = 20) =>
+    request<AdminUserList>(`/api/admin/users?${new URLSearchParams({ query, page: String(page), page_size: String(pageSize) })}`),
+  adminUserProjects: (userId: string) =>
+    request<AdminProjectSummary[]>(`/api/admin/users/${userId}/projects`),
+  adminProject: (projectId: string) =>
+    request<AdminProjectDetail>(`/api/admin/projects/${projectId}`),
+  adminRunLog: (runId: string) => `/api/admin/runs/${runId}/logs/download`,
   me: () => request<UserView>("/api/auth/me"),
   signup: (username: string, password: string, displayName?: string) =>
     request<UserView>("/api/auth/signup", {

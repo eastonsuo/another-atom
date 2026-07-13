@@ -30,6 +30,7 @@ class User(Base, TimestampMixin):
     username: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str] = mapped_column(String(120), default="Demo User")
+    role: Mapped[str] = mapped_column(String(20), default="user", index=True)
     plan: Mapped[str] = mapped_column(String(32), default="demo")
     quota_limit: Mapped[int] = mapped_column(Integer, default=100)
     quota_used: Mapped[int] = mapped_column(Integer, default=0)

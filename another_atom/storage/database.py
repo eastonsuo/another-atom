@@ -1,3 +1,4 @@
+import re
 from collections.abc import Generator
 
 from sqlalchemy import Engine, create_engine, event, inspect, select, text
@@ -53,6 +54,7 @@ def init_database(target_engine: Engine | None = None) -> None:
         user_additions = {
             "username": "VARCHAR(80)",
             "password_hash": "VARCHAR(255)",
+            "role": "VARCHAR(20) DEFAULT 'user' NOT NULL",
         }
         for name, column_type in user_additions.items():
             if name not in user_columns:
@@ -103,8 +105,10 @@ def init_database(target_engine: Engine | None = None) -> None:
         connection.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_idx ON users (username)")
         )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_role ON users (role)"))
 
     from another_atom.contracts.schemas import AppSpec, VersionSource
+    from another_atom.domain.auth import hash_password, verify_password
     from another_atom.repository.service import commit_version, initialize_repository
     from another_atom.storage.models import Project, ProjectVersion, User
 
@@ -119,6 +123,34 @@ def init_database(target_engine: Engine | None = None) -> None:
                     quota_limit=get_settings().demo_quota_units,
                 )
             )
+            db.commit()
+        settings = get_settings()
+        if bool(settings.admin_username) != bool(settings.admin_password):
+            raise RuntimeError("ADMIN_USERNAME and ADMIN_PASSWORD must be configured together")
+        if settings.admin_username and settings.admin_password:
+            admin_username = settings.admin_username.lower()
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{3,80}", admin_username):
+                raise RuntimeError("ADMIN_USERNAME must satisfy the normal username contract")
+            if len(settings.admin_password) < 10:
+                raise RuntimeError("ADMIN_PASSWORD must contain at least 10 characters")
+            admin = db.scalar(select(User).where(User.username == admin_username))
+            if admin is None:
+                admin = User(
+                    username=admin_username,
+                    display_name=settings.admin_display_name,
+                    role="admin",
+                    plan="internal",
+                    quota_limit=0,
+                    password_hash=hash_password(settings.admin_password),
+                )
+                db.add(admin)
+            else:
+                admin.role = "admin"
+                admin.display_name = settings.admin_display_name
+                if admin.password_hash is None or not verify_password(
+                    settings.admin_password, admin.password_hash
+                ):
+                    admin.password_hash = hash_password(settings.admin_password)
             db.commit()
         projects = db.scalars(select(Project).order_by(Project.created_at)).all()
         for project in projects:

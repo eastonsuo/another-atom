@@ -381,6 +381,57 @@ class UserView(BaseModel):
     display_name: str
 
 
+class AdminUserView(UserView):
+    role: Literal["admin"] = "admin"
+
+
+class AdminUserSummary(BaseModel):
+    id: str
+    username: str
+    display_name: str
+    plan: str
+    quota_limit: int
+    quota_used: int
+    quota_reserved: int
+    project_count: int
+    created_at: datetime
+
+
+class AdminUserList(BaseModel):
+    items: list[AdminUserSummary]
+    page: int
+    page_size: int
+    total: int
+
+
+class AdminRunSummary(BaseModel):
+    id: str
+    model: str
+    status: str
+    current_stage: str
+    error_code: str | None = None
+    error_summary: str | None = None
+    quota_spent: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminProjectSummary(BaseModel):
+    id: str
+    name: str
+    summary: str
+    status: str
+    updated_at: datetime
+    support_level: str | None = None
+    latest_run: AdminRunSummary | None = None
+
+
+class AdminProjectDetail(BaseModel):
+    project: AdminProjectSummary
+    prompt_summary: str
+    events: list[EventView] = Field(default_factory=list)
+
+
 class LeadMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     force_team: bool = False
