@@ -14,7 +14,18 @@
 
 ## 摘要
 
-Runtime 为每轮修改组装 Project Context、ChangeBrief 和基线源码快照，再按固定流水线生成候选 AppSpec，由平台计算文件 Diff、执行校验，并以版本 CAS 和 Git commit 写回同一 Project。Agent 不直接互聊、不自行决定下一个角色，也不能绕过权限、配额、重试上限或发布控制。
+- **Project 对话**
+  - 新增 Project 级消息、线程和 Lead 路由，使 ask、clarify 与 modify 共享可恢复的对话上下文。
+- **修改基线**
+  - 每轮修改绑定 ProjectVersion、Git commit、Project Context、ChangeBrief 和 BaseSourceSnapshot。
+- **阶段协作**
+  - 固定流水线使用增量 Contract 生成候选 AppSpec；Agent 通过 Artifact 交接，不直接互聊或自行改变流程。
+- **Diff 与质量证据**
+  - SourceDiff 由 Runtime 比较基线与候选代码确定性生成，Validator 和 Reviewer 基于真实证据决定是否接受。
+- **并发与版本写回**
+  - Project 单写 CAS、最终版本 CAS 和 VersionMaterialization 保证 Git commit 与 ProjectVersion 幂等对应。
+- **失败恢复**
+  - Worker 按 Artifact hash 恢复已完成阶段，冲突、配额不足、取消和失败不移动当前版本；重试、额外预算与发布继续受 Runtime 控制。
 
 ## 1. 技术结论
 

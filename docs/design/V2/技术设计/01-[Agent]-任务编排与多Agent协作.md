@@ -17,7 +17,16 @@ V1 固定团队只能按预定顺序完成一次构建，Lead 不能根据任务
 
 ## 摘要
 
-V2 延续一个 Lead 和五个专业 Agent，以结构化 TaskGraph、Artifact、Handoff、ToolRequest 和 Evidence 组织动态协作。Agent 可以提出委派、回退和修订，但不能自行扩大权限、预算或轮次，也不能执行发布；Runtime 对状态、审批、工具授权和最终收敛拥有控制权。
+- **协作模型**
+  - V2 延续一个 Lead 和五个专业 Agent，以结构化 TaskGraph、Artifact、Handoff、ToolRequest 和 Evidence 组织动态协作。
+- **任务推进**
+  - Lead 提交任务拆解和依赖关系，Runtime 校验后调度角色子集、局部并行和阶段 Handoff。
+- **返工与收敛**
+  - Reviewer 和确定性 Evidence 可以触发有预算的回退、修订和仲裁，重复失败必须进入确定终态。
+- **Tool 边界**
+  - Agent 只能提交 ToolRequest，不能自行扩大权限、预算、轮次或直接访问宿主资源。
+- **Runtime 控制**
+  - Runtime 对状态推进、用户审批、工具授权和最终收敛拥有控制权，Agent 不执行发布。
 
 ## 1. 设计结论
 

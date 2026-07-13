@@ -14,7 +14,18 @@
 
 ## 摘要
 
-V2 将 Control Plane、Agent Worker、PostgreSQL Task/Lease、S3-compatible Artifact Storage、Tool Gateway 和 SandboxProvider 分开；Task、预算、Handoff、ToolRequest 与 Event 先持久化，再执行副作用。Agent 只申请执行，平台负责租户归属、幂等、权限、隔离、补偿和版本写入；V1 的 Project Git 与发布语义保持兼容。
+- **服务拆分**
+  - V2 将 Control Plane 与独立 Agent Worker 分离，Web 请求不直接运行 Agent 或 Build 重任务。
+- **持久化调度**
+  - PostgreSQL Task/Lease 保存任务、预算和状态，所有副作用在持久化事实之后执行。
+- **Artifact 交接**
+  - S3-compatible Object Storage 保存不可变输入、Patch、BuildArtifact 和 Evidence，支持多 Worker 共享。
+- **Tool 与隔离**
+  - Tool Gateway 统一校验 ToolRequest，SandboxProvider 按任务提供受限执行环境。
+- **一致性与补偿**
+  - 平台负责租户归属、幂等、权限、lease 恢复、部分失败补偿和最终版本写入。
+- **兼容边界**
+  - V2 保持 V1 的身份、Project Git、ProjectVersion 和发布语义兼容。
 
 ## 1. 技术选型
 
