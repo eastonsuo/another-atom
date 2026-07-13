@@ -38,7 +38,7 @@ Idea / materials / existing project
           Continue conversation and iteration
 ```
 
-See the [overall product goal and positioning](./docs/design/整体/产品设计/01-整体产品目标与定位.md) for the full decisions and trade-offs.
+See the [overall product goal and positioning](./docs/design/整体/01-[产品]-整体产品目标与定位.md) for the full decisions and trade-offs.
 
 ## Core Problems
 
@@ -308,11 +308,11 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 ## Documentation
 
 - **Complete knowledge base (Chinese):** [Full project design knowledge base](./PROJECT_KNOWLEDGE_BASE.md)
-- **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/产品设计/01-整体产品目标与定位.md)
+- **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
 - **Design:** [Design documentation index](./docs/design/README.md)
 - **Review:** [Inspection, reflection, and bug index](./docs/review/README.md)
 - **Deployment:** [Run and deployment guide](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
-- **Atoms reference:** [Atoms reference product analysis](./docs/design/整体/参考资料/01-Atoms参考产品分析.md)
+- **Atoms reference:** [Atoms reference product analysis](./docs/design/整体/02-[参考]-Atoms参考产品分析.md)
 
 ## Project Status
 

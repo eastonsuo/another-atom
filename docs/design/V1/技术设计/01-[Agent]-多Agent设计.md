@@ -7,11 +7,18 @@
 - 产品设计：[Another Atom V1 核心产品需求与交互](../产品设计/01-核心产品需求与交互.md)
 - 工程设计：[Another Atom V1 系统架构](./03-[工程]-系统架构.md)
 - 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md)
-- 整体产品：[Another Atom 整体产品目标与定位](../../整体/产品设计/01-整体产品目标与定位.md)
+- 整体产品：[Another Atom 整体产品目标与定位](../../整体/01-[产品]-整体产品目标与定位.md)
 - 问题整理：[多角色 Agent 设计问题整理](../../../review/归档/10-[Agent]-2026-07-13-多角色Agent设计问题整理.md)
 - 演进讨论：[Agent Runtime 边界与演进讨论](../../../review/归档/09-[Agent]-2026-07-12-Agent-Runtime边界与演进讨论.md)
 - V2 演进：[Another Atom V2 任务编排与多 Agent 协作](../../V2/技术设计/01-[Agent]-任务编排与多Agent协作.md)
 
+## 背景
+
+V1 需要让多角色分工可检查、可恢复且能在有限成本内完成交付，不能依赖开放式 Agent 自主循环。本文把角色职责、结构化产物、阶段 Context、Human-in-the-loop 和 Runtime 控制边界统一为一份 Agent 实施基线。
+
+## 摘要
+
+V1 使用 Lead `direct/team` 二选一路由和固定顺序团队：Product Manager、Architect、Engineer、Data Analyst、Runtime Validator、Reviewer。Agent 只产生受 Schema 约束的决策与 Artifact；身份、权限、配额、重试、确定性校验、代码写入和发布由平台 Runtime 控制。动态 TaskGraph、角色自主委派和开放 Tool 属于 V2。
 
 
 ## 1. 设计结论

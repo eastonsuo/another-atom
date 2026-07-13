@@ -8,6 +8,14 @@
 - Agent 设计：[Another Atom V2 任务编排与多 Agent 协作](./01-[Agent]-任务编排与多Agent协作.md)
 - V1 工程基线：[Another Atom V1 系统架构](../../V1/技术设计/03-[工程]-系统架构.md)
 
+## 背景
+
+动态 TaskGraph、多 Worker、受控 Tool 和任务级 Sandbox 超出了 V1 单实例 SQLite Worker 与本地 Volume 的工程边界。V2 需要在保留身份、Project Git 和版本语义的同时，引入可持久化、可横向执行且能恢复的运行基础设施。
+
+## 摘要
+
+V2 将 Control Plane、Agent Worker、PostgreSQL Task/Lease、S3-compatible Artifact Storage、Tool Gateway 和 SandboxProvider 分开；Task、预算、Handoff、ToolRequest 与 Event 先持久化，再执行副作用。Agent 只申请执行，平台负责租户归属、幂等、权限、隔离、补偿和版本写入；V1 的 Project Git 与发布语义保持兼容。
+
 ## 1. 技术选型
 
 V2 延续 V1 的 React/FastAPI/PostgreSQL、Session Gateway、ProjectRepository 和 Linux Sandbox Host Contract，但将 Web、Agent Worker、Task Sandbox 和 Artifact Storage 拆成更细边界。V2 不重新发明身份、仓库或 WebIDE，而是在同一 Project Git 历史上增加 TaskGraph 与独立任务快照。

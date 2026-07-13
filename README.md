@@ -38,7 +38,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户通过自然语
          继续对话和迭代
 ```
 
-完整产品判断与取舍见[整体产品目标与定位](./docs/design/整体/产品设计/01-整体产品目标与定位.md)。
+完整产品判断与取舍见[整体产品目标与定位](./docs/design/整体/01-[产品]-整体产品目标与定位.md)。
 
 ## 要解决的核心问题
 
@@ -318,11 +318,11 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 ## 文档导航
 
 - **完整知识库：** [项目完整设计知识库](./PROJECT_KNOWLEDGE_BASE.md)
-- **整体产品：** [整体产品目标与定位](./docs/design/整体/产品设计/01-整体产品目标与定位.md)
+- **整体产品：** [整体产品目标与定位](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
 - **设计：** [设计文档规范与索引](./docs/design/README.md)
 - **Review：** [检查、反思与 Bug 索引](./docs/review/README.md)
 - **部署：** [运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
-- **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/参考资料/01-Atoms参考产品分析.md)
+- **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/02-[参考]-Atoms参考产品分析.md)
 
 ## 项目状态
 

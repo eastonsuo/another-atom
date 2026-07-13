@@ -8,6 +8,14 @@
 - **Agent 基线：** [V1 多 Agent 设计](./01-[Agent]-多Agent设计.md)
 - **工程基线：** [V1 系统架构](./03-[工程]-系统架构.md)
 
+## 背景
+
+当前固定团队面向首次 Build，Engineer 只接收原始 Prompt、Blueprint 和 ArchitectureSpec；已有 Project 的代码、版本和历史修改尚未形成可供 Agent 使用的增量 Contract。本文定义基于现有代码继续修改所需的技术闭环。
+
+## 摘要
+
+Runtime 为每轮修改组装 Project Context、ChangeBrief 和基线源码快照，再按固定流水线生成候选 AppSpec，由平台计算文件 Diff、执行校验，并以版本 CAS 和 Git commit 写回同一 Project。Agent 不直接互聊、不自行决定下一个角色，也不能绕过权限、配额、重试上限或发布控制。
+
 ## 1. 技术结论
 
 这项功能不让 Agent 彼此直接聊天，也不让 Lead 直接调用 Engineer。Agent 之间通过 Runtime 顺序调度和不可变 Artifact 协作：
