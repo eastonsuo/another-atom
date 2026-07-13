@@ -4,7 +4,7 @@
 
 - **文档状态：** V1 技术设计基线；Blueprint adapted 审批已实现，通用 Approval Contract 待扩展
 - **技术范围：** Risk Policy、Approval Contract、状态机、API、持久化、并发、恢复、事件与验收
-- **产品设计：** [V1 Human-in-the-loop 用户审批](../产品设计/04-Human-in-the-loop用户审批.md)
+- **产品设计：** [V1 Human-in-the-loop 用户审批](../产品设计/04-[TODO]-Human-in-the-loop用户审批.md)
 - **Agent 基线：** [V1 多 Agent 设计](./01-[Agent]-多Agent设计.md)
 - **对话修改：** [V1 基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
 - **工程基线：** [V1 系统架构](./03-[工程]-系统架构.md)
@@ -168,6 +168,26 @@ VALIDATION_BLOCKED
    - 命中后保留候选 Artifact 和 Evidence，但不创建 ProjectVersion。
 
 如果执行前 Approval 的 subject 已经包含明确的允许范围，且实际 Diff 未扩大，不再重复请求。实际影响扩大时必须创建新的 subject 和 Approval。
+
+### 3.4 依赖外部大模型的应用
+
+“生成应用时使用 Provider”与“生成后的应用可以调用大模型”是两个不同能力。V1 Agent Runtime 可以调用 Provider 生成受控 Web 源码，但生成的 Public App 没有外部模型 Tool、服务端 Secret 或开放网络权限。
+
+以大模型翻译软件为例：
+
+```text
+original requirement: 真实 LLM 翻译
+capability result: external model runtime unsupported
+adapted subject:
+  preserved: 翻译工具身份、输入与语言选择、触发和结果交互
+  mapped: 真实翻译结果 -> 明确标注的模拟结果
+  omitted: 模型 API、Secret、真实翻译质量、服务端配额
+```
+
+- 用户接受上述 adapted subject 时，Risk Policy 输出 `require_approval`，Approval hash 必须覆盖 preserved/mapped/omitted 内容；
+- 用户坚持以真实模型输出作为验收条件时，Risk Policy 输出 `deny` 或 Needs input，不能让 Approval 绕过 Capability Policy；
+- Engineer 生成的候选代码仍由 Validator 检查外部请求、Secret 和网络能力，Reviewer 不能把违规实现改写为通过；
+- 生成后的模拟译文不进入真实翻译质量验收。用户对 UI 和交互不满意可以继续修改，对模型效果不满意必须先改变 Runtime 能力，而不是重试相同前端生成链路。
 
 ## 4. Approval Contract
 
