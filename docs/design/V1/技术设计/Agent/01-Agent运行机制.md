@@ -1,16 +1,16 @@
-# Another Atom V1 多角色 Agent 设计
+# Another Atom V1 Agent 运行机制
 
 [toc]
 
 - 文档状态：V1 实施基线
 - 更新日期：2026-07-13
-- 产品文档：[Another Atom V1 产品需求文档](../产品设计/产品需求.md)
-- 工程架构：[Another Atom V1 架构设计](../工程设计/架构设计.md)
-- 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/V1/综合评审/2026-07-12-关键设计与实现检查.md)
-- 整体产品：[Another Atom 整体产品目标与定位](../../整体/产品设计/整体产品目标与定位.md)
-- 设计问答：[多角色 Agent 设计问答](./多角色Agent设计问答.md)
-- 讨论文档：[Agent Runtime 边界与演进讨论](2026-07-12-Agent-Runtime边界与演进讨论.md)
-- V2 演进：[Another Atom V2 Agent 设计](../../V2/Agent设计/Agent设计.md)
+- 产品设计：[Another Atom V1 产品范围与交互](../../产品设计/01-产品范围与交互.md)
+- 工程设计：[Another Atom V1 系统架构](../工程/01-系统架构.md)
+- 当前实现：[Another Atom V1 关键设计与实现 Review](../../../../review/V1/综合评审/2026-07-12-关键设计与实现检查.md)
+- 整体产品：[Another Atom 整体产品目标与定位](../../../整体/产品设计/01-整体产品目标与定位.md)
+- 问题整理：[多角色 Agent 设计问题整理](../../../../review/V1/Agent评审/2026-07-13-多角色Agent设计问题整理.md)
+- 演进讨论：[Agent Runtime 边界与演进讨论](../../../../review/整体/Agent评审/2026-07-12-Agent-Runtime边界与演进讨论.md)
+- V2 演进：[Another Atom V2 Agent 运行机制](../../../V2/技术设计/Agent/01-Agent运行机制.md)
 
 ## 1. 设计结论
 
@@ -49,7 +49,7 @@ V1 把一次构建拆成三个边界清楚的步骤：
 
 ## 2. V1 角色与 Contract
 
-本节以当前 [Pydantic Schema](../../../../another_atom/contracts/schemas.py) 和 [Provider 接口](../../../../another_atom/agent/provider.py) 为硬 Contract。字段长度、枚举和数量限制来自代码；角色应做什么、不得做什么属于语义约束，由 Prompt、Orchestrator、Risk Policy 和 Validator 共同执行。
+本节以当前 [Pydantic Schema](../../../../../another_atom/contracts/schemas.py) 和 [Provider 接口](../../../../../another_atom/agent/provider.py) 为硬 Contract。字段长度、枚举和数量限制来自代码；角色应做什么、不得做什么属于语义约束，由 Prompt、Orchestrator、Risk Policy 和 Validator 共同执行。
 
 ### 2.1 固定团队总览
 
@@ -529,7 +529,7 @@ validation.issue_detected -> User Resolve
     -> ProjectVersion(source=Resolve)
 ```
 
-两条路径共用 Artifact、Event 和 Version 基础设施，但状态和文案不同。Resolve 处理已构建应用中的可定位问题，不能被包装成 Agent 自动修复了 Renderer、编译或资源错误；Build Worker 的工程恢复规则以 [V1 架构设计](../工程设计/架构设计.md)为准。
+两条路径共用 Artifact、Event 和 Version 基础设施，但状态和文案不同。Resolve 处理已构建应用中的可定位问题，不能被包装成 Agent 自动修复了 Renderer、编译或资源错误；Build Worker 的工程恢复规则以 [V1 系统架构](../工程/01-系统架构.md)为准。
 
 ## 9. Prompt、版本与可观测性
 

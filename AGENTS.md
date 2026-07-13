@@ -11,12 +11,13 @@
 
 ## Documentation Governance
 
-- `docs/design/` is the normative, continuously maintained design source. Put product requirements, Agent contracts and runtime design, engineering architecture and deployment design, and other stable design/reference material there.
+- `docs/design/` is the normative, continuously maintained design source. Product requirements and product-level interaction design share one product design baseline; Agent/runtime and engineering implementation belong to technical design.
 - `docs/review/` records dated inspections, reflections, bugs, verification evidence, and milestone findings. A Review states what was checked and what was found; it does not become the long-term home of a solution design.
 - When a Review finds a problem that needs a dedicated solution, create or update the corresponding document under `docs/design/`, then link the Review finding and the design decision in both directions.
 - Under both `docs/design/` and `docs/review/`, classify first by version scope: `V1`, `V2`, or `整体`. `V1` is the current implementation baseline, `V2` is the planned post-V1 version, and `整体` is only for system-wide principles, evolution, or references that do not belong to one version.
-- Design domain folders are `产品设计`, `Agent设计`, `工程设计`, and `参考资料`. Review domain folders are `产品评审`, `Agent评审`, `工程评审`, and `综合评审`. Classify by the main question the document answers, not by its author or temporary workflow stage.
+- Design domain folders are `产品设计` and `技术设计`; split `技术设计` into `Agent` and `工程` by the main question. `整体/参考资料` stores external design input. Review domain folders are `产品评审`, `Agent评审`, `工程评审`, and `综合评审`. Classify by the main question the document answers, not by its author or temporary workflow stage.
 - Use Chinese directory names, file names, document titles, and prose by default. Keep English only for established technical names such as Agent, Runtime, Context, Sandbox, API, and Git. Dated Review files use `YYYY-MM-DD-中文短主题.md`.
+- Stable design files use a two-digit reading-order prefix such as `01-`; dated Review files do not add a second sequence number. Version directories do not contain their own README; `docs/design/README.md` is the single design index.
 - Design documents may be revised as the baseline changes. Dated Review findings remain historical evidence; add a dated Update with code/test/deployment evidence instead of rewriting the original finding.
 
 ## Evaluation Criteria
