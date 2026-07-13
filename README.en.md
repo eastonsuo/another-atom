@@ -113,35 +113,35 @@ Build, Edit, and Restore create separate versions. History remains intact, and u
 
 ## Overall Design Principles
 
-These principles separate four concerns—product continuity, Agent collaboration, authority boundaries, and delivery state—so product behavior and engineering mechanisms are not mixed at the same level.
+These principles answer four questions: how a project keeps moving, how Agents collaborate, how the platform controls execution, and how results are saved and published.
 
-### 1. What persists across the product lifecycle
+### 1. How a project keeps moving
 
-- **[Project is the continuous development unit]** Users receive a persistent software project, not a one-off response. Requirements, Agent artifacts, repository, Preview, versions, and publishing state belong to the Project, so returning users continue from existing code and state.
+- **[Project carries the complete development process]** Users receive a software project they can keep changing, not a one-off response. Requirements, Agent artifacts, repository, Preview, versions, and publishing state belong to the Project, so returning users continue from existing code and state.
 
-- **[Every editing surface changes the same project]** Conversation captures intent, Preview verifies behavior, visual tools support quick adjustments, and source files provide precise control. Every path updates the same Project and enters the same version history.
+- **[Every editing surface points to the same Project]** Conversation captures intent, Preview verifies behavior, visual tools support quick adjustments, and source files provide precise control. Changes from every surface return to the same Project and enter the same version history.
 
-### 2. How Agents collaborate
+### 2. How Agents divide and hand off work
 
-- **[Roles hand off inspectable artifacts]** Lead owns the entry point. Product Manager, Architect, Engineer, Data Analyst, and Reviewer own product, architecture, code, data, and independent review. Their value is demonstrated by Blueprint, ArchitectureSpec, source, DataProfile, ValidationReport, and ReviewReport—not avatar count or conversation length.
+- **[Roles collaborate through inspectable artifacts]** Lead receives user requests. Product Manager, Architect, Engineer, Data Analyst, and Reviewer own product, architecture, code, data, and independent review. Each role must deliver a Blueprint, ArchitectureSpec, source, DataProfile, ValidationReport, or ReviewReport rather than simulate collaboration through avatar count or conversation length.
 
-- **[Context is assembled minimally for the current task]** Agents do not share an endlessly growing transcript. Runtime provides only the Context required by the current role and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failure causes remain inspectable, recoverable, and traceable.
+- **[Each role receives only the information required by its task]** Agents do not share an endlessly growing transcript. The platform prepares the Context required by the current role and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failure causes remain inspectable, recoverable, and traceable.
 
-- **[Users intervene when risk changes]** Once a user explicitly requests a build, work inside the accepted scope and base budget continues automatically. Scope changes, extra budget, destructive source operations, and public deployment changes require confirmation.
+- **[Routine work continues; risk changes require confirmation]** Once a user explicitly requests a build, work inside the accepted scope and base budget continues automatically. If scope, budget, source safety, or public deployment state changes, the platform must ask for confirmation.
 
-### 3. Who controls authority and side effects
+### 3. How the platform controls authority and execution
 
-- **[Models generate content; Runtime executes side effects]** LLMs understand, plan, generate, and explain. Runtime owns identity, quota, state transitions, tool authorization, repository writes, Sandbox, and publishing. Generated code cannot directly acquire Control Plane authority.
+- **[Models generate; the platform executes and authorizes]** LLMs understand requirements, plan, generate code, and explain results. Platform Runtime owns identity, quota, workflow state, tool authorization, repository writes, Sandbox, and publishing. Models may propose actions but cannot bypass the platform to perform privileged operations.
 
-- **[Every private surface follows the same ownership check]** REST, SSE, private Preview, and Terminal WebSocket connections pass through the unified Gateway, resolve the server Session, and verify ownership of Runs, Projects, Versions, and Sandbox Sessions. Public Routes are modeled separately and read only an explicitly published version.
+- **[Every private capability confirms the user and Project]** REST, SSE, private Preview, and Terminal WebSocket connections pass through the unified Gateway, resolve the login Session, and confirm access to the relevant Run, Project, Version, and Sandbox Session. Public Routes are handled separately and read only explicitly published versions.
 
-### 4. How delivery remains owned, publishable, and recoverable
+### 4. How project results are saved, published, and recovered
 
-- **[Source, Git commits, and versions stay traceable]** Every Project owns a repository. Successful builds, user edits, source saves, and Restore create ProjectVersions mapped to Git commits. Intermediate auto-repair Artifacts remain inspectable, while only validated results enter version history.
+- **[Source, Git commits, and project versions stay aligned]** Every Project owns a repository. Successful builds, user edits, source saves, and Restore create ProjectVersions mapped to Git commits. Intermediate auto-repair Artifacts remain inspectable, while only validated results enter version history.
 
-- **[Working versions and production versions are independent]** Generation does not equal production. Working versions can keep changing, while the Public Route follows the user's last explicit Publish/Update. Restore creates a new version without rewriting history or silently moving the publish pointer.
+- **[Work-in-progress and published versions are managed separately]** Generation does not equal production. Project working versions can keep changing, while the Public Route displays the user's last explicit Publish/Update. Restore creates a new version without rewriting history or silently changing public content.
 
-- **[Visible state comes from durable facts]** Stages, errors, usage, artifacts, and versions must correspond to recoverable state. Refresh, Worker restart, or recovery execution reuses completed work and avoids duplicate calls, settlement, and version creation.
+- **[Visible state comes from saved records]** Stages, errors, usage, artifacts, and versions come from persistent records. Refresh, Worker restart, or task recovery reuses completed work and avoids duplicate model calls, usage settlement, and version creation.
 
 ## Overall Logical Architecture
 
