@@ -53,6 +53,63 @@ def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> N
     assert run["error_code"] == "BUILD_VALIDATION_FAILED"
     assert run["version_id"] is None
     assert client.get(f"/api/projects/{run['project_id']}/versions").json() == []
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    assert "repair.started" not in [event["type"] for event in events]
+
+
+def test_repairable_validation_failure_is_repaired_once(client: TestClient) -> None:
+    run = _create_run(
+        client,
+        {"prompt": "Build a product catalog [repair:needed]", "mode": "team"},
+    )
+
+    assert run["status"] == "completed"
+    assert run["app_spec"]["pages"][0]["route"] == "/"
+    assert run["validation_report"]["passed"] is True
+    assert run["version_id"]
+
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    event_types = [event["type"] for event in events]
+    assert event_types.count("repair.started") == 1
+    assert event_types.count("repair.completed") == 1
+    assert event_types.count("repair.validation_completed") == 1
+
+    files = client.get(
+        f"/api/projects/{run['project_id']}/files",
+        params={"run_id": run["run_id"]},
+    ).json()
+    paths = {entry["path"] for entry in files}
+    assert ".another-atom/generated/app-spec.json" in paths
+    assert ".another-atom/generated/validation-report.json" in paths
+    assert ".another-atom/generated/app-spec-repair.json" in paths
+    assert ".another-atom/generated/repair-validation-report.json" in paths
+
+    quota = client.get("/api/quota").json()
+    assert quota["used"] == 6
+    assert quota["reserved"] == 0
+
+
+def test_failed_repair_stops_after_one_round(client: TestClient) -> None:
+    run = _create_run(
+        client,
+        {"prompt": "Build a product catalog [repair:still-fails]", "mode": "team"},
+    )
+
+    assert run["status"] == "failed"
+    assert run["error_code"] == "BUILD_VALIDATION_FAILED"
+    assert run["validation_report"]["passed"] is False
+    assert run["version_id"] is None
+
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    event_types = [event["type"] for event in events]
+    assert event_types.count("repair.started") == 1
+    assert event_types.count("repair.completed") == 1
+    assert event_types.count("repair.validation_completed") == 1
+    assert "run.completed" not in event_types
+
+    quota = client.get("/api/quota").json()
+    assert quota["used"] == 5
+    assert quota["reserved"] == 0
 
 
 def test_blueprint_cannot_be_approved_twice(client: TestClient) -> None:

@@ -594,13 +594,15 @@ team
     `-- unsupported -> needs_input -> 新 Run 或结束
  -> architect_running
  -> engineer_running
+ -> data_running
  -> building / validating
-    |-- fail -> failed
-    `-- pass -> data_running
+    |-- app_spec + resolvable -> engineer repair（最多一次）-> validating
+    |-- 仍失败 / 其他根因 -> failed
+    `-- pass -> reviewer_running
  -> completed | completed_degraded
 ```
 
-当前代码没有完整自动 Repairing/Resolve Loop；Validation 失败会结束 Run。
+当前代码实现一次受控 Engineer 自动修复，不是完整 Repairing/Resolve Loop。首次校验只有在全部失败项均为 `app_spec + resolvable` 时才进入修复；修订后仍失败或包含其他根因时结束 Run。首次与修订后的 AppSpec、ValidationReport 分开持久化，重启时不会重复调用修复阶段。
 
 ### 12.2 Blueprint 异步执行
 

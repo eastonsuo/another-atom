@@ -92,6 +92,15 @@ class LLMProvider(Protocol):
         self, blueprint: Blueprint, architecture_spec: ArchitectureSpec, prompt: str
     ) -> AppSpec: ...
 
+    def repair_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> AppSpec: ...
+
     def analyze_data(
         self,
         blueprint: Blueprint,
@@ -292,66 +301,128 @@ class MockLLMProvider:
         self._raise_if_requested(prompt, "engineer")
         if blueprint.product_type == "web_game":
             html, css, javascript = self._minesweeper_code()
-            return AppSpec(
-                project_name=blueprint.project_name,
-                tagline="Clear the field without triggering a mine",
-                hero_title=blueprint.project_name,
-                hero_body="Reveal safe cells, flag suspected mines, and clear the board.",
-                primary_color=architecture_spec.primary_color,
-                accent_color=architecture_spec.accent_color,
-                background_color=architecture_spec.background_color,
-                pages=[
-                    PageSpec(route="/", name="Game", sections=["status", "minefield", "controls"])
-                ],
-                html=html,
-                css=css,
-                javascript=javascript,
+            return self._with_repair_test_failure(
+                AppSpec(
+                    project_name=blueprint.project_name,
+                    tagline="Clear the field without triggering a mine",
+                    hero_title=blueprint.project_name,
+                    hero_body="Reveal safe cells, flag suspected mines, and clear the board.",
+                    primary_color=architecture_spec.primary_color,
+                    accent_color=architecture_spec.accent_color,
+                    background_color=architecture_spec.background_color,
+                    pages=[
+                        PageSpec(
+                            route="/", name="Game", sections=["status", "minefield", "controls"]
+                        )
+                    ],
+                    html=html,
+                    css=css,
+                    javascript=javascript,
+                ),
+                prompt,
             )
         if blueprint.product_type != "product_catalog":
             html, css, javascript = self._generic_app_code(blueprint, prompt)
-            return AppSpec(
+            return self._with_repair_test_failure(
+                AppSpec(
+                    project_name=blueprint.project_name,
+                    tagline="Interactive browser application",
+                    hero_title=blueprint.project_name,
+                    hero_body="A browser-based implementation of the requested workflow.",
+                    primary_color=architecture_spec.primary_color,
+                    accent_color=architecture_spec.accent_color,
+                    background_color=architecture_spec.background_color,
+                    pages=[
+                        PageSpec(
+                            route="/",
+                            name=blueprint.pages[0],
+                            sections=[
+                                module.casefold().replace(" ", "-")[:40]
+                                for module in blueprint.modules[:6]
+                            ],
+                        )
+                    ],
+                    html=html,
+                    css=css,
+                    javascript=javascript,
+                ),
+                prompt,
+            )
+        return self._with_repair_test_failure(
+            AppSpec(
                 project_name=blueprint.project_name,
-                tagline="Interactive browser application",
-                hero_title=blueprint.project_name,
-                hero_body="A browser-based implementation of the requested workflow.",
+                tagline="Objects selected for everyday clarity",
+                hero_title=f"Meet {blueprint.project_name}",
+                hero_body=(
+                    "A focused catalog of useful objects, presented with enough detail to choose "
+                    "with confidence."
+                ),
                 primary_color=architecture_spec.primary_color,
                 accent_color=architecture_spec.accent_color,
                 background_color=architecture_spec.background_color,
                 pages=[
+                    PageSpec(route="/", name="Home", sections=["hero", "featured", "principles"]),
                     PageSpec(
-                        route="/",
-                        name=blueprint.pages[0],
-                        sections=[
-                            module.casefold().replace(" ", "-")[:40]
-                            for module in blueprint.modules[:6]
-                        ],
-                    )
+                        route="/catalog", name="Catalog", sections=["filters", "product-grid"]
+                    ),
+                    PageSpec(
+                        route="/product/orbit-lamp",
+                        name="Product",
+                        sections=["gallery", "details", "related"],
+                    ),
                 ],
-                html=html,
-                css=css,
-                javascript=javascript,
-            )
-        return AppSpec(
-            project_name=blueprint.project_name,
-            tagline="Objects selected for everyday clarity",
-            hero_title=f"Meet {blueprint.project_name}",
-            hero_body=(
-                "A focused catalog of useful objects, presented with enough detail to choose "
-                "with confidence."
+                products=self._products(),
             ),
-            primary_color=architecture_spec.primary_color,
-            accent_color=architecture_spec.accent_color,
-            background_color=architecture_spec.background_color,
-            pages=[
-                PageSpec(route="/", name="Home", sections=["hero", "featured", "principles"]),
-                PageSpec(route="/catalog", name="Catalog", sections=["filters", "product-grid"]),
-                PageSpec(
-                    route="/product/orbit-lamp",
-                    name="Product",
-                    sections=["gallery", "details", "related"],
-                ),
-            ],
-            products=self._products(),
+            prompt,
+        )
+
+    @staticmethod
+    def _with_repair_test_failure(app_spec: AppSpec, prompt: str) -> AppSpec:
+        if not any(
+            marker in prompt.casefold() for marker in ("[repair:needed]", "[repair:still-fails]")
+        ):
+            return app_spec
+        pages = list(app_spec.pages)
+        if app_spec.products:
+            pages[0] = pages[0].model_copy(update={"route": "/missing-home"})
+        else:
+            pages[0] = pages[0].model_copy(update={"name": "Unmatched screen"})
+        return app_spec.model_copy(update={"pages": pages})
+
+    def repair_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> AppSpec:
+        self._record_request()
+        self._raise_if_requested(prompt, "engineer-repair")
+        if "[repair:still-fails]" in prompt.casefold():
+            return app_spec
+        catalog_routes = {"home": "/", "catalog": "/catalog"}
+        pages = [
+            page.model_copy(
+                update={
+                    "name": blueprint.pages[index],
+                    "route": catalog_routes.get(blueprint.pages[index].casefold(), page.route),
+                }
+            )
+            for index, page in enumerate(app_spec.pages)
+            if index < len(blueprint.pages)
+        ]
+        for index in range(len(pages), len(blueprint.pages)):
+            page_name = blueprint.pages[index]
+            route = "/" if index == 0 else f"/screen-{index + 1}"
+            pages.append(PageSpec(route=route, name=page_name, sections=["content"]))
+        return app_spec.model_copy(
+            update={
+                "pages": pages,
+                "primary_color": architecture_spec.primary_color,
+                "accent_color": architecture_spec.accent_color,
+                "background_color": architecture_spec.background_color,
+            }
         )
 
     def analyze_data(
@@ -683,6 +754,36 @@ class OllamaCloudProvider:
                 "request": prompt,
                 "blueprint": blueprint.model_dump(mode="json"),
                 "architecture_spec": architecture_spec.model_dump(mode="json"),
+            },
+        )
+
+    def repair_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        validation_report: ValidationReport,
+        prompt: str,
+    ) -> AppSpec:
+        return self._structured_chat(
+            AppSpec,
+            "Engineer Repair",
+            (
+                "Repair the supplied Web AppSpec using the deterministic ValidationReport. "
+                "Return the complete revised AppSpec, not a patch. Address every failed check "
+                "whose root_cause is app_spec, including exact Blueprint screen names. Preserve "
+                "the accepted product goal, Blueprint pages and modules, existing behavior, data, "
+                "content, visual direction, and source unless a failed check requires a change. "
+                "Do not add external URLs, remote assets, network calls, dynamic imports, eval, "
+                "package dependencies, backend calls, or capabilities outside the accepted scope. "
+                "Copy all three colors exactly from ArchitectureSpec."
+            ),
+            {
+                "request": prompt,
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
+                "current_app_spec": app_spec.model_dump(mode="json"),
+                "validation_report": validation_report.model_dump(mode="json"),
             },
         )
 

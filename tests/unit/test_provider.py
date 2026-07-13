@@ -65,8 +65,7 @@ def test_ollama_lead_disables_thinking(monkeypatch) -> None:
             return {
                 "message": {
                     "content": (
-                        '{"route":"team","response":"Calling team",'
-                        '"reason":"Explicit build"}'
+                        '{"route":"team","response":"Calling team","reason":"Explicit build"}'
                     )
                 },
                 "prompt_eval_count": 10,
@@ -176,6 +175,41 @@ def test_data_analyst_and_reviewer_have_distinct_contracts(
     assert review_report.verdict == "accept"
     assert review_report.issues == []
     assert review_report.engineering_checks
+
+
+def test_engineer_repair_uses_validation_evidence_and_preserves_scope(
+    provider: MockLLMProvider,
+) -> None:
+    prompt = "Build a product catalog [repair:needed]"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
+    validation_report = validate_app_spec(
+        app_spec,
+        prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture,
+    )
+
+    assert validation_report.passed is False
+    repaired = provider.repair_app_spec(
+        blueprint,
+        architecture,
+        app_spec,
+        validation_report,
+        prompt,
+    )
+    repaired_report = validate_app_spec(
+        repaired,
+        prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture,
+    )
+
+    assert repaired.pages[0].route == "/"
+    assert repaired.html == app_spec.html
+    assert repaired.javascript == app_spec.javascript
+    assert repaired_report.passed is True
 
 
 def test_minesweeper_preserves_the_game_goal_and_generates_web_source(

@@ -19,7 +19,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react";
 import { PreviewLoader } from "./components/PreviewApp";
 import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
@@ -127,6 +127,10 @@ const ROLE_LABELS: Record<Language, Partial<Record<RoleKey, string>>> = {
 
 const ZH: Record<string, string> = {
   "Authentication failed": "登录失败",
+  "Username must be 3–80 characters and use only letters, numbers, _ or -.": "用户名需为 3–80 个字符，只能包含字母、数字、下划线或连字符。",
+  "Password must be at least 10 characters.": "密码至少需要 10 个字符。",
+  "Username or password is incorrect": "用户名或密码不正确。",
+  "That username is already in use": "该用户名已被使用。",
   "Create account": "创建账号",
   "Session Gateway": "会话网关",
   "Create your workspace": "创建你的工作区",
@@ -203,6 +207,9 @@ const ZH: Record<string, string> = {
   "Run stopped with an error": "任务因错误停止",
   "The run failed before producing a ready preview.": "任务在生成可预览版本前失败。",
   "The controlled renderer rejected the generated AppSpec": "生成结果未通过受控构建校验。",
+  "Engineer is repairing the failed validation checks": "工程师正在根据校验结果修复生成代码。",
+  "Engineer produced one revised AppSpec": "工程师已生成一次修订后的应用方案。",
+  "The revised AppSpec completed deterministic validation": "修订后的应用方案已完成重新校验。",
   "Primary/background contrast is below 4.5:1": "主色与背景色的对比度低于 4.5:1。",
   "Accent/background contrast is below 3:1": "强调色与背景色的对比度低于 3:1。",
   "AppSpec colors do not match the approved ArchitectureSpec tokens": "应用颜色与架构阶段确认的视觉 Token 不一致。",
@@ -395,8 +402,8 @@ function LanguageToggle({
   setLanguage: (language: Language) => void;
 }) {
   return <div className="language-toggle" aria-label={language === "zh" ? "语言切换" : "Language switch"}>
-    <button className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")}>中文</button>
-    <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button>
+    <button type="button" className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")}>中文</button>
+    <button type="button" className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button>
   </div>;
 }
 
@@ -423,21 +430,31 @@ function AuthView({
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const submit = async () => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedUsername = username.trim();
+    if (!/^[a-zA-Z0-9_-]{3,80}$/.test(normalizedUsername)) {
+      setError(ui(language, "Username must be 3–80 characters and use only letters, numbers, _ or -."));
+      return;
+    }
+    if (password.length < 10) {
+      setError(ui(language, "Password must be at least 10 characters."));
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
       onAuthenticated(signup
-        ? await api.signup(username, password, displayName)
-        : await api.login(username, password));
+        ? await api.signup(normalizedUsername, password, displayName)
+        : await api.login(normalizedUsername, password));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : ui(language, "Authentication failed"));
+      setError(reason instanceof Error ? ui(language, reason.message) : ui(language, "Authentication failed"));
     } finally {
       setSubmitting(false);
     }
   };
   return <main className="auth-view">
-    <div className="auth-card">
+    <form className="auth-card" onSubmit={submit} noValidate>
       <div className="auth-head"><div className="brand"><AtomLogo /><strong>Another Atom</strong></div><LanguageToggle language={language} setLanguage={setLanguage} /></div>
       <span>{ui(language, signup ? "Create account" : "Session Gateway")}</span>
       <h1>{ui(language, signup ? "Create your workspace" : "Sign in")}</h1>
@@ -445,10 +462,10 @@ function AuthView({
       {signup && <label>{ui(language, "Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" /></label>}
       <label>{ui(language, "Username")}<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></label>
       <label>{ui(language, "Password")}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={signup ? "new-password" : "current-password"} /></label>
-      {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
-      <button className="primary-action" disabled={submitting || username.length < 3 || password.length < 10} onClick={submit}>{submitting && <LoaderCircle className="spin" size={16} />}{ui(language, signup ? "Create account" : "Sign in")}</button>
-      <button className="auth-switch" onClick={() => setSignup((value) => !value)}>{ui(language, signup ? "Already have an account? Sign in" : "Need an account? Sign up")}</button>
-    </div>
+      {error && <div className="inline-error auth-error" role="alert" aria-live="assertive"><CircleAlert size={16} /> <span>{error}</span></div>}
+      <button type="submit" className="primary-action" disabled={submitting}>{submitting && <LoaderCircle className="spin" size={16} />}{ui(language, signup ? "Create account" : "Sign in")}</button>
+      <button type="button" className="auth-switch" onClick={() => { setSignup((value) => !value); setError(""); }}>{ui(language, signup ? "Already have an account? Sign in" : "Need an account? Sign up")}</button>
+    </form>
   </main>;
 }
 

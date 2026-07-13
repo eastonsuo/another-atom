@@ -187,7 +187,14 @@ def _validate_web_code_app(
     ]
     if blueprint is not None:
         page_names = {page.name.casefold() for page in app_spec.pages}
-        missing_pages = [page for page in blueprint.pages if page.casefold() not in page_names]
+        # A single self-contained Web app is one screen even when Product Manager
+        # calls it `index.html` and Engineer gives the same screen a product label.
+        # Multi-screen contracts still require explicit page-name coverage.
+        missing_pages = (
+            []
+            if len(blueprint.pages) == 1 and len(app_spec.pages) == 1
+            else [page for page in blueprint.pages if page.casefold() not in page_names]
+        )
         checks.append(
             ValidationCheck(
                 check_id="blueprint-pages",

@@ -101,6 +101,8 @@ button { color: inherit; }
 .auth-card label { display: grid; gap: 6px; margin-top: 15px; font-size: 11px; font-weight: 900; }
 .auth-card input { height: 42px; padding: 0 10px; border: 1.5px solid var(--ink); border-radius: 5px; }
 .auth-card .primary-action { width: 100%; justify-content: center; margin-top: 22px; }
+.auth-card .auth-error { width: 100%; line-height: 1.45; }
+.auth-card .auth-error svg { flex: 0 0 auto; }
 .auth-switch { width: 100%; margin-top: 13px; border: 0; background: transparent; color: #625c72; font-size: 11px; font-weight: 800; cursor: pointer; }
 .account-button { margin-top: 10px; padding: 10px; border: 1.5px solid var(--ink); border-radius: 5px; background: #fff; text-align: left; cursor: pointer; }
 .account-button span, .account-button small { display: block; }.account-button span { font-weight: 900; }.account-button small { color: #69627d; }

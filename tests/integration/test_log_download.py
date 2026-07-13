@@ -11,17 +11,22 @@ def test_user_can_download_own_run_log(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert f'filename="another-atom-run-{created["run_id"]}.log"' in response.headers[
-        "content-disposition"
-    ]
+    assert (
+        f'filename="another-atom-run-{created["run_id"]}.log"'
+        in response.headers["content-disposition"]
+    )
     assert f"Run ID: {created['run_id']}" in response.text
+    assert "Build job:" in response.text
+    assert "Artifacts (" in response.text
+    assert "blueprint" in response.text
+    assert "validation_report" in response.text
+    assert '"checks": [' in response.text
+    assert "Usage ledger (" in response.text
     assert "Events (" in response.text
     assert " stage.started" in response.text
 
 
-def test_user_cannot_download_another_users_run_log(
-    client: TestClient, monkeypatch
-) -> None:
+def test_user_cannot_download_another_users_run_log(client: TestClient, monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     from another_atom.config import get_settings
 

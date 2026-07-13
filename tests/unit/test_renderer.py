@@ -119,6 +119,27 @@ def test_generic_web_code_passes_offline_sandbox_validation() -> None:
     }
 
 
+def test_single_screen_label_does_not_create_a_false_missing_page() -> None:
+    provider = MockLLMProvider()
+    prompt = "给我一个网页版扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM).model_copy(
+        update={"pages": ["index.html"]}
+    )
+    architecture = provider.create_architecture_spec(blueprint)
+    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
+
+    report = validate_app_spec(
+        app_spec,
+        prompt,
+        blueprint=blueprint,
+        architecture_spec=architecture,
+    )
+    page_check = next(check for check in report.checks if check.check_id == "blueprint-pages")
+
+    assert page_check.status == "pass"
+    assert report.passed is True
+
+
 def test_generic_web_code_rejects_network_calls() -> None:
     provider = MockLLMProvider()
     prompt = "给我一个网页版扫雷游戏"

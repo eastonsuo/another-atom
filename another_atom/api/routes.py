@@ -102,6 +102,7 @@ from another_atom.storage.models import (
     Run,
     RunEvent,
     SandboxSession,
+    UsageLedger,
     User,
     now_utc,
 )
@@ -190,6 +191,22 @@ def _run_view(db: Session, run: Run) -> RunView:
         .where(ProjectVersion.run_id == run.id)
         .order_by(ProjectVersion.version_number.desc())
     )
+    app_spec = _artifact_model(db, run.id, ArtifactType.APP_SPEC_REPAIR, AppSpec)
+    if app_spec is None:
+        app_spec = _artifact_model(db, run.id, ArtifactType.APP_SPEC, AppSpec)
+    validation_report = _artifact_model(
+        db,
+        run.id,
+        ArtifactType.REPAIR_VALIDATION_REPORT,
+        ValidationReport,
+    )
+    if validation_report is None:
+        validation_report = _artifact_model(
+            db,
+            run.id,
+            ArtifactType.VALIDATION_REPORT,
+            ValidationReport,
+        )
     return RunView(
         run_id=run.id,
         project_id=run.project_id,
@@ -203,11 +220,9 @@ def _run_view(db: Session, run: Run) -> RunView:
         architecture_spec=_artifact_model(
             db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
         ),
-        app_spec=_artifact_model(db, run.id, ArtifactType.APP_SPEC, AppSpec),
+        app_spec=app_spec,
         data_profile=_artifact_model(db, run.id, ArtifactType.DATA_PROFILE, DataProfile),
-        validation_report=_artifact_model(
-            db, run.id, ArtifactType.VALIDATION_REPORT, ValidationReport
-        ),
+        validation_report=validation_report,
         review_report=_run_review_report(db, run.id),
         build_job_id=build_job.id if build_job else None,
         version_id=version.id if version else None,
@@ -782,8 +797,14 @@ def event_history(
     return [_event_view(event) for event in events]
 
 
-def _render_run_log(run: Run, events: list[RunEvent]) -> str:
-    """Format persisted Run state and events for a user-owned debug download."""
+def _render_run_log(
+    run: Run,
+    build_job: BuildJob | None,
+    artifacts: list[Artifact],
+    usage_entries: list[UsageLedger],
+    events: list[RunEvent],
+) -> str:
+    """Format all persisted Run diagnostics for a user-owned debug download."""
     lines = [
         "Another Atom debug log",
         f"Generated at: {datetime.now(UTC).isoformat()}",
@@ -798,12 +819,74 @@ def _render_run_log(run: Run, events: list[RunEvent]) -> str:
         f"Updated at: {run.updated_at.isoformat()}",
         f"Error code: {run.error_code or '-'}",
         f"Error message: {run.error_message or '-'}",
+        f"Quota spent: {run.quota_spent}",
+        f"Quota reserved: {run.quota_reserved}",
         "",
         "Prompt:",
         run.prompt,
         "",
-        f"Events ({len(events)}):",
+        "Build job:",
     ]
+    if build_job is None:
+        lines.append("-")
+    else:
+        lines.append(
+            json.dumps(
+                {
+                    "id": build_job.id,
+                    "status": build_job.status,
+                    "attempt": build_job.attempt,
+                    "error_message": build_job.error_message,
+                    "lease_owner": build_job.lease_owner,
+                    "lease_expires_at": build_job.lease_expires_at,
+                    "started_at": build_job.started_at,
+                    "finished_at": build_job.finished_at,
+                    "log_path": build_job.log_path,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                default=str,
+            )
+        )
+    lines.extend(["", f"Artifacts ({len(artifacts)}):"])
+    for artifact in artifacts:
+        lines.extend(
+            [
+                "",
+                f"[{artifact.created_at.isoformat()}] {artifact.artifact_type}",
+                f"artifact_id: {artifact.id}",
+                f"schema_version: {artifact.schema_version}",
+                "payload:",
+                json.dumps(
+                    artifact.payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                    default=str,
+                ),
+            ]
+        )
+    lines.extend(["", f"Usage ledger ({len(usage_entries)}):"])
+    for entry in usage_entries:
+        lines.append(
+            json.dumps(
+                {
+                    "id": entry.id,
+                    "stage": entry.stage,
+                    "entry_type": entry.entry_type,
+                    "units": entry.units,
+                    "request_count": entry.request_count,
+                    "input_tokens": entry.input_tokens,
+                    "output_tokens": entry.output_tokens,
+                    "created_at": entry.created_at,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+        )
+    lines.extend(["", f"Events ({len(events)}):"])
     for event in events:
         lines.extend(
             [
@@ -831,11 +914,27 @@ def download_run_log(
     user: User = Depends(get_current_user),
 ) -> Response:
     run = _owned_run(db, run_id, user.id)
+    build_job = db.scalar(
+        select(BuildJob)
+        .where(BuildJob.run_id == run.id)
+        .order_by(BuildJob.created_at.desc())
+        .limit(1)
+    )
+    artifacts = list(
+        db.scalars(
+            select(Artifact).where(Artifact.run_id == run.id).order_by(Artifact.created_at)
+        ).all()
+    )
+    usage_entries = list(
+        db.scalars(
+            select(UsageLedger).where(UsageLedger.run_id == run.id).order_by(UsageLedger.created_at)
+        ).all()
+    )
     events = db.scalars(
         select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.id)
     ).all()
     return Response(
-        content=_render_run_log(run, events),
+        content=_render_run_log(run, build_job, artifacts, usage_entries, events),
         media_type="text/plain",
         headers={
             "Content-Disposition": f'attachment; filename="another-atom-run-{run.id}.log"',
@@ -963,8 +1062,12 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
+    ArtifactType.APP_SPEC_REPAIR: ".another-atom/generated/app-spec-repair.json",
     ArtifactType.DATA_PROFILE: ".another-atom/generated/data-profile.json",
     ArtifactType.VALIDATION_REPORT: ".another-atom/generated/validation-report.json",
+    ArtifactType.REPAIR_VALIDATION_REPORT: (
+        ".another-atom/generated/repair-validation-report.json"
+    ),
     ArtifactType.REVIEW_REPORT: ".another-atom/generated/review-report.json",
     ArtifactType.DATA_REVIEW: ".another-atom/generated/legacy-data-review.json",
 }

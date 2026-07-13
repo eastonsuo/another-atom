@@ -60,8 +60,10 @@ class ArtifactType(StrEnum):
     BLUEPRINT = "blueprint"
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
+    APP_SPEC_REPAIR = "app_spec_repair"
     DATA_PROFILE = "data_profile"
     VALIDATION_REPORT = "validation_report"
+    REPAIR_VALIDATION_REPORT = "repair_validation_report"
     REVIEW_REPORT = "review_report"
     # Read-only compatibility for runs created before Reviewer became a role.
     DATA_REVIEW = "data_review"

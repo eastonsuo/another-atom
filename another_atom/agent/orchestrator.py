@@ -263,6 +263,21 @@ class Orchestrator:
             validation_report, build_job = self._run_build(
                 run, project, blueprint, architecture_spec, app_spec
             )
+            if not validation_report.passed and self._can_auto_repair(validation_report):
+                app_spec = self._run_engineer_repair(
+                    run,
+                    blueprint,
+                    architecture_spec,
+                    app_spec,
+                    validation_report,
+                )
+                validation_report = self._run_repair_validation(
+                    run,
+                    build_job,
+                    blueprint,
+                    architecture_spec,
+                    app_spec,
+                )
             if not validation_report.passed:
                 build_job.status = BuildStatus.FAILED.value
                 build_job.error_message = "Deterministic validation failed"
@@ -397,6 +412,52 @@ class Orchestrator:
         self.db.commit()
         return app_spec
 
+    def _run_engineer_repair(
+        self,
+        run: Run,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        validation_report: ValidationReport,
+    ) -> AppSpec:
+        run.status = RunStatus.ENGINEER_RUNNING.value
+        run.current_stage = "engineer"
+        failed_check_ids = [
+            check.check_id for check in validation_report.checks if check.status == "fail"
+        ]
+        self._record_event_once(
+            run,
+            "repair.started",
+            "Engineer is repairing the failed validation checks",
+            "engineer",
+            {"failed_check_ids": failed_check_ids, "repair_attempt": 1},
+        )
+        repaired_app_spec, artifact, _ = self._run_agent_stage(
+            run,
+            "engineer_repair",
+            ArtifactType.APP_SPEC_REPAIR,
+            AppSpec,
+            lambda: self._align_app_spec_visual_tokens(
+                self._provider(run).repair_app_spec(
+                    blueprint,
+                    architecture_spec,
+                    app_spec,
+                    validation_report,
+                    run.prompt,
+                ),
+                architecture_spec,
+            ),
+        )
+        self._record_event_once(
+            run,
+            "repair.completed",
+            "Engineer produced one revised AppSpec",
+            "engineer",
+            {"artifact_id": artifact.id, "repair_attempt": 1},
+        )
+        self.db.commit()
+        return repaired_app_spec
+
     @staticmethod
     def _align_app_spec_visual_tokens(
         app_spec: AppSpec, architecture_spec: ArchitectureSpec
@@ -458,6 +519,54 @@ class Orchestrator:
         )
         self.db.commit()
         return validation_report, build_job
+
+    def _run_repair_validation(
+        self,
+        run: Run,
+        build_job: BuildJob,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+    ) -> ValidationReport:
+        run.status = RunStatus.BUILDING.value
+        run.current_stage = "build"
+        build_job.status = BuildStatus.VALIDATING.value
+        artifact = get_artifact(self.db, run.id, ArtifactType.REPAIR_VALIDATION_REPORT)
+        if artifact:
+            validation_report = ValidationReport.model_validate(artifact.payload)
+        else:
+            validation_report = validate_app_spec(
+                app_spec,
+                run.prompt,
+                blueprint=blueprint,
+                architecture_spec=architecture_spec,
+            )
+            artifact = save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.REPAIR_VALIDATION_REPORT,
+                validation_report,
+            )
+        self._record_event_once(
+            run,
+            "repair.validation_completed",
+            "The revised AppSpec completed deterministic validation",
+            "build",
+            {
+                "artifact_id": artifact.id,
+                "passed": validation_report.passed,
+                "repair_attempt": 1,
+            },
+        )
+        self.db.commit()
+        return validation_report
+
+    @staticmethod
+    def _can_auto_repair(validation_report: ValidationReport) -> bool:
+        failed_checks = [check for check in validation_report.checks if check.status == "fail"]
+        return bool(failed_checks) and all(
+            check.root_cause == "app_spec" and check.resolvable for check in failed_checks
+        )
 
     def _run_data(
         self,
