@@ -9,7 +9,7 @@
 - 正式设计：[V1 多 Agent 设计](../../design/V1/技术设计/01-[Agent]-多Agent设计.md) · [V1 系统架构](../../design/V1/技术设计/03-[工程]-系统架构.md) · [V2 任务编排与多 Agent 协作](../../design/V2/技术设计/01-[Agent]-任务编排与多Agent协作.md)
 - 实现证据：[V1 关键设计与实现 Review](./08-[综合]-2026-07-12-关键设计与实现检查.md)
 
-> **2026-07-13 归档 Update：** V1 固定 Runtime 边界和 V2 TaskGraph、Handoff、Tool、Context 演进已经分别进入正式 Agent Design。本文保留方案推理，不再作为独立待办；实际未完成的 V1 代码工作统一见 [V1 剩余开发待办](../待办/13-[综合]-2026-07-13-V1剩余开发待办.md)。
+> **2026-07-13 归档 Update：** V1 固定 Runtime 边界和 V2 TaskGraph、Handoff、Tool、Context 演进已经分别进入正式 Agent Design。本文保留方案推理，不再作为独立待办；后续功能范围与实现状态以正式 [Design](../../design/README.md)、实际代码和验证结果为准。
 
 本文保留 Context、Memory、TaskGraph 和 Sandbox 的演进推理，用于比较方案与边界。已确认 Contract 只在对应 V1/V2 Design 中维护；本文中的“建议”“未来”和优化顺序不表示已经实现或已经拍板。
 
