@@ -81,8 +81,8 @@ V1 使用固定顺序链路：Product Manager → Architect → Engineer → Dat
 ### 4.3 V2：计划版本
 
 - 产品设计：[01-产品范围与交互](./V2/产品设计/01-产品范围与交互.md)
-- Agent 技术设计：[01-Agent 运行机制](./V2/技术设计/01-[Agent]-Agent运行机制.md)
-- 工程技术设计：[02-系统架构](./V2/技术设计/02-[工程]-系统架构.md)
+- Agent 技术设计：[01-任务编排与多 Agent 协作](./V2/技术设计/01-[Agent]-任务编排与多Agent协作.md)
+- 工程技术设计：[02-多 Agent 执行与沙箱架构](./V2/技术设计/02-[工程]-多Agent执行与沙箱架构.md)
 - 计划与后续 Review：[Review 待办与归档](../review/README.md)
 
 ## 5. 与 Review 的关系

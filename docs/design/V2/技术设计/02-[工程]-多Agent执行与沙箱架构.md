@@ -1,11 +1,11 @@
-# Another Atom V2 系统架构
+# Another Atom V2 多 Agent 执行与沙箱架构
 
 [toc]
 
 - 文档状态：V2 工程实施基线草案；V1 验收完成后进入开发
 - 更新日期：2026-07-11
 - 产品设计：[Another Atom V2 产品范围与交互](../产品设计/01-产品范围与交互.md)
-- Agent 设计：[Another Atom V2 Agent 运行机制](./01-[Agent]-Agent运行机制.md)
+- Agent 设计：[Another Atom V2 任务编排与多 Agent 协作](./01-[Agent]-任务编排与多Agent协作.md)
 - V1 工程基线：[Another Atom V1 系统架构](../../V1/技术设计/03-[工程]-系统架构.md)
 
 ## 1. 技术选型
@@ -330,7 +330,7 @@ V2 复用 V1 users/auth_sessions/projects/project_repositories/editor_sessions/s
 
 ## 12. 错误、恢复与补偿
 
-Agent Provider、Handoff、Rework 和收敛语义以 [V2 Agent 运行机制](./01-[Agent]-Agent运行机制.md)为准；工程 Runtime 负责：
+Agent Provider、Handoff、Rework 和收敛语义以 [V2 任务编排与多 Agent 协作](./01-[Agent]-任务编排与多Agent协作.md)为准；工程 Runtime 负责：
 
 | 失败 | 工程处理 |
 | --- | --- |

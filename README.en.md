@@ -262,7 +262,7 @@ Version-specific engineering boundaries remain in each architecture document; th
 | Version | How it advances the overall goal | Status and design sources |
 | --- | --- | --- |
 | **V1** | Proves the complete loop with a fixed specialist team, bounded Web Runtime, Project Git, versions, and explicit publishing | Railway single-replica accepted; target Linux Sandbox isolation acceptance remains. See [V1 product](./docs/design/V1/产品设计/01-核心产品需求与交互.md), [V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md), and [V1 architecture](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
-| **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/01-[Agent]-Agent运行机制.md), and [V2 architecture](./docs/design/V2/技术设计/02-[工程]-系统架构.md) |
+| **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/01-[Agent]-任务编排与多Agent协作.md), and [V2 architecture](./docs/design/V2/技术设计/02-[工程]-多Agent执行与沙箱架构.md) |
 
 The current code includes real and Mock LLM providers, user isolation, Project Git, interactive Preview, versions and publishing, durable jobs, and Provider fallback. The backend currently collects 85 unit/integration tests. See the [V1 delivery status snapshot](./docs/review/归档/11-[综合]-2026-07-13-V1交付状态摘要.md) and [V1 review](./docs/review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md) for detailed completion status.
 
