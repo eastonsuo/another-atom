@@ -345,6 +345,11 @@ const ZH: Record<string, string> = {
   "The build worker stopped unexpectedly": "Build Worker 异常停止",
   "event.run.created": "任务已创建",
   "event.stage.started": "阶段已开始",
+  "event.engineer.context.prepared": "工程上下文已准备",
+  "event.engineer.repair_context.prepared": "修复上下文已准备",
+  "event.agent.attempt.started": "模型请求已开始",
+  "event.agent.output.validated": "模型输出已通过 Contract 校验",
+  "event.agent.retry": "模型请求失败",
   "event.artifact.created": "产物已保存",
   "event.approval.required": "等待确认",
   "event.run.needs_input": "需要补充输入",
@@ -418,6 +423,33 @@ function eventTitle(language: Language, event: RunEvent): string {
 }
 
 function eventMessage(language: Language, event: RunEvent): string {
+  const attempt = typeof event.payload.attempt === "number" ? event.payload.attempt : null;
+  const maxAttempts = typeof event.payload.max_attempts === "number" ? event.payload.max_attempts : null;
+  if (event.type === "agent.attempt.started" && attempt && maxAttempts) {
+    return language === "zh"
+      ? `第 ${attempt}/${maxAttempts} 次模型请求已开始，正在等待模型生成结果。`
+      : `Model attempt ${attempt}/${maxAttempts} started; waiting for the model response.`;
+  }
+  if (event.type === "agent.output.validated" && attempt && maxAttempts) {
+    return language === "zh"
+      ? `第 ${attempt}/${maxAttempts} 次模型输出已完成解析并通过 Contract 校验。`
+      : `Model attempt ${attempt}/${maxAttempts} was parsed and passed Contract validation.`;
+  }
+  if (event.type === "agent.retry" && attempt && maxAttempts) {
+    const failureKind = typeof event.payload.failure_kind === "string" ? event.payload.failure_kind : "provider_error";
+    const labels: Record<string, [string, string]> = {
+      provider_timeout: ["模型服务超时", "provider timeout"],
+      provider_configuration: ["模型服务配置错误", "provider configuration error"],
+      contract_validation: ["结构化输出未通过 Contract 校验", "structured output failed Contract validation"],
+      provider_response: ["模型响应为空或格式异常", "provider response was empty or malformed"],
+      provider_error: ["模型服务请求或响应处理失败", "provider request or response handling failed"],
+    };
+    const reason = labels[failureKind]?.[language === "zh" ? 0 : 1] ?? failureKind;
+    const willRetry = event.payload.will_retry === true;
+    return language === "zh"
+      ? `第 ${attempt}/${maxAttempts} 次请求失败：${reason}。${willRetry ? "正在准备下一次尝试。" : "重试次数已用完。"}`
+      : `Attempt ${attempt}/${maxAttempts} failed: ${reason}. ${willRetry ? "Preparing the next attempt." : "The retry budget is exhausted."}`;
+  }
   return displayText(language, event.payload.message ?? event.type) || eventTitle(language, event);
 }
 
@@ -587,6 +619,10 @@ function Studio() {
       "stage.started",
       "stage.completed",
       "artifact.created",
+      "engineer.context.prepared",
+      "engineer.repair_context.prepared",
+      "agent.attempt.started",
+      "agent.output.validated",
       "agent.retry",
       "approval.required",
       "approval.confirmed",
@@ -1060,7 +1096,7 @@ function Workspace({
           />
         ) : (
           <div className="failed-project-view">
-            <BuildingState run={run} language={language} />
+            <BuildingState run={run} events={events} language={language} />
             {versions.length > 0 && <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />}
           </div>
         )}
@@ -1315,7 +1351,7 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
   </div>;
 }
 
-function BuildingState({ run, language }: { run: RunView; language: Language }) {
+function BuildingState({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const roles: Record<string, RoleKey> = {
     team_leader: "leader",
     product_manager: "product",
@@ -1329,11 +1365,25 @@ function BuildingState({ run, language }: { run: RunView; language: Language }) 
   };
   const role = roles[run.current_stage] ?? "leader";
   const title = BUILDING_STAGE_TITLES[language][run.current_stage] ?? `${stageLabel(language, run.current_stage)} ${ui(language, "is working")}`;
+  const latest = [...events].reverse().find((event) => {
+    const stage = event.payload.stage;
+    return stage === run.current_stage || (run.current_stage === "engineer" && stage === "engineer_repair");
+  });
+  const [now, setNow] = useState(Date.now());
+  const waitingForModel = latest?.type === "agent.attempt.started";
+  useEffect(() => {
+    if (!waitingForModel) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [latest?.event_id, waitingForModel]);
+  const elapsed = latest && waitingForModel ? Math.max(0, Math.floor((now - new Date(latest.timestamp).getTime()) / 1000)) : 0;
   return <div className="center-state building-cartoon">
     <div className="working-avatar"><RoleAvatar role={role} size="hero" /></div>
     <div className="working-stage"><LoaderCircle className="spin" size={15} /><span>{stageLabel(language, run.current_stage)}</span></div>
     <h1>{title}</h1>
-    <p>{ui(language, "The current stage is persisted. Refreshing this page will not lose the run.")}</p>
+    <p>{latest ? eventMessage(language, latest) : ui(language, "The current stage is persisted. Refreshing this page will not lose the run.")}</p>
+    {waitingForModel && <small>{language === "zh" ? `已等待 ${elapsed} 秒；模型返回后会继续显示解析、校验和保存步骤。` : `Waiting for ${elapsed}s; parsing, validation, and save steps will appear after the response.`}</small>}
     <div className="build-meter"><span /></div>
   </div>;
 }

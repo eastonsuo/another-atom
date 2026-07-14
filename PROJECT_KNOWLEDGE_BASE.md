@@ -144,7 +144,7 @@ Build、Edit、Repair 和 Restore 可以持续创建新版本，但线上 Public
 
 ### 3.8 可恢复事实优先
 
-用户看到的进度、错误、配额、Artifact 和版本必须来自持久化事实。刷新、重试和服务重启不能重复已完成工作、重复扣费或重复创建版本。
+用户看到的进度、错误、配额、Artifact 和版本必须来自持久化事实。刷新、重试和服务重启不能重复已完成工作、重复扣费或重复创建版本。模型阶段会持久化 Context 已准备、调用尝试编号、Contract 校验结果和重试决定；等待模型时界面显示已等待时长，失败按 Provider 超时、配置、响应、Contract 校验或一般 Provider 错误分类。
 
 ## 4. 核心概念
 
@@ -358,6 +358,8 @@ javascript
 ```
 
 当前 Engineer 无 Shell、Git、依赖安装、Agent Tool 网络和发布权限。生成的浏览器代码可以按 Blueprint 访问公网 HTTP(S)/WS(S) API，但禁止 localhost、loopback 和用户设备本地服务；Preview 与物化 `app.js` 安装 loopback Guard。dynamic import、eval、远程可执行资源和后端调用仍禁止。
+
+当前 Engineer 源码 Contract 仍是 Web `AppSpec`，Repository 固定物化 HTML、CSS、JavaScript 和 `app-spec.json`，尚未实现通用多文件项目源码 Contract。该缺口记录在 `docs/review/待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md`，不能仅通过把界面文案改成“生成项目代码”来关闭。
 
 ### 7.6 Runtime Validator
 

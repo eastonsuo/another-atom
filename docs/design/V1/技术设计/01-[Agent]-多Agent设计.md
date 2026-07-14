@@ -632,13 +632,17 @@ error_code
 
 ```text
 stage.started
+engineer.context.prepared（Engineer 阶段）
+agent.attempt.started attempt / max_attempts
+agent.output.validated attempt / artifact_type
 stage.output          artifact_id / artifact_type
 stage.completed
 
 或
 
 stage.started
-stage.retrying
+agent.attempt.started attempt / max_attempts
+agent.retry           attempt / max_attempts / will_retry / failure_kind
 stage.failed
 
 或 Reviewer 拒收
@@ -649,6 +653,8 @@ run.failed            REVIEW_REJECTED
 ```
 
 事件先持久化，再通过 SSE 推送。浏览器重连后按 `event_id` 重放。Trace 用于工程排障，不能向用户展示 Chain of Thought。
+
+`failure_kind` 只使用 `provider_timeout`、`provider_configuration`、`provider_response`、`contract_validation` 和 `provider_error`。用户界面展示分类、尝试编号和是否继续重试；截断后的底层异常摘要保留在事件 Payload 与下载日志中，不展示模型原始输出。
 
 ## 10. 配额与并发
 

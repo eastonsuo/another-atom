@@ -79,6 +79,7 @@ docs/review/
 - [18｜产品｜Studio 工作区信息与侧栏重构](./待办/18-[产品]-2026-07-14-Studio工作区信息与侧栏重构.md)：主流程日志去重、左侧项目栏收起、右侧工具栏拖动与全屏，以及阶段流水线收窄。
 - [20｜综合｜Project 对话路由与代码修改授权检查](./待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)：普通对话误建修改 Run、Project Context 未传递、代码修改缺少 HITL 授权和流水线状态失真。
 - [21｜综合｜网络能力 Contract 冲突检查](./待办/21-[综合]-2026-07-14-网络能力Contract冲突检查.md)：Blueprint 承诺本地模型 API、Engineer 全局禁网和 Reviewer 拒收之间的冲突，以及公网允许、loopback 禁止的新边界。
+- [22｜工程｜Engineer 项目源码 Contract 缺口](./待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md)：当前 Engineer/AppSpec 固定为 HTML、CSS、JavaScript，与“Project 类型不由 Preview 边界决定”的产品基线冲突。
 
 ## 6. 当前归档
 

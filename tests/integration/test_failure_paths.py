@@ -28,7 +28,14 @@ def test_llm_failure_retries_then_preserves_project(client: TestClient) -> None:
     assert run["error_code"] == "LLM_OUTPUT_FAILED"
 
     events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
-    assert len([event for event in events if event["type"] == "agent.retry"]) == 3
+    attempts = [event for event in events if event["type"] == "agent.attempt.started"]
+    retries = [event for event in events if event["type"] == "agent.retry"]
+    assert len(attempts) == 3
+    assert [event["payload"]["attempt"] for event in attempts] == [1, 2, 3]
+    assert len(retries) == 3
+    assert [event["payload"]["will_retry"] for event in retries] == [True, True, False]
+    assert all(event["payload"]["failure_kind"] == "provider_error" for event in retries)
+    assert all(event["payload"]["failure_summary"] for event in retries)
     projects = client.get("/api/projects").json()
     assert any(project["id"] == run["project_id"] for project in projects)
     quota = client.get("/api/quota").json()

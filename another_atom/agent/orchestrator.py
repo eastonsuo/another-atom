@@ -1048,6 +1048,13 @@ class Orchestrator:
             "Engineer is generating the Web source contract",
             "engineer",
         )
+        self._record_event_once(
+            run,
+            "engineer.context.prepared",
+            "Engineer context is ready from the approved Blueprint and ArchitectureSpec",
+            "engineer",
+            {"inputs": ["blueprint", "architecture_spec", "request"]},
+        )
         app_spec, artifact, _ = self._run_agent_stage(
             run,
             "engineer",
@@ -1087,6 +1094,17 @@ class Orchestrator:
             "Engineer is repairing the failed validation checks",
             "engineer",
             {"failed_check_ids": failed_check_ids, "repair_attempt": 1},
+        )
+        self._record_event_once(
+            run,
+            "engineer.repair_context.prepared",
+            "Engineer repair context is ready with deterministic validation evidence",
+            "engineer",
+            {
+                "inputs": ["blueprint", "architecture_spec", "app_spec", "validation_report"],
+                "failed_check_ids": failed_check_ids,
+                "repair_attempt": 1,
+            },
         )
         repaired_app_spec, artifact, _ = self._run_agent_stage(
             run,
@@ -1430,6 +1448,14 @@ class Orchestrator:
             provider = self._provider(run)
             reserved_units = provider.reservation_units
             reserve_quota(self.db, run.user_id, run, stage, reserved_units)
+            record_event(
+                self.db,
+                run.id,
+                "agent.attempt.started",
+                "Agent model attempt started",
+                stage=stage,
+                payload={"attempt": attempt, "max_attempts": max_attempts},
+            )
             self.db.commit()
             try:
                 result = operation()
@@ -1451,6 +1477,18 @@ class Orchestrator:
                         stage=stage,
                         payload={"provider": usage.fallback_provider},
                     )
+                record_event(
+                    self.db,
+                    run.id,
+                    "agent.output.validated",
+                    "Agent output passed Contract validation",
+                    stage=stage,
+                    payload={
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "artifact_type": artifact_type.value,
+                    },
+                )
                 artifact = save_artifact(self.db, run.id, artifact_type, result)
                 settle_quota(
                     self.db,
@@ -1476,13 +1514,25 @@ class Orchestrator:
                     settle_quota(self.db, run, stage, reserved_units, usage)
                 else:
                     release_quota(self.db, run, stage, reserved_units)
+                failure_kind, failure_summary = self._agent_attempt_failure(exc)
+                will_retry = attempt < max_attempts
                 record_event(
                     self.db,
                     run.id,
                     "agent.retry",
-                    f"{stage} output failed validation; retrying",
+                    (
+                        "Agent attempt failed; retrying"
+                        if will_retry
+                        else "Agent attempt failed; retry budget exhausted"
+                    ),
                     stage=stage,
-                    payload={"attempt": attempt, "max_attempts": max_attempts},
+                    payload={
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "will_retry": will_retry,
+                        "failure_kind": failure_kind,
+                        "failure_summary": failure_summary,
+                    },
                 )
                 self.db.commit()
             except Exception:
@@ -1500,6 +1550,26 @@ class Orchestrator:
         if last_error is not None:
             raise last_error
         raise LLMProviderError("Agent output failed")
+
+    @staticmethod
+    def _agent_attempt_failure(exc: Exception) -> tuple[str, str]:
+        detail = " ".join(str(exc).split())[:500]
+        lowered = detail.casefold()
+        if "timed out" in lowered or "timeout" in lowered:
+            return "provider_timeout", detail
+        if "api_key" in lowered or "api key" in lowered:
+            return "provider_configuration", detail
+        if (
+            "validation error" in lowered
+            or "structured response" in lowered
+            or "json object" in lowered
+        ):
+            return "contract_validation", detail
+        if "response" in lowered and ("empty" in lowered or "chat message" in lowered):
+            return "provider_response", detail
+        if isinstance(exc, LLMProviderError):
+            return "provider_error", detail
+        return "contract_validation", detail
 
     def _run_unpersisted_agent_stage(
         self,

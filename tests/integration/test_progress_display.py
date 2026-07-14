@@ -93,6 +93,20 @@ def test_supported_run_reaches_completed_with_frontend_mappable_stages(
     ):
         assert expected in stages, f"missing progress stage: {expected}"
 
+    engineer_events = [
+        event for event in events if event["payload"].get("stage") == "engineer"
+    ]
+    engineer_event_types = [event["type"] for event in engineer_events]
+    assert "engineer.context.prepared" in engineer_event_types
+    assert "agent.attempt.started" in engineer_event_types
+    assert "agent.output.validated" in engineer_event_types
+    assert engineer_event_types.index("engineer.context.prepared") < engineer_event_types.index(
+        "agent.attempt.started"
+    )
+    assert engineer_event_types.index("agent.attempt.started") < engineer_event_types.index(
+        "agent.output.validated"
+    )
+
 
 def test_adapted_run_pauses_at_awaiting_approval_stage(client: TestClient) -> None:
     """An adapted-scope request pauses with a stage the timeline can show.
