@@ -84,3 +84,18 @@
 6. 部署环境完成一次真实长输出验收，能够从日志确认生成期间持续有进度，且不会重复扣费或重复生成。
 
 在上述实现与部署验证完成前，本 Review 保持“待办”。
+
+## Update（2026-07-15）
+
+已完成本地实现与自动化验证：
+
+1. [`provider.py`](../../../another_atom/agent/provider.py) 在请求开始、首个返回片段、持续生成、超时、fallback 启动、响应完成和 Contract 修正发生时立即上报事件；Engineer 的 Ollama 与 DeepSeek 调用改为服务端流式接收，完整内容仍在内存中组装完成后统一执行 Contract 校验，未把半成品 JSON 或代码暴露给前端。
+2. [`orchestrator.py`](../../../another_atom/agent/orchestrator.py) 在 Agent 阶段开始时绑定持久化事件处理器，并让同一阶段的主 Provider、fallback、结构修正和外层重试共同消耗 `AGENT_STAGE_TIMEOUT_SECONDS`；事件写入后立即提交，可由 SSE 和刷新后的历史记录重放。
+3. [`provider.py`](../../../another_atom/agent/provider.py) 在 Ollama 超时后打开主 Provider 熔断窗口；窗口内的后续调用直接进入 DeepSeek，不再重复等待 Ollama failover timeout。
+4. [`worker.py`](../../../another_atom/build/worker.py) 在 Build Job 执行期间使用独立数据库 Session 定时续租；续租更新同时校验 Job ID、当前 lease owner 和运行状态，旧 Worker 不能续写新 Worker 的 lease。
+5. [`App.tsx`](../../../studio/src/App.tsx) 已订阅并展示上述 Provider 生命周期事件；等待时间以当前 Provider 请求开始事件为锚点，不再被周期性进度事件重置。
+6. 新增测试覆盖 Ollama 流式组装后校验、Ollama 超时后的 DeepSeek 流式回退、熔断期跳过主 Provider、共享阶段时限阻止新请求、Provider 事件持久化重放，以及只有当前 Worker 能续租。全量结果为 `136 tests collected` 且全部通过；`ruff check another_atom tests` 与 Studio `npm run build` 通过。
+
+本次没有为旧 `AppSpec` 增加临时语义分批协议。`Plan/HTML/CSS/JavaScript/Assemble/Validate` 分批仍与 [Review 22](./22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md) 的 `SourceBundle` 迁移一起处理，避免重复建设两套生成 Contract。
+
+尚未完成的是部署环境真实长输出验收，以及对重复扣费/重复生成的部署证据采集。因此本 Review 继续保持“待办”。

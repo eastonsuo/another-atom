@@ -1,9 +1,11 @@
 import asyncio
 import socket
+import threading
+from contextlib import contextmanager
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from another_atom.agent.orchestrator import Orchestrator
@@ -20,6 +22,73 @@ logger = get_logger("worker")
 
 def worker_identity() -> str:
     return f"{socket.gethostname()}-{uuid4().hex[:8]}"
+
+
+def renew_job_lease(
+    session_factory: sessionmaker,
+    *,
+    job_id: str,
+    lease_owner: str,
+    lease_seconds: int,
+) -> bool:
+    with session_factory() as db:
+        result = db.execute(
+            update(BuildJob)
+            .where(
+                BuildJob.id == job_id,
+                BuildJob.lease_owner == lease_owner,
+                BuildJob.status.in_(
+                    [BuildStatus.BUILDING.value, BuildStatus.VALIDATING.value]
+                ),
+            )
+            .values(lease_expires_at=now_utc() + timedelta(seconds=lease_seconds))
+        )
+        db.commit()
+        return bool(result.rowcount)
+
+
+@contextmanager
+def job_lease_heartbeat(
+    session_factory: sessionmaker,
+    *,
+    job_id: str,
+    lease_owner: str | None,
+):
+    if not lease_owner:
+        yield
+        return
+    settings = get_settings()
+    interval = max(
+        1.0,
+        min(settings.worker_heartbeat_seconds, settings.worker_lease_seconds / 3),
+    )
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.wait(interval):
+            try:
+                if not renew_job_lease(
+                    session_factory,
+                    job_id=job_id,
+                    lease_owner=lease_owner,
+                    lease_seconds=settings.worker_lease_seconds,
+                ):
+                    return
+            except Exception:
+                logger.exception("build_job_lease_heartbeat_failed", extra={"job_id": job_id})
+                return
+
+    thread = threading.Thread(
+        target=heartbeat,
+        name=f"lease-heartbeat-{job_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=interval + 1)
 
 
 def claim_next_job(
@@ -103,7 +172,12 @@ def execute_claimed_job(
                 "build_job_started",
                 extra={"job_id": job.id, "run_id": job.run_id, "project_id": job.project_id},
             )
-            Orchestrator(db).execute_approved_run(job.run_id)
+            with job_lease_heartbeat(
+                session_factory,
+                job_id=job.id,
+                lease_owner=job.lease_owner,
+            ):
+                Orchestrator(db).execute_approved_run(job.run_id)
         except Exception as exc:
             logger.exception("build_job_crashed", extra={"job_id": job_id, "run_id": job.run_id})
             db.rollback()

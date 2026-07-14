@@ -18,12 +18,16 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float = 300
     ollama_lead_timeout_seconds: float = 60
     ollama_failover_timeout_seconds: float = 30
+    agent_stage_timeout_seconds: float = 540
+    provider_circuit_breaker_seconds: float = 300
+    provider_progress_interval_seconds: float = 5
     deepseek_api_key: str | None = None
     deepseek_host: str = "https://api.deepseek.com"
     demo_quota_units: int = 100
     public_base_url: str = "http://localhost:8000"
     worker_poll_seconds: float = 0.5
     worker_lease_seconds: int = 600
+    worker_heartbeat_seconds: float = 30
     session_cookie_name: str = "another_atom_session"
     session_ttl_hours: int = 168
     session_cookie_secure: bool = False

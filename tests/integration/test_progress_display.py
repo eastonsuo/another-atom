@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from another_atom.agent.orchestrator import Orchestrator
+
 # Stage identifiers the frontend Timeline knows how to render (App.tsx).
 # team mode: team_leader, product_manager, [blueprint_approval], architect,
 # engineer, data, build, reviewer, complete. build_queue is display-mapped to engineer.
@@ -160,6 +162,36 @@ def test_all_persisted_events_expose_message_and_valid_stage(client: TestClient)
         assert timestamp.utcoffset() == timedelta(0), (
             "event timestamp without an explicit UTC offset makes Studio add the browser timezone"
         )
+
+
+def test_provider_lifecycle_events_are_persisted_for_replay(
+    queued_client: TestClient,
+) -> None:
+    run = _create_team_run(queued_client, "Build a product catalog with login")
+    session_factory = queued_client.app.state.testing_session
+
+    with session_factory() as db:
+        handler = Orchestrator(db)._provider_event_handler(run["run_id"], "engineer")
+        handler(
+            "provider.request.started",
+            {"provider": "ollama", "request_attempt": 1, "stream": True},
+        )
+        handler(
+            "provider.first_token",
+            {"provider": "ollama", "request_attempt": 1},
+        )
+
+    events = queued_client.get(
+        f"/api/runs/{run['run_id']}/events/history"
+    ).json()
+    provider_events = [event for event in events if event["type"].startswith("provider.")]
+
+    assert [event["type"] for event in provider_events[-2:]] == [
+        "provider.request.started",
+        "provider.first_token",
+    ]
+    assert all(event["payload"]["stage"] == "engineer" for event in provider_events[-2:])
+    assert all(event["payload"]["provider"] == "ollama" for event in provider_events[-2:])
 
 
 def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:

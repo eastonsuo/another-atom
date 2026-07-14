@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -214,6 +216,11 @@ def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
 
     monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
     provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    events: list[tuple[str, dict]] = []
+    provider.begin_stage(
+        timeout_seconds=60,
+        event_handler=lambda event_type, payload: events.append((event_type, payload)),
+    )
     decision = provider.route_message("给我一个网页版扫雷")
     usage = provider.take_usage()
 
@@ -227,6 +234,218 @@ def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
     assert usage.fallback_provider == "deepseek"
     assert usage.input_tokens == 20
     assert usage.output_tokens == 8
+    event_types = [event_type for event_type, _ in events]
+    assert event_types.index("provider.timeout") < event_types.index(
+        "provider.fallback.started"
+    )
+    assert event_types.index("provider.fallback.started") < event_types.index(
+        "provider.response.received"
+    )
+    provider.end_stage()
+    get_settings.cache_clear()
+
+
+def test_provider_circuit_skips_repeated_primary_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    class DeepSeekResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"route":"team","response":"Calling team",'
+                                '"reason":"Explicit build"}'
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            }
+
+    def fake_post(url, *args, **kwargs):
+        calls.append(url)
+        if "ollama.com" in url:
+            raise httpx.ReadTimeout("primary timed out")
+        return DeepSeekResponse()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    events: list[str] = []
+    provider.begin_stage(
+        timeout_seconds=60,
+        event_handler=lambda event_type, payload: events.append(event_type),
+    )
+
+    assert provider.route_message("给我一个网页版扫雷").route == LeadRoute.TEAM
+    assert provider.route_message("再给我一个网页版扫雷").route == LeadRoute.TEAM
+
+    assert calls.count("https://ollama.com/api/chat") == 1
+    assert calls.count("https://api.deepseek.com/chat/completions") == 2
+    assert "provider.primary.skipped" in events
+    provider.end_stage()
+    get_settings.cache_clear()
+
+
+def test_engineer_stream_is_buffered_before_contract_validation(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    get_settings.cache_clear()
+    mock = MockLLMProvider()
+    prompt = "Build a translation tool"
+    blueprint = mock.create_blueprint(prompt, Mode.TEAM)
+    architecture = mock.create_architecture_spec(blueprint)
+    expected = mock.create_app_spec(blueprint, architecture, prompt)
+    encoded = expected.model_dump_json()
+    midpoint = len(encoded) // 2
+    captured: dict = {}
+
+    class StreamResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            yield json.dumps({"message": {"content": encoded[:midpoint]}})
+            yield json.dumps(
+                {
+                    "message": {"content": encoded[midpoint:]},
+                    "done": True,
+                    "prompt_eval_count": 120,
+                    "eval_count": 80,
+                }
+            )
+
+    def fake_stream(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return StreamResponse()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.stream", fake_stream)
+    provider = OllamaCloudProvider(model="deepseek-v4-pro")
+    events: list[str] = []
+    provider.begin_stage(
+        timeout_seconds=60,
+        event_handler=lambda event_type, payload: events.append(event_type),
+    )
+
+    result = provider.create_app_spec(blueprint, architecture, prompt)
+    usage = provider.take_usage()
+
+    assert result == expected
+    assert captured["stream"] is True
+    assert events.index("provider.request.started") < events.index("provider.first_token")
+    assert events.index("provider.first_token") < events.index("provider.response.received")
+    assert usage.request_count == 1
+    assert usage.input_tokens == 120
+    assert usage.output_tokens == 80
+    provider.end_stage()
+    get_settings.cache_clear()
+
+
+def test_engineer_stream_continues_through_deepseek_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    get_settings.cache_clear()
+    mock = MockLLMProvider()
+    prompt = "Build a translation tool"
+    blueprint = mock.create_blueprint(prompt, Mode.TEAM)
+    architecture = mock.create_architecture_spec(blueprint)
+    expected = mock.create_app_spec(blueprint, architecture, prompt)
+    encoded = expected.model_dump_json()
+    midpoint = len(encoded) // 2
+    calls: list[tuple[str, dict]] = []
+
+    class TimeoutStreamResponse:
+        def __enter__(self):
+            raise httpx.ReadTimeout("primary timed out")
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    class DeepSeekStreamResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            yield "data: " + json.dumps(
+                {"choices": [{"delta": {"content": encoded[:midpoint]}}]}
+            )
+            yield "data: " + json.dumps(
+                {
+                    "choices": [{"delta": {"content": encoded[midpoint:]}}],
+                    "usage": {"prompt_tokens": 130, "completion_tokens": 90},
+                }
+            )
+            yield "data: [DONE]"
+
+    def fake_stream(method, url, *args, **kwargs):
+        calls.append((url, kwargs.get("json", {})))
+        if "ollama.com" in url:
+            return TimeoutStreamResponse()
+        return DeepSeekStreamResponse()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.stream", fake_stream)
+    provider = OllamaCloudProvider(model="deepseek-v4-pro")
+    events: list[str] = []
+    provider.begin_stage(
+        timeout_seconds=60,
+        event_handler=lambda event_type, payload: events.append(event_type),
+    )
+
+    result = provider.create_app_spec(blueprint, architecture, prompt)
+    usage = provider.take_usage()
+
+    assert result == expected
+    assert [url for url, _ in calls] == [
+        "https://ollama.com/api/chat",
+        "https://api.deepseek.com/chat/completions",
+    ]
+    assert calls[1][1]["stream"] is True
+    assert calls[1][1]["stream_options"] == {"include_usage": True}
+    assert events.index("provider.timeout") < events.index("provider.fallback.started")
+    assert events.index("provider.fallback.started") < events.index("provider.first_token")
+    assert usage.request_count == 2
+    assert usage.fallback_provider == "deepseek"
+    assert usage.input_tokens == 130
+    assert usage.output_tokens == 90
+    provider.end_stage()
+    get_settings.cache_clear()
+
+
+def test_stage_deadline_stops_before_starting_a_provider_request(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+    provider = OllamaCloudProvider(model="deepseek-v4-pro")
+    events: list[str] = []
+    provider.begin_stage(
+        timeout_seconds=0,
+        event_handler=lambda event_type, payload: events.append(event_type),
+    )
+
+    with pytest.raises(LLMProviderError, match="deadline"):
+        provider.route_message("给我一个网页版扫雷")
+
+    assert provider.take_usage().request_count == 0
+    assert events == ["provider.deadline.exceeded"]
+    provider.end_stage()
     get_settings.cache_clear()
 
 

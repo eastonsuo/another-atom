@@ -1,6 +1,8 @@
 import html as html_lib
 import json
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
@@ -34,6 +36,7 @@ from another_atom.contracts.schemas import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+ProviderEventHandler = Callable[[str, dict], None]
 
 _BUILD_TERMS = (
     "build",
@@ -144,6 +147,15 @@ class LLMProvider(Protocol):
 
     def take_usage(self) -> ProviderUsage: ...
 
+    def begin_stage(
+        self,
+        *,
+        timeout_seconds: float,
+        event_handler: ProviderEventHandler | None = None,
+    ) -> None: ...
+
+    def end_stage(self) -> None: ...
+
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision: ...
 
     def route_project_message(
@@ -229,6 +241,17 @@ class MockLLMProvider:
 
     def __init__(self) -> None:
         self._usage = ProviderUsage()
+
+    def begin_stage(
+        self,
+        *,
+        timeout_seconds: float,
+        event_handler: ProviderEventHandler | None = None,
+    ) -> None:
+        del timeout_seconds, event_handler
+
+    def end_stage(self) -> None:
+        return None
 
     def take_usage(self) -> ProviderUsage:
         usage = self._usage
@@ -1015,10 +1038,41 @@ class OllamaCloudProvider:
         self.timeout = settings.ollama_timeout_seconds
         self.lead_timeout = settings.ollama_lead_timeout_seconds
         self.failover_timeout = settings.ollama_failover_timeout_seconds
+        self.circuit_breaker_seconds = settings.provider_circuit_breaker_seconds
+        self.progress_interval = settings.provider_progress_interval_seconds
         self.deepseek_api_key = settings.deepseek_api_key
         self.deepseek_host = settings.deepseek_host.rstrip("/")
         self.reservation_units = 3 if self.deepseek_api_key else 2
         self._usage = ProviderUsage()
+        self._stage_deadline: float | None = None
+        self._event_handler: ProviderEventHandler | None = None
+        self._primary_unavailable_until = 0.0
+
+    def begin_stage(
+        self,
+        *,
+        timeout_seconds: float,
+        event_handler: ProviderEventHandler | None = None,
+    ) -> None:
+        self._stage_deadline = time.monotonic() + timeout_seconds
+        self._event_handler = event_handler
+
+    def end_stage(self) -> None:
+        self._stage_deadline = None
+        self._event_handler = None
+
+    def _emit_provider_event(self, event_type: str, **payload: object) -> None:
+        if self._event_handler is not None:
+            self._event_handler(event_type, dict(payload))
+
+    def _request_timeout(self, requested: float) -> float:
+        if self._stage_deadline is None:
+            return requested
+        remaining = self._stage_deadline - time.monotonic()
+        if remaining <= 0:
+            self._emit_provider_event("provider.deadline.exceeded")
+            raise LLMProviderError("Agent stage deadline exceeded")
+        return max(0.1, min(requested, remaining))
 
     def take_usage(self) -> ProviderUsage:
         usage = self._usage
@@ -1234,6 +1288,7 @@ class OllamaCloudProvider:
                 "product_spec": product_spec.model_dump(mode="json"),
                 "source_context": source_context.model_dump(mode="json"),
             },
+            stream=True,
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
@@ -1275,6 +1330,7 @@ class OllamaCloudProvider:
                 "blueprint": blueprint.model_dump(mode="json"),
                 "architecture_spec": architecture_spec.model_dump(mode="json"),
             },
+            stream=True,
         )
 
     def repair_app_spec(
@@ -1306,6 +1362,7 @@ class OllamaCloudProvider:
                 "current_app_spec": app_spec.model_dump(mode="json"),
                 "validation_report": validation_report.model_dump(mode="json"),
             },
+            stream=True,
         )
 
     def analyze_data(
@@ -1369,6 +1426,7 @@ class OllamaCloudProvider:
         payload: dict,
         timeout_seconds: float | None = None,
         think: bool | None = None,
+        stream: bool = False,
     ) -> T:
         schema = contract.model_json_schema()
         messages = [
@@ -1385,16 +1443,30 @@ class OllamaCloudProvider:
         ]
         try:
             for attempt in range(2):
-                self._usage = ProviderUsage(
-                    request_count=self._usage.request_count + 1,
-                    input_tokens=self._usage.input_tokens,
-                    output_tokens=self._usage.output_tokens,
-                    fallback_provider=self._usage.fallback_provider,
-                )
+                if self.deepseek_api_key and time.monotonic() < self._primary_unavailable_until:
+                    self._emit_provider_event(
+                        "provider.primary.skipped",
+                        provider="ollama",
+                        role=role,
+                        reason="circuit_open",
+                    )
+                    self._emit_provider_event(
+                        "provider.fallback.started",
+                        provider="deepseek",
+                        role=role,
+                        reason="primary_circuit_open",
+                    )
+                    return self._deepseek_structured_chat(
+                        contract,
+                        role,
+                        messages,
+                        think=think,
+                        stream=stream,
+                    )
                 request_body = {
                     "model": self.model,
                     "messages": messages,
-                    "stream": False,
+                    "stream": stream,
                     # Constrain the model to emit strictly valid JSON matching the
                     # contract. Reasoning-capable models (DeepSeek V4) otherwise emit
                     # think-text and prose that corrupt free-form JSON extraction.
@@ -1405,30 +1477,85 @@ class OllamaCloudProvider:
                 primary_timeout = timeout_seconds or self.timeout
                 if self.deepseek_api_key:
                     primary_timeout = min(primary_timeout, self.failover_timeout)
+                primary_timeout = self._request_timeout(primary_timeout)
+                self._usage = ProviderUsage(
+                    request_count=self._usage.request_count + 1,
+                    input_tokens=self._usage.input_tokens,
+                    output_tokens=self._usage.output_tokens,
+                    fallback_provider=self._usage.fallback_provider,
+                )
+                request_started = time.monotonic()
+                self._emit_provider_event(
+                    "provider.request.started",
+                    provider="ollama",
+                    role=role,
+                    request_attempt=attempt + 1,
+                    timeout_seconds=round(primary_timeout, 3),
+                    stream=stream,
+                )
                 try:
-                    response = httpx.post(
-                        f"{self.host}/api/chat",
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                        json=request_body,
-                        timeout=primary_timeout,
-                    )
+                    if stream:
+                        body = self._ollama_stream_response(
+                            request_body,
+                            timeout=primary_timeout,
+                            role=role,
+                            request_attempt=attempt + 1,
+                        )
+                    else:
+                        response = httpx.post(
+                            f"{self.host}/api/chat",
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                            json=request_body,
+                            timeout=primary_timeout,
+                        )
+                        response.raise_for_status()
+                        body = response.json()
                 except httpx.TimeoutException:
+                    elapsed_ms = round((time.monotonic() - request_started) * 1000)
+                    self._emit_provider_event(
+                        "provider.timeout",
+                        provider="ollama",
+                        role=role,
+                        request_attempt=attempt + 1,
+                        elapsed_ms=elapsed_ms,
+                    )
                     if not self.deepseek_api_key:
                         raise
+                    self._primary_unavailable_until = (
+                        time.monotonic() + self.circuit_breaker_seconds
+                    )
+                    self._emit_provider_event(
+                        "provider.circuit.opened",
+                        provider="ollama",
+                        role=role,
+                        cooldown_seconds=self.circuit_breaker_seconds,
+                    )
                     self._usage = ProviderUsage(
                         request_count=self._usage.request_count,
                         input_tokens=self._usage.input_tokens,
                         output_tokens=self._usage.output_tokens,
                         fallback_provider="deepseek",
                     )
+                    self._emit_provider_event(
+                        "provider.fallback.started",
+                        provider="deepseek",
+                        role=role,
+                        reason="primary_timeout",
+                    )
                     return self._deepseek_structured_chat(
                         contract,
                         role,
                         messages,
                         think=think,
+                        stream=stream,
                     )
-                response.raise_for_status()
-                body = response.json()
+                self._emit_provider_event(
+                    "provider.response.received",
+                    provider="ollama",
+                    role=role,
+                    request_attempt=attempt + 1,
+                    elapsed_ms=round((time.monotonic() - request_started) * 1000),
+                )
                 self._record_response_usage(body)
                 content = self._message_content(body)
                 json_content = self._extract_json(content)
@@ -1437,6 +1564,12 @@ class OllamaCloudProvider:
                 except ValidationError as exc:
                     if attempt == 1:
                         raise
+                    self._emit_provider_event(
+                        "provider.contract_correction.started",
+                        provider="ollama",
+                        role=role,
+                        request_attempt=attempt + 2,
+                    )
                     messages.extend(
                         [
                             {"role": "assistant", "content": json_content},
@@ -1460,37 +1593,74 @@ class OllamaCloudProvider:
         messages: list[dict[str, str]],
         *,
         think: bool | None,
+        stream: bool = False,
     ) -> T:
         if not self.deepseek_api_key:
             raise LLMProviderError("DEEPSEEK_API_KEY is required for provider fallback")
         fallback_messages = [dict(message) for message in messages]
         try:
             for attempt in range(2):
-                self._usage = ProviderUsage(
-                    request_count=self._usage.request_count + 1,
-                    input_tokens=self._usage.input_tokens,
-                    output_tokens=self._usage.output_tokens,
-                    fallback_provider="deepseek",
-                )
                 request_body: dict = {
                     "model": self.model,
                     "messages": fallback_messages,
-                    "stream": False,
+                    "stream": stream,
                     "response_format": {"type": "json_object"},
                     "max_tokens": 8192,
                     "temperature": 0.2,
                 }
                 if think is not None:
                     request_body["thinking"] = {"type": "enabled" if think else "disabled"}
-                response = httpx.post(
-                    f"{self.deepseek_host}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.deepseek_api_key}"},
-                    json=request_body,
-                    timeout=self.timeout,
+                request_timeout = self._request_timeout(self.timeout)
+                self._usage = ProviderUsage(
+                    request_count=self._usage.request_count + 1,
+                    input_tokens=self._usage.input_tokens,
+                    output_tokens=self._usage.output_tokens,
+                    fallback_provider="deepseek",
                 )
-                response.raise_for_status()
-                body = response.json()
-                usage = body.get("usage") or {}
+                request_started = time.monotonic()
+                self._emit_provider_event(
+                    "provider.request.started",
+                    provider="deepseek",
+                    role=role,
+                    request_attempt=attempt + 1,
+                    timeout_seconds=round(request_timeout, 3),
+                    stream=stream,
+                )
+                try:
+                    if stream:
+                        content, usage = self._deepseek_stream_response(
+                            request_body,
+                            timeout=request_timeout,
+                            role=role,
+                            request_attempt=attempt + 1,
+                        )
+                    else:
+                        response = httpx.post(
+                            f"{self.deepseek_host}/chat/completions",
+                            headers={"Authorization": f"Bearer {self.deepseek_api_key}"},
+                            json=request_body,
+                            timeout=request_timeout,
+                        )
+                        response.raise_for_status()
+                        body = response.json()
+                        usage = body.get("usage") or {}
+                        content = body["choices"][0]["message"]["content"]
+                except httpx.TimeoutException:
+                    self._emit_provider_event(
+                        "provider.timeout",
+                        provider="deepseek",
+                        role=role,
+                        request_attempt=attempt + 1,
+                        elapsed_ms=round((time.monotonic() - request_started) * 1000),
+                    )
+                    raise
+                self._emit_provider_event(
+                    "provider.response.received",
+                    provider="deepseek",
+                    role=role,
+                    request_attempt=attempt + 1,
+                    elapsed_ms=round((time.monotonic() - request_started) * 1000),
+                )
                 self._usage = ProviderUsage(
                     request_count=self._usage.request_count,
                     input_tokens=self._usage.input_tokens + int(usage.get("prompt_tokens", 0)),
@@ -1498,13 +1668,18 @@ class OllamaCloudProvider:
                     + int(usage.get("completion_tokens", 0)),
                     fallback_provider="deepseek",
                 )
-                content = body["choices"][0]["message"]["content"]
                 json_content = self._extract_json(content)
                 try:
                     return contract.model_validate_json(json_content)
                 except ValidationError as exc:
                     if attempt == 1:
                         raise
+                    self._emit_provider_event(
+                        "provider.contract_correction.started",
+                        provider="deepseek",
+                        role=role,
+                        request_attempt=attempt + 2,
+                    )
                     fallback_messages.extend(
                         [
                             {"role": "assistant", "content": json_content},
@@ -1520,6 +1695,119 @@ class OllamaCloudProvider:
             raise ValueError("DeepSeek structured response repair did not complete")
         except (httpx.HTTPError, KeyError, TypeError, ValidationError, ValueError) as exc:
             raise LLMProviderError(f"DeepSeek official {role} output failed: {exc}") from exc
+
+    def _ollama_stream_response(
+        self,
+        request_body: dict,
+        *,
+        timeout: float,
+        role: str,
+        request_attempt: int,
+    ) -> dict:
+        content_parts: list[str] = []
+        activity_chars = 0
+        first_token_seen = False
+        last_progress = time.monotonic()
+        final_body: dict = {}
+        with httpx.stream(
+            "POST",
+            f"{self.host}/api/chat",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json=request_body,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                final_body = chunk
+                message = chunk.get("message") or {}
+                content = message.get("content") or ""
+                hidden_activity = message.get("thinking") or ""
+                if content:
+                    content_parts.append(content)
+                activity_chars += len(content) + len(hidden_activity)
+                if not first_token_seen and (content or hidden_activity):
+                    first_token_seen = True
+                    self._emit_provider_event(
+                        "provider.first_token",
+                        provider="ollama",
+                        role=role,
+                        request_attempt=request_attempt,
+                    )
+                now = time.monotonic()
+                if first_token_seen and now - last_progress >= self.progress_interval:
+                    self._emit_provider_event(
+                        "provider.progress",
+                        provider="ollama",
+                        role=role,
+                        request_attempt=request_attempt,
+                        received_chars=activity_chars,
+                    )
+                    last_progress = now
+                self._request_timeout(timeout)
+        return {**final_body, "message": {"content": "".join(content_parts)}}
+
+    def _deepseek_stream_response(
+        self,
+        request_body: dict,
+        *,
+        timeout: float,
+        role: str,
+        request_attempt: int,
+    ) -> tuple[str, dict]:
+        content_parts: list[str] = []
+        usage: dict = {}
+        activity_chars = 0
+        first_token_seen = False
+        last_progress = time.monotonic()
+        request_body = {
+            **request_body,
+            "stream_options": {"include_usage": True},
+        }
+        with httpx.stream(
+            "POST",
+            f"{self.deepseek_host}/chat/completions",
+            headers={"Authorization": f"Bearer {self.deepseek_api_key}"},
+            json=request_body,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line or line == "data: [DONE]":
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                chunk = json.loads(line[6:])
+                usage = chunk.get("usage") or usage
+                choices = chunk.get("choices") or []
+                delta = choices[0].get("delta", {}) if choices else {}
+                content = delta.get("content") or ""
+                hidden_activity = delta.get("reasoning_content") or ""
+                if content:
+                    content_parts.append(content)
+                activity_chars += len(content) + len(hidden_activity)
+                if not first_token_seen and (content or hidden_activity):
+                    first_token_seen = True
+                    self._emit_provider_event(
+                        "provider.first_token",
+                        provider="deepseek",
+                        role=role,
+                        request_attempt=request_attempt,
+                    )
+                now = time.monotonic()
+                if first_token_seen and now - last_progress >= self.progress_interval:
+                    self._emit_provider_event(
+                        "provider.progress",
+                        provider="deepseek",
+                        role=role,
+                        request_attempt=request_attempt,
+                        received_chars=activity_chars,
+                    )
+                    last_progress = now
+                self._request_timeout(timeout)
+        return "".join(content_parts), usage
 
     @staticmethod
     def _message_content(body: dict) -> str:

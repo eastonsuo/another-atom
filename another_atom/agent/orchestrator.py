@@ -66,6 +66,19 @@ from another_atom.storage.models import (
 T = TypeVar("T", bound=BaseModel)
 logger = get_logger("orchestrator")
 
+_PROVIDER_EVENT_MESSAGES = {
+    "provider.request.started": "Provider request started",
+    "provider.first_token": "Provider returned the first token",
+    "provider.progress": "Provider is still generating output",
+    "provider.timeout": "Provider request timed out",
+    "provider.fallback.started": "Fallback provider request started",
+    "provider.primary.skipped": "Primary provider skipped while circuit is open",
+    "provider.circuit.opened": "Primary provider circuit opened after timeout",
+    "provider.response.received": "Provider response received",
+    "provider.contract_correction.started": "Provider is correcting structured output",
+    "provider.deadline.exceeded": "Agent stage deadline exceeded",
+}
+
 
 def _contains_chinese(value: str) -> bool:
     return any("\u3400" <= character <= "\u9fff" for character in value)
@@ -218,6 +231,29 @@ class Orchestrator:
         if run.model not in self.providers:
             self.providers[run.model] = get_llm_provider(model=run.model)
         return self.providers[run.model]
+
+    def _provider_event_handler(
+        self,
+        run_id: str,
+        stage: str,
+    ) -> Callable[[str, dict], None]:
+        def handle(event_type: str, payload: dict) -> None:
+            if event_type not in _PROVIDER_EVENT_MESSAGES:
+                return
+            current = self.db.get(Run, run_id)
+            if current is None:
+                return
+            record_event(
+                self.db,
+                run_id,
+                event_type,
+                _PROVIDER_EVENT_MESSAGES[event_type],
+                stage=stage,
+                payload=payload,
+            )
+            self.db.commit()
+
+        return handle
 
     def create_blueprint(self, run: Run) -> Blueprint | None:
         if run.status in {
@@ -1411,9 +1447,36 @@ class Orchestrator:
         existing = get_artifact(self.db, run.id, artifact_type)
         if existing:
             return model_type.model_validate(existing.payload), existing, False
+        provider = self._provider(run)
+        provider.begin_stage(
+            timeout_seconds=get_settings().agent_stage_timeout_seconds,
+            event_handler=self._provider_event_handler(run.id, stage),
+        )
+        try:
+            return self._run_active_agent_stage(
+                run,
+                stage,
+                artifact_type,
+                model_type,
+                operation,
+                provider,
+                max_attempts,
+            )
+        finally:
+            provider.end_stage()
+
+    def _run_active_agent_stage(
+        self,
+        run: Run,
+        stage: str,
+        artifact_type: ArtifactType,
+        model_type: type[T],
+        operation: Callable[[], T],
+        provider: LLMProvider,
+        max_attempts: int,
+    ) -> tuple[T, Artifact, bool]:
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            provider = self._provider(run)
             reserved_units = provider.reservation_units
             reserve_quota(self.db, run.user_id, run, stage, reserved_units)
             record_event(
@@ -1546,9 +1609,32 @@ class Orchestrator:
         operation: Callable[[], T],
         max_attempts: int = 3,
     ) -> T:
+        provider = self._provider(run)
+        provider.begin_stage(
+            timeout_seconds=get_settings().agent_stage_timeout_seconds,
+            event_handler=self._provider_event_handler(run.id, stage),
+        )
+        try:
+            return self._run_active_unpersisted_agent_stage(
+                run,
+                stage,
+                operation,
+                provider,
+                max_attempts,
+            )
+        finally:
+            provider.end_stage()
+
+    def _run_active_unpersisted_agent_stage(
+        self,
+        run: Run,
+        stage: str,
+        operation: Callable[[], T],
+        provider: LLMProvider,
+        max_attempts: int,
+    ) -> T:
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            provider = self._provider(run)
             reserved_units = provider.reservation_units
             reserve_quota(self.db, run.user_id, run, stage, reserved_units)
             self.db.commit()

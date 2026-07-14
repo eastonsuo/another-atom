@@ -361,6 +361,16 @@ const ZH: Record<string, string> = {
   "event.run.completed": "任务已完成",
   "event.run.failed": "任务失败",
   "event.provider.fallback": "服务商已切换",
+  "event.provider.request.started": "模型服务请求已发出",
+  "event.provider.first_token": "模型已开始返回数据",
+  "event.provider.progress": "模型正在持续生成",
+  "event.provider.timeout": "模型服务请求超时",
+  "event.provider.fallback.started": "备用模型服务已启动",
+  "event.provider.primary.skipped": "已跳过暂时不可用的主服务",
+  "event.provider.circuit.opened": "主服务已暂时熔断",
+  "event.provider.response.received": "模型响应已接收",
+  "event.provider.contract_correction.started": "正在修正结构化输出",
+  "event.provider.deadline.exceeded": "模型阶段已超过总时限",
   "event.alternative.regeneration_requested": "PM 草案重新生成",
   "event.product_spec.updated": "产品说明摘要已更新",
   "event.product_spec.regenerated": "产品说明已重新生成",
@@ -369,6 +379,16 @@ const ZH: Record<string, string> = {
   "A new requirement draft is queued for Product Manager": "已请求产品经理重新生成需求草案",
   "User asked Product Manager to regenerate the requirement draft": "用户已要求产品经理重新生成需求草案",
   "Ollama timed out; switched to DeepSeek official API": "Ollama 超时，已切换到 DeepSeek 官方 API",
+  "Provider request started": "模型服务请求已发出",
+  "Provider returned the first token": "模型已开始返回数据",
+  "Provider is still generating output": "模型正在持续生成",
+  "Provider request timed out": "模型服务请求超时",
+  "Fallback provider request started": "备用模型服务已启动",
+  "Primary provider skipped while circuit is open": "主服务暂时不可用，已直接跳过",
+  "Primary provider circuit opened after timeout": "主服务超时，已暂时熔断",
+  "Provider response received": "模型响应已接收，正在解析",
+  "Provider is correcting structured output": "正在修正结构化输出",
+  "Agent stage deadline exceeded": "模型阶段已超过总时限",
 };
 
 type ActivityEntry = {
@@ -454,6 +474,37 @@ function eventMessage(language: Language, event: RunEvent): string {
     return language === "zh"
       ? `第 ${attempt}/${maxAttempts} 次请求失败：${reason}。${willRetry ? "正在准备下一次尝试。" : "重试次数已用完。"}`
       : `Attempt ${attempt}/${maxAttempts} failed: ${reason}. ${willRetry ? "Preparing the next attempt." : "The retry budget is exhausted."}`;
+  }
+  const provider = typeof event.payload.provider === "string" ? event.payload.provider : "provider";
+  if (event.type === "provider.request.started") {
+    return language === "zh" ? `已向 ${provider} 发出模型请求。` : `Model request sent to ${provider}.`;
+  }
+  if (event.type === "provider.first_token") {
+    return language === "zh" ? `${provider} 已开始返回数据。` : `${provider} started returning data.`;
+  }
+  if (event.type === "provider.progress") {
+    return language === "zh" ? `${provider} 正在持续生成，连接仍然活跃。` : `${provider} is still generating; the connection is active.`;
+  }
+  if (event.type === "provider.timeout") {
+    return language === "zh" ? `${provider} 请求超时。` : `${provider} request timed out.`;
+  }
+  if (event.type === "provider.fallback.started") {
+    return language === "zh" ? `已开始调用备用服务 ${provider}。` : `Fallback request started with ${provider}.`;
+  }
+  if (event.type === "provider.primary.skipped") {
+    return language === "zh" ? "主服务仍在熔断期，本次已直接跳过。" : "The primary provider is still circuit-open and was skipped.";
+  }
+  if (event.type === "provider.circuit.opened") {
+    return language === "zh" ? "主服务超时，后续请求将在熔断期内直接使用备用服务。" : "The primary provider timed out and its circuit is now open.";
+  }
+  if (event.type === "provider.response.received") {
+    return language === "zh" ? `${provider} 响应已接收，正在解析和校验。` : `${provider} response received; parsing and validation started.`;
+  }
+  if (event.type === "provider.contract_correction.started") {
+    return language === "zh" ? `${provider} 返回结果未满足 Contract，正在定向修正。` : `${provider} output missed the Contract; a targeted correction started.`;
+  }
+  if (event.type === "provider.deadline.exceeded") {
+    return language === "zh" ? "本阶段已达到共享总时限。" : "This stage reached its shared deadline.";
   }
   return displayText(language, event.payload.message ?? event.type) || eventTitle(language, event);
 }
@@ -642,6 +693,16 @@ function Studio() {
       "build.started",
       "validation.completed",
       "provider.fallback",
+      "provider.request.started",
+      "provider.first_token",
+      "provider.progress",
+      "provider.timeout",
+      "provider.fallback.started",
+      "provider.primary.skipped",
+      "provider.circuit.opened",
+      "provider.response.received",
+      "provider.contract_correction.started",
+      "provider.deadline.exceeded",
       "run.needs_input",
       "run.completed",
       "run.failed",
@@ -1430,14 +1491,31 @@ function BuildingState({ run, events, language }: { run: RunView; events: RunEve
     return stage === run.current_stage || (run.current_stage === "engineer" && stage === "engineer_repair");
   });
   const [now, setNow] = useState(Date.now());
-  const waitingForModel = latest?.type === "agent.attempt.started";
+  const activeModelEvents = new Set([
+    "agent.attempt.started",
+    "provider.request.started",
+    "provider.first_token",
+    "provider.progress",
+    "provider.timeout",
+    "provider.fallback.started",
+    "provider.primary.skipped",
+    "provider.circuit.opened",
+    "provider.contract_correction.started",
+  ]);
+  const waitingForModel = Boolean(latest && activeModelEvents.has(latest.type));
+  const activeRequestStarted = [...events].reverse().find((event) => {
+    const stage = event.payload.stage;
+    return stage === run.current_stage && event.type === "provider.request.started";
+  });
   useEffect(() => {
     if (!waitingForModel) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [latest?.event_id, waitingForModel]);
-  const modelRequestStartedAt = latest && waitingForModel ? eventTimestampMs(latest.timestamp) : null;
+  const modelRequestStartedAt = waitingForModel
+    ? eventTimestampMs(activeRequestStarted?.timestamp ?? latest?.timestamp ?? "")
+    : null;
   const elapsed = modelRequestStartedAt === null ? 0 : Math.max(0, Math.floor((now - modelRequestStartedAt) / 1000));
   return <div className="center-state building-cartoon">
     <div className="working-avatar"><RoleAvatar role={role} size="hero" /></div>

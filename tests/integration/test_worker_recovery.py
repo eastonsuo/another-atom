@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 from another_atom.agent.orchestrator import Orchestrator
 from another_atom.agent.tasks import recover_interrupted_blueprints
 from another_atom.api.routes import approve_blueprint, respond_to_human_task
-from another_atom.build.worker import claim_next_job, execute_claimed_job, process_next_job
+from another_atom.build.worker import (
+    claim_next_job,
+    execute_claimed_job,
+    process_next_job,
+    renew_job_lease,
+)
 from another_atom.contracts.schemas import (
     ArtifactType,
     Blueprint,
@@ -60,6 +65,37 @@ def test_expired_worker_lease_can_be_reclaimed(queued_client: TestClient) -> Non
         assert job is not None
         assert job.lease_owner == "replacement-worker"
         assert job.attempt == 2
+
+
+def test_worker_lease_heartbeat_only_renews_current_owner(
+    queued_client: TestClient,
+) -> None:
+    created = _create_run(queued_client)
+    session_factory = queued_client.app.state.testing_session
+    job_id = claim_next_job(session_factory, worker_id="active-worker")
+    assert job_id == created["build_job_id"]
+    with session_factory() as db:
+        job = db.get(BuildJob, job_id)
+        assert job is not None and job.lease_expires_at is not None
+        original_expiry = job.lease_expires_at
+
+    assert renew_job_lease(
+        session_factory,
+        job_id=job_id,
+        lease_owner="active-worker",
+        lease_seconds=600,
+    )
+    assert not renew_job_lease(
+        session_factory,
+        job_id=job_id,
+        lease_owner="stale-worker",
+        lease_seconds=600,
+    )
+    with session_factory() as db:
+        job = db.get(BuildJob, job_id)
+        assert job is not None and job.lease_expires_at is not None
+        assert job.lease_owner == "active-worker"
+        assert job.lease_expires_at >= original_expiry
 
 
 def test_interrupted_blueprint_background_task_is_recovered(
