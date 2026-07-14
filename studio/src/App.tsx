@@ -172,10 +172,8 @@ const ZH: Record<string, string> = {
   "Expand project sidebar": "展开项目栏",
   "Projects": "项目",
   "Your generated projects will appear here.": "生成的项目会显示在这里。",
-  "Demo usage": "演示配额",
-  "Used": "已使用",
-  "left": "剩余",
-  "LLM usage is isolated to this account.": "LLM 用量按当前账号隔离。",
+  "Model calls": "模型调用",
+  "LLM calls are isolated to this account.": "每次实际模型请求计 1 次，按当前账号隔离。",
   "Sign out": "退出登录",
   "Admin console": "管理后台",
   "Real LLM is active": "真实 LLM 已启用",
@@ -810,8 +808,11 @@ function Sidebar({
         </div>
       </div>
       <div className="quota-panel">
-        <div><span>{ui(language, "Demo usage")}</span><strong>{ui(language, "Used")} {quota?.used ?? "–"}</strong></div>
-        <small>{ui(language, "LLM usage is isolated to this account.")}</small>
+        <div>
+          <span>{ui(language, "Model calls")}</span>
+          <strong>{quota ? (language === "zh" ? `已调用 ${quota.used} 次` : `${quota.used} calls`) : "–"}</strong>
+        </div>
+        <small>{ui(language, "LLM calls are isolated to this account.")}</small>
       </div>
       {user.role === "admin" && <a className="admin-console-link" href="/admin"><ShieldCheck size={16} /><span>{ui(language, "Admin console")}</span><ChevronRight size={15} /></a>}
       <button className="account-button" onClick={onLogout} title={ui(language, "Sign out")}><LogOut size={16} /><span><b>{user.display_name}</b><small>{ui(language, "Sign out")}</small></span></button>
