@@ -1,4 +1,4 @@
-import { Bug, Code2, Eye, FileJson, FileText, FolderGit2, GripVertical, LoaderCircle, Maximize2, Minimize2, Pencil, RefreshCw, Save, TerminalSquare, Undo2, X } from "lucide-react";
+import { Bug, Code2, Eye, FileJson, FileText, FolderGit2, GripVertical, LoaderCircle, Maximize2, Minimize2, Pencil, Redo2, RefreshCw, Save, TerminalSquare, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import type { ProjectFileContent, ProjectFileEntry, RunEvent, RunView, VersionView } from "../types";
@@ -12,12 +12,14 @@ const TOOL_PANEL_WIDTH_KEY = "another-atom-tool-panel-width";
 const DEFAULT_TOOL_PANEL_WIDTH = 368;
 const MIN_TOOL_PANEL_WIDTH = 320;
 
-export function RepositoryPanel({ run, events, language, sandboxAvailable, logPanel, onVersionSaved, onError }: { run: RunView; events: RunEvent[]; language: Language; sandboxAvailable: boolean; logPanel: ReactNode; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
+export function RepositoryPanel({ run, events, language, sandboxAvailable, logPanel, requestedFilePath, onRequestedFileOpened, onVersionSaved, onError }: { run: RunView; events: RunEvent[]; language: Language; sandboxAvailable: boolean; logPanel: ReactNode; requestedFilePath?: string | null; onRequestedFileOpened?: () => void; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
   const [active, setActive] = useState<"files" | "terminal" | "logs" | null>(null);
   const [files, setFiles] = useState<ProjectFileEntry[]>([]);
   const [selected, setSelected] = useState<ProjectFileEntry | null>(null);
   const [fileContent, setFileContent] = useState<ProjectFileContent | null>(null);
   const [draft, setDraft] = useState("");
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
   const [mode, setMode] = useState<ViewMode>("source");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -42,29 +44,36 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
       const result = await api.projectFile(run.project_id, run.run_id, file.path, file.source);
       setFileContent(result);
       setDraft(result.content);
+      setUndoStack([]);
+      setRedoStack([]);
       setMode(result.render_mode === "markdown" ? "preview" : "source");
     } catch (reason) {
       setFileContent(null);
       setDraft("");
+      setUndoStack([]);
+      setRedoStack([]);
       setError(reason instanceof Error ? reason.message : copy(language, "Could not read file"));
     }
   }, [confirmDiscard, language, run.project_id, run.run_id]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requestedPath?: string) => {
     if (!confirmDiscard()) return;
     setLoading(true);
     setError("");
     try {
       const next = await api.projectFiles(run.project_id, run.run_id);
       setFiles(next);
-      const preferred = selected
+      const requested = requestedPath
+        ? next.find((file) => file.source === "repository" && file.path === requestedPath)
+        : undefined;
+      const preferred = requested ?? (selected
         ? next.find((file) => file.source === selected.source && file.path === selected.path)
         : run.status === "awaiting_approval"
           ? next.find((file) => file.source === "repository" && file.path === "docs/product-spec.md")
             ?? next.find((file) => file.source === "repository" && file.path === "README.md")
           : next.find((file) => file.source === "repository" && file.path === "README.md")
           ?? next.find((file) => file.source === "artifact" && file.path.endsWith("app-spec.json"))
-          ?? next[0];
+          ?? next[0]);
       if (preferred) await openFile(preferred);
       else {
         setSelected(null);
@@ -84,6 +93,20 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
     // Refresh only when the Project/Run changes; selected file updates must not reload the panel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.project_id, run.run_id, run.status]);
+
+  useEffect(() => {
+    if (!requestedFilePath) return;
+    const timer = window.setTimeout(() => {
+      onRequestedFileOpened?.();
+      setActive("files");
+      const requested = files.find((file) => file.source === "repository" && file.path === requestedFilePath);
+      if (requested) void openFile(requested);
+      else void refresh(requestedFilePath);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // This effect represents an explicit one-shot request from the parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedFilePath]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -108,6 +131,27 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
     try { JSON.parse(draft); return ""; }
     catch { return copy(language, "JSON is not valid"); }
   }, [draft, fileContent?.kind, language, mode]);
+
+  const changeDraft = (next: string) => {
+    if (next === draft) return;
+    setUndoStack((current) => [...current.slice(-99), draft]);
+    setRedoStack([]);
+    setDraft(next);
+  };
+  const undo = () => {
+    const previous = undoStack.at(-1);
+    if (previous === undefined) return;
+    setUndoStack((current) => current.slice(0, -1));
+    setRedoStack((current) => [...current, draft]);
+    setDraft(previous);
+  };
+  const redo = () => {
+    const next = redoStack.at(-1);
+    if (next === undefined) return;
+    setRedoStack((current) => current.slice(0, -1));
+    setUndoStack((current) => [...current, draft]);
+    setDraft(next);
+  };
 
   const save = useCallback(async () => {
     if (!fileContent || !dirty || validationError) return;
@@ -202,7 +246,7 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
               {selected?.source === "artifact" && <span>{copy(language, "Read-only artifact")}</span>}
               {selected?.source === "repository" && !selected.editable && <span>{copy(language, "Validated source")}</span>}
               {fileContent?.kind === "markdown" && mode !== "edit" && <><button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}><Eye size={12} />{copy(language, "Preview")}</button><button className={mode === "source" ? "active" : ""} onClick={() => setMode("source")}><Code2 size={12} />{copy(language, "Source")}</button></>}
-              {fileContent?.editable && mode !== "edit" && <button onClick={() => { setDraft(fileContent.content); setMode("edit"); }}><Pencil size={12} />{copy(language, "Edit")}</button>}
+              {fileContent?.editable && mode !== "edit" && <button onClick={() => { setDraft(fileContent.content); setUndoStack([]); setRedoStack([]); setMode("edit"); }}><Pencil size={12} />{copy(language, "Edit")}</button>}
             </div>
           </div>
           {error && <p className="repository-error">{error}</p>}
@@ -210,8 +254,8 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
           {!error && fileContent && mode === "preview" ? <MarkdownPreview content={fileContent.content} /> : null}
           {!error && fileContent && mode === "source" ? <pre><code>{fileContent.content}</code></pre> : null}
           {!error && fileContent && mode === "edit" ? <div className="repository-editor">
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} aria-label={copy(language, "File content")} />
-            <div><small className={dirty ? "dirty" : ""}>{dirty ? copy(language, "Unsaved changes") : copy(language, "No changes")}{validationError ? ` · ${validationError}` : ""}</small><span><button onClick={() => { setDraft(fileContent.content); setMode(fileContent.render_mode === "markdown" ? "preview" : "source"); }} disabled={saving}><Undo2 size={12} />{copy(language, "Cancel")}</button><button className="save" onClick={() => void save()} disabled={!dirty || saving || Boolean(validationError)}>{saving ? <LoaderCircle className="spin" size={12} /> : <Save size={12} />}{copy(language, saving ? "Saving" : "Save")}</button></span></div>
+            <textarea value={draft} onChange={(event) => changeDraft(event.target.value)} spellCheck={false} aria-label={copy(language, "File content")} />
+            <div><small className={dirty ? "dirty" : ""}>{dirty ? copy(language, "Unsaved changes") : copy(language, "No changes")}{validationError ? ` · ${validationError}` : ""}</small><span><button onClick={undo} disabled={saving || undoStack.length === 0} title={copy(language, "Undo")}><Undo2 size={12} />{copy(language, "Undo")}</button><button onClick={redo} disabled={saving || redoStack.length === 0} title={copy(language, "Redo")}><Redo2 size={12} />{copy(language, "Redo")}</button><button onClick={() => { setDraft(fileContent.content); setUndoStack([]); setRedoStack([]); setMode(fileContent.render_mode === "markdown" ? "preview" : "source"); }} disabled={saving}>{copy(language, "Cancel")}</button><button className="save" onClick={() => void save()} disabled={!dirty || saving || Boolean(validationError)}>{saving ? <LoaderCircle className="spin" size={12} /> : <Save size={12} />}{copy(language, saving ? "Saving" : "Save")}</button></span></div>
           </div> : null}
           {!error && !fileContent ? <p>{copy(language, "No generated files yet")}</p> : null}
         </div>
@@ -233,6 +277,6 @@ function formatSize(bytes: number): string { return bytes < 1024 ? `${bytes} B` 
 function copy(language: Language, text: string): string {
   if (language === "en") return text;
   return {
-    "Project files": "项目文件", "Files": "文件", "Restricted Vim": "受限 Vim", "Build a version before opening Vim": "生成项目版本后才能打开 Vim", "Sandbox Host is not configured": "当前未配置 Sandbox Host，Vim 不可用", "Vim is not available": "当前无法打开 Vim", "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.": "需要先配置独立 Sandbox Host 才能使用受限编辑器；Control Plane 不会直接执行文件工具。", "Run log": "运行日志", "Logs": "日志", "Close panel": "关闭面板", "Resize panel": "拖动调整面板宽度", "Full screen": "全屏查看", "Exit full screen": "退出全屏", "Read and edit Project documents": "查看和编辑项目文档", "Refresh files": "刷新文件", "Project Repository": "项目代码库", "Generated Artifacts": "本次生成产物", "Read-only artifact": "只读产物", "Validated source": "受控源码", "Select a file": "选择文件查看内容", "No generated files yet": "暂时没有可查看的文件", "Could not list files": "无法获取文件列表", "Could not read file": "无法读取文件", "Could not save file": "无法保存文件", "Discard unsaved changes?": "当前文件有未保存修改，确定放弃吗？", "Preview": "预览", "Source": "源码", "Edit": "编辑", "File content": "文件内容", "Unsaved changes": "未保存", "No changes": "没有修改", "JSON is not valid": "JSON 格式不正确", "Cancel": "取消", "Save": "保存", "Saving": "保存中", "Saved in commit": "已保存到提交",
+    "Project files": "项目文件", "Files": "文件", "Restricted Vim": "受限 Vim", "Build a version before opening Vim": "生成项目版本后才能打开 Vim", "Sandbox Host is not configured": "当前未配置 Sandbox Host，Vim 不可用", "Vim is not available": "当前无法打开 Vim", "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.": "需要先配置独立 Sandbox Host 才能使用受限编辑器；Control Plane 不会直接执行文件工具。", "Run log": "运行日志", "Logs": "日志", "Close panel": "关闭面板", "Resize panel": "拖动调整面板宽度", "Full screen": "全屏查看", "Exit full screen": "退出全屏", "Read and edit Project documents": "查看和编辑项目文档", "Refresh files": "刷新文件", "Project Repository": "项目代码库", "Generated Artifacts": "本次生成产物", "Read-only artifact": "只读产物", "Validated source": "受控源码", "Select a file": "选择文件查看内容", "No generated files yet": "暂时没有可查看的文件", "Could not list files": "无法获取文件列表", "Could not read file": "无法读取文件", "Could not save file": "无法保存文件", "Discard unsaved changes?": "当前文件有未保存修改，确定放弃吗？", "Preview": "预览", "Source": "源码", "Edit": "编辑", "File content": "文件内容", "Unsaved changes": "未保存", "No changes": "没有修改", "JSON is not valid": "JSON 格式不正确", "Undo": "撤销", "Redo": "重做", "Cancel": "取消", "Save": "保存", "Saving": "保存中", "Saved in commit": "已保存到提交",
   }[text] ?? text;
 }

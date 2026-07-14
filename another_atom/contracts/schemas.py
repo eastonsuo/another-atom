@@ -140,6 +140,11 @@ class ProductSpec(BaseModel):
     content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class ProductSpecUpdateRequest(BaseModel):
+    summary: str = Field(min_length=1, max_length=600)
+    action: Literal["save", "regenerate"]
+
+
 class PMRequirementAssessment(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     outcome: Literal["ready", "needs_input"]

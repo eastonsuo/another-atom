@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import AsyncIterator, Callable
@@ -54,6 +55,7 @@ from another_atom.contracts.schemas import (
     ModelOption,
     ModelsView,
     ProductSpec,
+    ProductSpecUpdateRequest,
     ProjectFileContent,
     ProjectFileEntry,
     ProjectFileSaveRequest,
@@ -612,6 +614,84 @@ def get_run(
     user: User = Depends(get_current_user),
 ) -> RunView:
     return _run_view(db, _owned_run(db, run_id, user.id))
+
+
+@router.post("/runs/{run_id}/product-spec", response_model=RunView)
+def update_product_spec(
+    run_id: str,
+    request: ProductSpecUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    run = _owned_run(db, run_id, user.id)
+    if run.status != RunStatus.AWAITING_APPROVAL.value:
+        raise AppError(
+            "PRODUCT_SPEC_UPDATE_NOT_ALLOWED",
+            "This run is not waiting for ProductSpec approval",
+            409,
+        )
+    blueprint = _artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint)
+    if blueprint is None:
+        raise AppError("PRODUCT_SPEC_NOT_FOUND", "Product specification was not found", 404)
+    try:
+        content = read_repository_file(run.project_id, "docs/product-spec.md")
+    except RepositoryError as exc:
+        raise AppError("PRODUCT_SPEC_NOT_FOUND", str(exc), 404) from exc
+
+    summary = " ".join(request.summary.split())
+    if request.action == "regenerate":
+        features = ("、" if any("\u3400" <= char <= "\u9fff" for char in summary) else ", ").join(
+            blueprint.modules[:4]
+        )
+        if features and not any(module in summary for module in blueprint.modules[:4]):
+            suffix = (
+                f"核心功能包括{features}。"
+                if any("\u3400" <= char <= "\u9fff" for char in summary)
+                else f" Core features include {features}."
+            )
+            summary = (
+                f"{summary.rstrip('。.! ')}。{suffix}"
+                if any("\u3400" <= char <= "\u9fff" for char in summary)
+                else f"{summary.rstrip('.! ')}.{suffix}"
+            )
+            summary = summary[:600]
+
+    product_spec = ProductSpec(
+        summary=summary,
+        content=content,
+        content_hash=repository_content_hash(content),
+    )
+    artifact = save_artifact(db, run.id, ArtifactType.PRODUCT_SPEC, product_spec)
+    pending_task = db.scalar(
+        select(HumanTask).where(
+            HumanTask.run_id == run.id,
+            HumanTask.user_id == user.id,
+            HumanTask.kind == HumanTaskKind.APPROVAL.value,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+    )
+    if pending_task is not None:
+        subject = f"product_spec:{artifact.id}:{product_spec.content_hash}:{product_spec.summary}"
+        pending_task.subject_hash = hashlib.sha256(subject.encode("utf-8")).hexdigest()
+        pending_task.payload = {
+            **pending_task.payload,
+            "artifact_id": artifact.id,
+            "path": product_spec.path,
+            "content_hash": product_spec.content_hash,
+        }
+    record_event(
+        db,
+        run.id,
+        "product_spec.regenerated" if request.action == "regenerate" else "product_spec.updated",
+        "Product specification was regenerated from the current draft"
+        if request.action == "regenerate"
+        else "Product specification summary was updated",
+        stage="blueprint_approval",
+        payload={"artifact_id": artifact.id, "content_hash": product_spec.content_hash},
+    )
+    db.commit()
+    db.refresh(run)
+    return _run_view(db, run)
 
 
 @router.post(

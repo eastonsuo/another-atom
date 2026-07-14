@@ -19,6 +19,7 @@ import {
   Plus,
   Rocket,
   RotateCcw,
+  Save,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -349,6 +350,10 @@ const ZH: Record<string, string> = {
   "event.run.failed": "任务失败",
   "event.provider.fallback": "服务商已切换",
   "event.alternative.regeneration_requested": "PM 草案重新生成",
+  "event.product_spec.updated": "产品说明摘要已更新",
+  "event.product_spec.regenerated": "产品说明已重新生成",
+  "Product specification summary was updated": "产品说明摘要已更新",
+  "Product specification was regenerated from the current draft": "产品说明已基于当前内容重新生成",
   "A new requirement draft is queued for Product Manager": "已请求产品经理重新生成需求草案",
   "User asked Product Manager to regenerate the requirement draft": "用户已要求产品经理重新生成需求草案",
   "Ollama timed out; switched to DeepSeek official API": "Ollama 超时，已切换到 DeepSeek 官方 API",
@@ -978,6 +983,7 @@ function Workspace({
   language: Language;
 }) {
   const [approving, setApproving] = useState(false);
+  const [requestedFilePath, setRequestedFilePath] = useState<string | null>(null);
   const effectiveBlueprint = run.blueprint;
   const ready = run.status === "completed" || run.status === "completed_degraded";
 
@@ -995,6 +1001,18 @@ function Workspace({
     }
   };
 
+  const updateProductSpec = async (summary: string, action: "save" | "regenerate") => {
+    setError("");
+    try {
+      const updated = await api.updateProductSpec(run.run_id, summary, action);
+      setRun(updated);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Product specification update failed";
+      setError(message);
+      throw reason;
+    }
+  };
+
   return (
     <div className="workspace-grid">
       <section className="workspace-process">
@@ -1005,7 +1023,7 @@ function Workspace({
       </section>
       <section className="workspace-content">
         {run.status === "awaiting_approval" && effectiveBlueprint ? (
-          <ProductSpecApproval productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} />
+          <ProductSpecApproval key={`${run.product_spec?.content_hash}:${run.product_spec?.summary}`} productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} onOpenDocument={() => setRequestedFilePath(run.product_spec?.path ?? "docs/product-spec.md")} onUpdate={updateProductSpec} />
         ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
           <div className="failed-project-view">
             <ClarificationState run={run} language={language} />
@@ -1045,7 +1063,7 @@ function Workspace({
           </div>
         )}
       </section>
-      <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
+      <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} requestedFilePath={requestedFilePath} onRequestedFileOpened={() => setRequestedFilePath(null)} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
     </div>
   );
 }
@@ -1142,17 +1160,33 @@ function BlueprintSnapshot({ blueprint, language }: { blueprint: Blueprint; lang
   </details>;
 }
 
-function ProductSpecApproval({ productSpec, blueprint, approve, approving, language }: { productSpec: ProductSpec | null; blueprint: Blueprint; approve: () => void; approving: boolean; language: Language }) {
+function ProductSpecApproval({ productSpec, blueprint, approve, approving, language, onOpenDocument, onUpdate }: { productSpec: ProductSpec | null; blueprint: Blueprint; approve: () => void; approving: boolean; language: Language; onOpenDocument: () => void; onUpdate: (summary: string, action: "save" | "regenerate") => Promise<void> }) {
   const chinese = language === "zh";
+  const [summary, setSummary] = useState(productSpec?.summary ?? "");
+  const [updating, setUpdating] = useState<"save" | "regenerate" | null>(null);
+  const summaryDirty = Boolean(productSpec && summary.trim() !== productSpec.summary);
+  const update = async (action: "save" | "regenerate") => {
+    if (!summary.trim() || updating) return;
+    setUpdating(action);
+    try { await onUpdate(summary.trim(), action); }
+    finally { setUpdating(null); }
+  };
   return <div className="blueprint-view product-spec-approval">
     <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>{chinese ? "产品经理 · 产品方案" : "Product Manager · Product plan"}</span><h1>{chinese ? "产品说明待确认" : "Product specification ready"}</h1><p>{chinese ? "产品经理已把需求整理成 Markdown 文档。这里不展示视觉稿，请先查看完整产品说明。" : "The Product Manager prepared a Markdown specification. Review the document before continuing."}</p></div><SupportBadge level={blueprint.support_level} language={language} /></div>
     {blueprint.support_level === "adapted" && <div className="scope-note"><CircleAlert size={17} /><div><strong>{chinese ? "方案包含能力调整" : "The plan includes capability adaptations"}</strong><p>{chinese ? `共 ${blueprint.omitted_requirements.length} 项调整，具体内容和验收边界已写入产品说明。` : `${blueprint.omitted_requirements.length} adaptations are documented with their acceptance boundaries.`}</p></div></div>}
     <div className="product-spec-card">
       <FileText size={24} />
-      <div><span>{chinese ? "完整产品说明" : "Full product specification"}</span><strong>{productSpec?.path ?? "docs/product-spec.md"}</strong><p>{productSpec?.summary ?? (chinese ? "当前任务由旧版本创建，尚无独立产品说明文件。" : "This legacy run does not have a standalone product specification file.")}</p></div>
+      <div className="product-spec-card-body">
+        <span>{chinese ? "方案摘要" : "Plan summary"}</span>
+        {productSpec ? <textarea className="product-spec-summary-editor" value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={600} aria-label={chinese ? "方案摘要" : "Plan summary"} /> : <p>{chinese ? "当前任务由旧版本创建，尚无独立产品说明文件。" : "This legacy run does not have a standalone product specification file."}</p>}
+        {productSpec && <div className="product-spec-summary-actions"><small>{summaryDirty ? (chinese ? "摘要已修改，保存或重新生成后才能确认。" : "Save or regenerate the changed summary before approval.") : (chinese ? "可以直接修改，也可以基于当前内容重新生成。" : "Edit directly or regenerate from the current draft.")}</small><span><button type="button" onClick={() => void update("save")} disabled={!summaryDirty || Boolean(updating)}>{updating === "save" ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{chinese ? "保存修改" : "Save"}</button><button type="button" onClick={() => void update("regenerate")} disabled={!summary.trim() || Boolean(updating)}>{updating === "regenerate" ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}{chinese ? "基于当前内容重新生成" : "Regenerate from current"}</button></span></div>}
+        <div className="product-spec-document">
+          <div><span>{chinese ? "完整产品说明" : "Full product specification"}</span><strong>{productSpec?.path ?? "docs/product-spec.md"}</strong></div>
+          <button type="button" onClick={onOpenDocument} disabled={!productSpec}><FileText size={16} />{chinese ? "查看完整产品说明" : "Open full specification"}</button>
+        </div>
+      </div>
     </div>
-    <div className="product-spec-tip"><CircleAlert size={16} /><span>{chinese ? "请在右侧“项目文件”中查看 Markdown 文档；确认后才会进入架构设计和代码生成。" : "Open Project files on the right to review the Markdown document. Architecture and code generation start only after confirmation."}</span></div>
-    <div className="approval-bar"><div><strong>{chinese ? "确认当前产品方案？" : "Approve this product plan?"}</strong><span>{chinese ? "确认对象是产品说明及其中记录的能力边界，不是视觉稿。" : "You are approving the product specification and its capability boundary, not a visual mockup."}</span></div><button onClick={approve} disabled={approving || !productSpec}>{approving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />} {chinese ? "确认并构建" : "Confirm and build"}</button></div>
+    <div className="approval-bar"><div><strong>{chinese ? "确认当前产品方案？" : "Approve this product plan?"}</strong><span>{chinese ? "确认对象是产品说明及其中记录的能力边界，不是视觉稿。" : "You are approving the product specification and its capability boundary, not a visual mockup."}</span></div><button onClick={approve} disabled={approving || !productSpec || summaryDirty || Boolean(updating)}>{approving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />} {chinese ? "确认并构建" : "Confirm and build"}</button></div>
   </div>;
 }
 

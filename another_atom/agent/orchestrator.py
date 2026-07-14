@@ -71,8 +71,12 @@ def _contains_chinese(value: str) -> bool:
 
 def _render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
     chinese = _contains_chinese(prompt)
+    compact_goal = " ".join(prompt.split())
+    if len(compact_goal) > 90:
+        compact_goal = f"{compact_goal[:87]}..."
     if chinese:
-        summary = f"{blueprint.project_name}：围绕用户原始目标整理的可构建产品方案。"
+        features = "、".join(blueprint.modules[:4])
+        summary = f"{blueprint.project_name}面向“{compact_goal}”，主要包含{features}。"
         lines = [
             f"# {blueprint.project_name} 产品说明",
             "",
@@ -106,7 +110,8 @@ def _render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
             "- 被调整或省略的能力不会伪装成真实可用服务。",
         ]
     else:
-        summary = f"{blueprint.project_name}: a buildable product plan based on the request."
+        features = ", ".join(blueprint.modules[:4])
+        summary = f'{blueprint.project_name} addresses "{compact_goal}" with {features}.'
         lines = [
             f"# {blueprint.project_name} Product Specification",
             "",

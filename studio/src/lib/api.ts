@@ -116,6 +116,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt }),
     }),
+  updateProductSpec: (runId: string, summary: string, action: "save" | "regenerate") =>
+    request<RunView>(`/api/runs/${runId}/product-spec`, {
+      method: "POST",
+      body: JSON.stringify({ summary, action }),
+    }),
   events: (runId: string) =>
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),
   downloadRunLog: (runId: string) => `/api/runs/${runId}/logs/download`,

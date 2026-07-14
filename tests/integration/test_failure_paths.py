@@ -229,6 +229,8 @@ def test_chinese_adapted_request_creates_chinese_product_spec_for_review(
 
     assert run["status"] == "awaiting_approval"
     assert run["product_spec"]["path"] == "docs/product-spec.md"
+    assert "翻译软件" in run["product_spec"]["summary"]
+    assert run["blueprint"]["modules"][0] in run["product_spec"]["summary"]
     assert "## 用户目标" in run["product_spec"]["content"]
     assert "创建一个带登录和数据库保存记录的翻译软件" in run["product_spec"]["content"]
     assert "视觉方向" not in run["product_spec"]["content"]
@@ -254,6 +256,16 @@ def test_chinese_adapted_request_creates_chinese_product_spec_for_review(
     )
     assert document.status_code == 200
     assert document.json()["content"] == run["product_spec"]["content"]
+
+    updated = queued_client.post(
+        f"/api/runs/{run['run_id']}/product-spec",
+        json={"summary": "保留当前方案，但突出翻译结果复制", "action": "regenerate"},
+    )
+    assert updated.status_code == 200
+    regenerated = updated.json()
+    assert regenerated["product_spec"]["summary"].startswith("保留当前方案")
+    assert regenerated["blueprint"]["modules"][0] in regenerated["product_spec"]["summary"]
+    assert regenerated["product_spec"]["content"] == run["product_spec"]["content"]
 
 
 def test_unavailable_model_is_rejected_before_project_creation(client: TestClient) -> None:
