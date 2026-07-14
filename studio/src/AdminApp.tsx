@@ -17,6 +17,7 @@ import { AtomLogo } from "./components/BrandAssets";
 import { api } from "./lib/api";
 import type {
   AdminProjectDetail,
+  AdminProjectList,
   AdminProjectSummary,
   AdminUserList,
   AdminUserSummary,
@@ -68,8 +69,8 @@ function runStage(project: AdminProjectSummary): string {
   const run = project.latest_run;
   if (!run) return "未开始";
   const stage = STAGES[run.current_stage] ?? `未识别阶段：${run.current_stage}`;
-  if (run.status === "failed") return `${stage}失败`;
-  if (run.status === "cancelled") return `${stage}已取消`;
+  if (run.status === "failed") return run.current_stage === "complete" ? "任务失败" : `${stage}阶段失败`;
+  if (run.status === "cancelled") return run.current_stage === "complete" ? "任务已取消" : `${stage}阶段已取消`;
   return stage;
 }
 
@@ -113,7 +114,7 @@ function AdminLogin({ onAuthenticated }: { onAuthenticated: (user: AdminUserView
       onAuthenticated(user);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "管理员登录失败";
-      setError(message === "Administrator access is required" ? "该账户没有管理员权限。" : message === "Username or password is incorrect" ? "用户名或密码不正确。" : message);
+      setError(message === "Administrator access is required" ? "该账户没有管理员权限。" : message === "Username or password is incorrect" ? "用户名或密码不正确。" : message === "Too many failed sign-in attempts; try again later" ? "失败次数过多，请稍后再试。" : message);
     } finally {
       setSubmitting(false);
     }
@@ -133,7 +134,7 @@ function AdminLogin({ onAuthenticated }: { onAuthenticated: (user: AdminUserView
           {submitting ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
           登录管理后台
         </button>
-        <small>默认开发账号：admin / admin12345</small>
+        {import.meta.env.DEV && <small>默认开发账号：admin / admin12345</small>}
       </form>
     </main>
   );
@@ -145,7 +146,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
   const [page, setPage] = useState(1);
   const [users, setUsers] = useState<AdminUserList | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Record<string, AdminProjectSummary[]>>({});
+  const [projects, setProjects] = useState<Record<string, AdminProjectList>>({});
   const [loadingProjects, setLoadingProjects] = useState<string | null>(null);
   const [detail, setDetail] = useState<AdminProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -172,6 +173,19 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
     return () => { active = false; };
   }, [page, query]);
 
+  const loadProjects = async (userId: string, projectPage: number) => {
+    setLoadingProjects(userId);
+    setError("");
+    try {
+      const next = await api.adminUserProjects(userId, projectPage);
+      setProjects((current) => ({ ...current, [userId]: next }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Project 加载失败");
+    } finally {
+      setLoadingProjects(null);
+    }
+  };
+
   const toggleUser = async (user: AdminUserSummary) => {
     if (expanded === user.id) {
       setExpanded(null);
@@ -179,15 +193,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
     }
     setExpanded(user.id);
     if (projects[user.id]) return;
-    setLoadingProjects(user.id);
-    try {
-      const next = await api.adminUserProjects(user.id);
-      setProjects((current) => ({ ...current, [user.id]: next }));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Project 加载失败");
-    } finally {
-      setLoadingProjects(null);
-    }
+    await loadProjects(user.id, 1);
   };
 
   const openDetail = async (projectId: string) => {
@@ -227,7 +233,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
                 <em>{user.plan}</em>
               </button>
               {expanded === user.id && <div className="admin-projects">
-                {loadingProjects === user.id ? <div className="admin-empty"><LoaderCircle className="spin" />正在加载 Project……</div> : projects[user.id]?.length ? projects[user.id].map((project) => <ProjectRow project={project} onOpen={openDetail} key={project.id} />) : <div className="admin-empty">该用户还没有 Project。</div>}
+                {loadingProjects === user.id ? <div className="admin-empty"><LoaderCircle className="spin" />正在加载 Project……</div> : projects[user.id]?.items.length ? <>{projects[user.id].items.map((project) => <ProjectRow project={project} onOpen={openDetail} key={project.id} />)}<ProjectPagination projects={projects[user.id]} onPage={(nextPage) => void loadProjects(user.id, nextPage)} /></> : <div className="admin-empty">该用户还没有 Project。</div>}
               </div>}
             </div>
           )) : <div className="admin-empty">没有匹配的注册用户。</div>}
@@ -237,6 +243,12 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
       {detail && <ProjectDrawer detail={detail} onClose={() => setDetail(null)} />}
     </div>
   );
+}
+
+function ProjectPagination({ projects, onPage }: { projects: AdminProjectList; onPage: (page: number) => void }) {
+  const lastPage = Math.max(1, Math.ceil(projects.total / projects.page_size));
+  if (lastPage <= 1) return null;
+  return <div className="admin-project-pagination"><button disabled={projects.page <= 1} onClick={() => onPage(projects.page - 1)}>上一页</button><span>Project 第 {projects.page} / {lastPage} 页</span><button disabled={projects.page >= lastPage} onClick={() => onPage(projects.page + 1)}>下一页</button></div>;
 }
 
 function ProjectRow({ project, onOpen }: { project: AdminProjectSummary; onOpen: (id: string) => void }) {

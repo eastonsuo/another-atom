@@ -1,4 +1,5 @@
 import re
+import time
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -10,6 +11,7 @@ from another_atom.api.routes import _render_run_log
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AdminProjectDetail,
+    AdminProjectList,
     AdminProjectSummary,
     AdminRunSummary,
     AdminUserList,
@@ -42,6 +44,33 @@ from another_atom.storage.models import (
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger("admin")
+
+# V1 runs as a single instance, so an in-process failure window is an acceptable
+# brute-force guard; a shared store is only needed once there are multiple replicas.
+ADMIN_LOGIN_WINDOW_SECONDS = 900
+ADMIN_LOGIN_MAX_FAILURES = 5
+_login_failures: dict[str, list[float]] = {}
+
+
+def _prune_login_failures(username: str, now: float) -> list[float]:
+    window_start = now - ADMIN_LOGIN_WINDOW_SECONDS
+    failures = [moment for moment in _login_failures.get(username, []) if moment > window_start]
+    if failures:
+        _login_failures[username] = failures
+    else:
+        _login_failures.pop(username, None)
+    return failures
+
+
+def _register_login_failure(username: str, reason: str) -> None:
+    now = time.monotonic()
+    failures = _prune_login_failures(username, now)
+    failures.append(now)
+    _login_failures[username] = failures
+    logger.warning(
+        "admin_login_failed",
+        extra={"resource_id": username, "status": reason},
+    )
 
 
 def _no_store(response: Response) -> None:
@@ -80,30 +109,37 @@ def _admin_project(db: Session, project_id: str) -> Project:
 def _latest_runs(db: Session, project_ids: list[str]) -> dict[str, Run]:
     if not project_ids:
         return {}
+    row_number = (
+        func.row_number()
+        .over(partition_by=Run.project_id, order_by=(Run.created_at.desc(), Run.id.desc()))
+        .label("row_number")
+    )
+    ranked = select(Run.id, row_number).where(Run.project_id.in_(project_ids)).subquery()
     runs = db.scalars(
-        select(Run)
-        .where(Run.project_id.in_(project_ids))
-        .order_by(Run.project_id, Run.created_at.desc(), Run.id.desc())
+        select(Run).join(ranked, Run.id == ranked.c.id).where(ranked.c.row_number == 1)
     ).all()
-    latest: dict[str, Run] = {}
-    for run in runs:
-        latest.setdefault(run.project_id, run)
-    return latest
+    return {run.project_id: run for run in runs}
 
 
-def _blueprints(db: Session, run_ids: list[str]) -> dict[str, Blueprint]:
-    if not run_ids:
+def _project_blueprints(db: Session, project_ids: list[str]) -> dict[str, Blueprint]:
+    """Latest persisted Blueprint per project, regardless of whether the newest run has one."""
+    if not project_ids:
         return {}
-    artifacts = db.scalars(
-        select(Artifact).where(
-            Artifact.run_id.in_(run_ids),
+    artifacts = db.execute(
+        select(Artifact, Run.project_id)
+        .join(Run, Run.id == Artifact.run_id)
+        .where(
+            Run.project_id.in_(project_ids),
             Artifact.artifact_type == ArtifactType.BLUEPRINT.value,
         )
+        .order_by(Artifact.created_at.desc(), Artifact.id.desc())
     ).all()
     result: dict[str, Blueprint] = {}
-    for artifact in artifacts:
+    for artifact, project_id in artifacts:
+        if project_id in result:
+            continue
         try:
-            result[artifact.run_id] = Blueprint.model_validate(artifact.payload)
+            result[project_id] = Blueprint.model_validate(artifact.payload)
         except ValueError:
             continue
     return result
@@ -170,15 +206,25 @@ def admin_login(
     db: Session = Depends(get_db),
 ) -> AdminUserView:
     _no_store(response)
-    user = db.scalar(select(User).where(User.username == credentials.username.lower()))
+    username = credentials.username.lower()
+    if len(_prune_login_failures(username, time.monotonic())) >= ADMIN_LOGIN_MAX_FAILURES:
+        raise AppError(
+            "ADMIN_LOGIN_LOCKED",
+            "Too many failed sign-in attempts; try again later",
+            429,
+        )
+    user = db.scalar(select(User).where(User.username == username))
     if (
         user is None
         or user.password_hash is None
         or not verify_password(credentials.password, user.password_hash)
     ):
+        _register_login_failure(username, "invalid_credentials")
         raise AppError("INVALID_CREDENTIALS", "Username or password is incorrect", 401)
     if user.role != "admin":
+        _register_login_failure(username, "not_admin")
         raise AppError("ADMIN_ACCESS_REQUIRED", "Administrator access is required", 403)
+    _login_failures.pop(username, None)
     token = new_session_token()
     db.add(
         AuthSession(
@@ -223,11 +269,12 @@ def list_users(
     filters = [User.username.is_not(None), User.role == "user"]
     normalized = query.strip().lower()
     if normalized:
-        pattern = f"%{normalized}%"
+        escaped = re.sub(r"([\\%_])", r"\\\1", normalized)
+        pattern = f"%{escaped}%"
         filters.append(
             or_(
-                func.lower(User.username).like(pattern),
-                func.lower(User.display_name).like(pattern),
+                func.lower(User.username).like(pattern, escape="\\"),
+                func.lower(User.display_name).like(pattern, escape="\\"),
             )
         )
     total = db.scalar(select(func.count()).select_from(User).where(*filters)) or 0
@@ -269,34 +316,42 @@ def list_users(
     )
 
 
-@router.get("/users/{user_id}/projects", response_model=list[AdminProjectSummary])
+@router.get("/users/{user_id}/projects", response_model=AdminProjectList)
 def list_user_projects(
     user_id: str,
     response: Response,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
-) -> list[AdminProjectSummary]:
+) -> AdminProjectList:
     _no_store(response)
     _admin_user(db, user_id)
+    total = db.scalar(
+        select(func.count()).select_from(Project).where(Project.user_id == user_id)
+    ) or 0
     projects = db.scalars(
         select(Project)
         .where(Project.user_id == user_id)
         .order_by(Project.updated_at.desc(), Project.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     ).all()
     latest_runs = _latest_runs(db, [project.id for project in projects])
-    blueprints = _blueprints(db, [run.id for run in latest_runs.values()])
+    blueprints = _project_blueprints(db, [project.id for project in projects])
     logger.info(
         "admin_user_projects_viewed",
         extra={"user_id": admin.id, "resource_id": user_id, "status": "success"},
     )
-    return [
-        _project_summary(
-            project,
-            latest_runs.get(project.id),
-            blueprints.get(latest_runs[project.id].id) if project.id in latest_runs else None,
-        )
-        for project in projects
-    ]
+    return AdminProjectList(
+        items=[
+            _project_summary(project, latest_runs.get(project.id), blueprints.get(project.id))
+            for project in projects
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 @router.get("/projects/{project_id}", response_model=AdminProjectDetail)
@@ -309,7 +364,7 @@ def project_detail(
     _no_store(response)
     project = _admin_project(db, project_id)
     latest_run = _latest_runs(db, [project.id]).get(project.id)
-    blueprint = _blueprints(db, [latest_run.id]).get(latest_run.id) if latest_run else None
+    blueprint = _project_blueprints(db, [project.id]).get(project.id)
     events = (
         db.scalars(
             select(RunEvent).where(RunEvent.run_id == latest_run.id).order_by(RunEvent.id)
