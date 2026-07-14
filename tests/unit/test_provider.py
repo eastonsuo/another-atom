@@ -36,6 +36,7 @@ def test_mock_failure_hook_is_explicit(provider: MockLLMProvider) -> None:
     ("message", "expected"),
     [
         ("What can this version build?", LeadRoute.DIRECT),
+        ("我想要实现一个翻译功能", LeadRoute.CLARIFY),
         ("Build a catalog for desk lamps", LeadRoute.TEAM),
         ("请创建一个家居产品目录", LeadRoute.TEAM),
         ("给我一个网页版扫雷", LeadRoute.TEAM),
@@ -50,6 +51,16 @@ def test_lead_routes_questions_and_build_requests(
 def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) -> None:
     assert provider.route_message("Maybe a catalog", force_team=True).route == LeadRoute.TEAM
     assert provider.take_usage().request_count == 0
+
+
+def test_ambiguous_build_intent_returns_structured_clarification(
+    provider: MockLLMProvider,
+) -> None:
+    decision = provider.route_message("我想要实现一个翻译功能")
+
+    assert decision.route == LeadRoute.CLARIFY
+    assert len(decision.clarification_questions) == 2
+    assert all(len(question.options) >= 2 for question in decision.clarification_questions)
 
 
 def test_project_lead_answers_or_proposes_from_project_context(

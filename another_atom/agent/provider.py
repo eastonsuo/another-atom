@@ -77,6 +77,15 @@ _INQUIRY_PREFIXES = (
     "如何",
     "怎么",
 )
+_AMBIGUOUS_BUILD_PHRASES = (
+    "i want to build",
+    "i want to create",
+    "want to build",
+    "want to create",
+    "我想实现",
+    "想要实现",
+    "想实现",
+)
 
 
 def _is_explicit_build_request(message: str) -> bool:
@@ -84,6 +93,13 @@ def _is_explicit_build_request(message: str) -> bool:
     return not normalized.startswith(_INQUIRY_PREFIXES) and any(
         term in normalized for term in _BUILD_TERMS
     )
+
+
+def _is_ambiguous_build_intent(message: str) -> bool:
+    normalized = " ".join(message.lower().split())
+    if normalized.startswith(_INQUIRY_PREFIXES):
+        return False
+    return any(phrase in normalized for phrase in _AMBIGUOUS_BUILD_PHRASES)
 
 
 def requires_pm_clarification(request: str) -> bool:
@@ -259,6 +275,33 @@ class MockLLMProvider:
             )
         self._record_request()
         self._raise_if_requested(message, "lead")
+        if _is_ambiguous_build_intent(message):
+            return LeadDecision(
+                route=LeadRoute.CLARIFY,
+                response="请先选择几个会影响产品方案的关键条件，完成后再进入下一步。",
+                reason="The user expressed build intent but key product choices are still missing.",
+                clarification_questions=[
+                    {
+                        "id": "delivery_form",
+                        "question": "你希望第一版以什么形式交付？",
+                        "options": [
+                            {"value": "web", "label": "Web 应用"},
+                            {"value": "mobile", "label": "移动端 App"},
+                            {"value": "cli", "label": "命令行工具"},
+                            {"value": "api", "label": "API 服务"},
+                        ],
+                    },
+                    {
+                        "id": "initial_scope",
+                        "question": "第一版希望做到什么范围？",
+                        "options": [
+                            {"value": "core", "label": "先完成一个核心流程"},
+                            {"value": "history", "label": "核心流程加历史记录"},
+                            {"value": "multipage", "label": "完整多页面产品"},
+                        ],
+                    },
+                ],
+            )
         if _is_explicit_build_request(message):
             return LeadDecision(
                 route=LeadRoute.TEAM,
@@ -993,11 +1036,16 @@ class OllamaCloudProvider:
             LeadDecision,
             "Lead",
             (
-                "Choose exactly one route. Use team only when the user explicitly asks to build, "
-                "create, generate, revise, or restore a product. Use direct for questions, "
-                "clarification, capability discussion, or ambiguous intent. Direct must not claim "
-                "that files or a Project were created. Team invokes the complete fixed Product "
-                "Manager, Architect, Engineer, Data Analyst, and Reviewer pipeline."
+                "Choose exactly one route: direct, clarify, or team. Use direct for genuine "
+                "questions and capability discussion without execution intent. Use clarify when "
+                "the user wants to build something but one or more product choices would "
+                "materially change the result. A clarify decision must include 1 to 4 concise "
+                "clarification_questions, each with 2 to 6 mutually exclusive options; keep the "
+                "response, questions, option labels, and descriptions in the user's language, and "
+                "do not repeat the questions as a numbered paragraph. Use team "
+                "only when the user explicitly requests a sufficiently concrete build, create, "
+                "generate, revise, or restore action. Direct and clarify must not claim that files, "
+                "a Project, or a Run were created. Team invokes the fixed product pipeline."
             ),
             {"message": message},
             timeout_seconds=self.lead_timeout,

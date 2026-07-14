@@ -2,7 +2,13 @@ import pytest
 from pydantic import ValidationError
 
 from another_atom.api.routes import _coerce_review_report
-from another_atom.contracts.schemas import Blueprint, RunCreate, SupportLevel
+from another_atom.contracts.schemas import (
+    Blueprint,
+    LeadDecision,
+    LeadRoute,
+    RunCreate,
+    SupportLevel,
+)
 
 
 def test_prompt_must_not_be_blank() -> None:
@@ -32,6 +38,34 @@ def test_blueprint_accepts_arbitrary_web_screens() -> None:
     )
     assert blueprint.capability_policy_version == "web-v1"
     assert blueprint.product_type == "web_game"
+
+
+def test_lead_clarify_requires_structured_questions() -> None:
+    with pytest.raises(ValidationError, match="requires structured clarification"):
+        LeadDecision(
+            route=LeadRoute.CLARIFY,
+            response="Please choose",
+            reason="Material choices are missing",
+        )
+
+
+def test_lead_direct_rejects_clarification_questions() -> None:
+    with pytest.raises(ValidationError, match="Only a clarify route"):
+        LeadDecision(
+            route=LeadRoute.DIRECT,
+            response="Answer",
+            reason="Question only",
+            clarification_questions=[
+                {
+                    "id": "platform",
+                    "question": "Which platform?",
+                    "options": [
+                        {"value": "web", "label": "Web"},
+                        {"value": "mobile", "label": "Mobile"},
+                    ],
+                }
+            ],
+        )
 
 
 def test_legacy_data_review_remains_readable_as_review_report() -> None:

@@ -215,11 +215,24 @@ export interface UserView {
 
 export interface LeadDecisionView {
   message_id: string;
-  route: "direct" | "team";
+  route: "direct" | "clarify" | "team";
   response: string;
   reason: string;
+  clarification_questions: LeadClarificationQuestion[];
   model: string;
   fallback_provider: string | null;
+}
+
+export interface LeadClarificationQuestion {
+  id: string;
+  question: string;
+  options: LeadClarificationOption[];
+}
+
+export interface LeadClarificationOption {
+  value: string;
+  label: string;
+  description: string | null;
 }
 
 export interface SandboxSessionView {

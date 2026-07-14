@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Mode(StrEnum):
@@ -14,6 +14,7 @@ class Mode(StrEnum):
 
 class LeadRoute(StrEnum):
     DIRECT = "direct"
+    CLARIFY = "clarify"
     TEAM = "team"
 
 
@@ -688,10 +689,62 @@ class LeadMessageRequest(BaseModel):
         return value
 
 
+class LeadClarificationOption(BaseModel):
+    value: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=240)
+
+    @field_validator("value", "label", "description")
+    @classmethod
+    def clarification_option_text_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Clarification option text cannot be blank")
+        return value
+
+
+class LeadClarificationQuestion(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    question: str = Field(min_length=1, max_length=240)
+    options: list[LeadClarificationOption] = Field(min_length=2, max_length=6)
+
+    @field_validator("id", "question")
+    @classmethod
+    def clarification_question_text_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Clarification question text cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def option_values_are_unique(self) -> LeadClarificationQuestion:
+        values = [option.value for option in self.options]
+        if len(values) != len(set(values)):
+            raise ValueError("Clarification option values must be unique")
+        return self
+
+
 class LeadDecision(BaseModel):
     route: LeadRoute
     response: str = Field(min_length=1, max_length=800)
     reason: str = Field(min_length=1, max_length=300)
+    clarification_questions: list[LeadClarificationQuestion] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+
+    @model_validator(mode="after")
+    def clarification_questions_match_route(self) -> LeadDecision:
+        if self.route == LeadRoute.CLARIFY and not self.clarification_questions:
+            raise ValueError("A clarify route requires structured clarification questions")
+        if self.route != LeadRoute.CLARIFY and self.clarification_questions:
+            raise ValueError("Only a clarify route can include clarification questions")
+        question_ids = [question.id for question in self.clarification_questions]
+        if len(question_ids) != len(set(question_ids)):
+            raise ValueError("Clarification question ids must be unique")
+        return self
 
 
 class LeadDecisionView(LeadDecision):

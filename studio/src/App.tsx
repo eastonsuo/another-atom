@@ -161,7 +161,7 @@ const ZH: Record<string, string> = {
   "Could not start the run": "无法启动任务",
   "Could not open the project": "无法打开项目",
   "AI Lead request sent to {model}. Waiting for model response.": "已发送给团队负责人（{model}），等待模型返回。",
-  "AI Lead is deciding whether to answer directly or call the team": "团队负责人正在判断直接回答还是调用团队",
+  "AI Lead is deciding whether to answer, clarify, or call the team": "团队负责人正在判断直接回答、结构化澄清还是调用团队",
   "Project and Run logs start after this step completes.": "此步骤完成后才会创建 Project，并接入 Run 日志。",
   "Model response is slower than usual.": "模型响应比平时慢，仍在等待服务端返回。",
   "Ollama timed out. Switching provider to DeepSeek official API…": "Ollama 响应超时，服务商切换中：DeepSeek 官方 API……",
@@ -169,6 +169,7 @@ const ZH: Record<string, string> = {
   "seconds": "秒",
   "AI Lead routed this message to {route}.": "团队负责人选择了{route}。",
   "No build run was created because AI Lead answered directly.": "团队负责人已直接回答，没有创建构建任务。",
+  "AI Lead is waiting for structured clarification. No build run was created.": "团队负责人正在等待结构化补充，没有创建构建任务。",
   "Creating Project and Build Run.": "正在创建项目和构建任务。",
   "Run created. Opening build event stream.": "任务已创建，正在打开构建事件流。",
   "Project workspace": "项目工作区",
@@ -193,6 +194,9 @@ const ZH: Record<string, string> = {
   "Send message": "发送消息",
   "Remove attachment": "移除附件",
   "Call team": "调用团队",
+  "Not sure yet": "暂不确定",
+  "Next": "下一步",
+  "choices completed": "项已完成",
   "Request routing": "任务判断",
   "Submit a message to see how it is handled. Project logs appear after a Run is created.": "提交消息后会先判断直接回答还是调用团队；任务创建后日志进入项目。",
   "Start with an example": "从示例开始",
@@ -301,6 +305,7 @@ const ZH: Record<string, string> = {
   "adapted": "需确认",
   "unsupported": "不支持",
   "direct": "直接回答",
+  "clarify": "等待结构化补充",
   "team": "调用团队",
   "completed": "已完成",
   "completed_degraded": "已完成，有警告",
@@ -655,8 +660,9 @@ function Studio() {
     return () => window.clearInterval(timer);
   }, [refreshRun, refreshShell, run]);
 
-  const sendToLead = async (forceTeam = false) => {
-    if (!prompt.trim() || submitting) return;
+  const sendToLead = async (forceTeam = false, messageOverride?: string) => {
+    const effectivePrompt = messageOverride?.trim() || prompt.trim();
+    if (!effectivePrompt || submitting) return;
     setSubmitting(true);
     setError("");
     setActivityLog([
@@ -675,20 +681,28 @@ function Studio() {
       setActivityLog((current) => [...current, { id: `${Date.now()}-${current.length}`, message, tone }]);
     };
     try {
-      const decision = await api.leadMessage(prompt, model, forceTeam);
+      const decision = await api.leadMessage(effectivePrompt, model, forceTeam);
       window.clearInterval(leadTimer);
       setLeadDecision(decision);
       if (decision.fallback_provider) {
         appendActivity(template(language, "Provider fallback completed: {provider}.", { provider: decision.fallback_provider }), "success");
       }
       appendActivity(template(language, "AI Lead routed this message to {route}.", { route: routeLabel(language, decision.route) }), "success");
-      if (decision.route === "direct") {
-        appendActivity(ui(language, "No build run was created because AI Lead answered directly."), "success");
+      if (decision.route !== "team") {
+        appendActivity(
+          ui(
+            language,
+            decision.route === "clarify"
+              ? "AI Lead is waiting for structured clarification. No build run was created."
+              : "No build run was created because AI Lead answered directly.",
+          ),
+          "success",
+        );
         await refreshShell();
         return;
       }
       appendActivity(ui(language, "Creating Project and Build Run."), "pending");
-      const created = await api.createRun(prompt, "team", model, attachments);
+      const created = await api.createRun(effectivePrompt, "team", model, attachments);
       setRun(created);
       appendActivity(ui(language, "Run created. Opening build event stream."), "success");
       setEvents(await api.events(created.run_id));
@@ -894,8 +908,12 @@ function Composer({
   activityLog: ActivityEntry[];
   leadElapsed: number;
   language: Language;
-  sendToLead: (forceTeam?: boolean) => void;
+  sendToLead: (forceTeam?: boolean, messageOverride?: string) => void;
 }) {
+  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setClarificationAnswers({});
+  }, [leadDecision?.message_id]);
   const addFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).slice(0, 5 - attachments.length);
     setAttachments([
@@ -953,6 +971,40 @@ function Composer({
           </div>
           {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
           {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
+          {leadDecision?.route === "clarify" && (() => {
+            const questions = leadDecision.clarification_questions;
+            const completed = questions.filter((question) => clarificationAnswers[question.id]).length;
+            const ready = questions.length > 0 && completed === questions.length;
+            const continueToTeam = () => {
+              if (!ready) return;
+              const answerLines = questions.map((question) => {
+                const selectedValue = clarificationAnswers[question.id];
+                const selected = question.options.find((option) => option.value === selectedValue);
+                const label = selectedValue === "__unsure__" ? ui(language, "Not sure yet") : selected?.label ?? selectedValue;
+                return `- ${question.question}：${label}`;
+              });
+              const heading = language === "zh" ? "用户结构化补充：" : "Structured user clarification:";
+              void sendToLead(true, `${prompt.trim()}\n\n${heading}\n${answerLines.join("\n")}`);
+            };
+            return <div className="lead-clarification-card">
+              <div className="lead-clarification-head"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div></div>
+              <div className="lead-clarification-questions">
+                {questions.map((question, index) => <fieldset key={question.id}>
+                  <legend><span>{index + 1}</span>{question.question}</legend>
+                  <div className="lead-clarification-options">
+                    {[...question.options, { value: "__unsure__", label: ui(language, "Not sure yet"), description: null }].map((option) => <button
+                      type="button"
+                      className={clarificationAnswers[question.id] === option.value ? "selected" : ""}
+                      aria-pressed={clarificationAnswers[question.id] === option.value}
+                      onClick={() => setClarificationAnswers((current) => ({ ...current, [question.id]: option.value }))}
+                      key={option.value}
+                    ><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</button>)}
+                  </div>
+                </fieldset>)}
+              </div>
+              <div className="lead-clarification-footer"><span>{completed} / {questions.length} {ui(language, "choices completed")}</span><button type="button" disabled={!ready || submitting} onClick={continueToTeam}>{submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}{ui(language, "Next")}</button></div>
+            </div>;
+          })()}
         </div>
         <ActivityLog entries={activityLog} active={submitting} elapsed={leadElapsed} fallbackProvider={models?.fallback_provider ?? null} language={language} />
       </div>
@@ -978,7 +1030,7 @@ function ActivityLog({ entries, active, elapsed, fallbackProvider, language }: {
       </div>
     )}
     {active && <div className="lead-wait-log">
-      <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "AI Lead is deciding whether to answer directly or call the team")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
+      <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "AI Lead is deciding whether to answer, clarify, or call the team")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
       <p>{ui(language, "Project and Run logs start after this step completes.")}</p>
       {fallbackProvider && elapsed >= 30
         ? <small>{ui(language, "Ollama timed out. Switching provider to DeepSeek official API…")}</small>

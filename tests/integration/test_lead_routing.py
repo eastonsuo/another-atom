@@ -15,6 +15,23 @@ def test_lead_direct_answer_does_not_create_project(client: TestClient) -> None:
     assert client.get("/api/projects").json() == before
 
 
+def test_lead_structured_clarification_does_not_create_project(
+    client: TestClient,
+) -> None:
+    before = client.get("/api/projects").json()
+    decision = client.post(
+        "/api/lead/messages",
+        json={"message": "我想要实现一个翻译功能", "model": "mock"},
+    )
+
+    assert decision.status_code == 200
+    payload = decision.json()
+    assert payload["route"] == "clarify"
+    assert len(payload["clarification_questions"]) == 2
+    assert all(len(question["options"]) >= 2 for question in payload["clarification_questions"])
+    assert client.get("/api/projects").json() == before
+
+
 def test_lead_team_route_is_persisted_before_build(client: TestClient) -> None:
     decision = client.post(
         "/api/lead/messages",
