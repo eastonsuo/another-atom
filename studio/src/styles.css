@@ -475,6 +475,18 @@ body.resizing-tool-panel { cursor: ew-resize; user-select: none; }
 @keyframes reveal-right { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes card-arrive { from { opacity: 0; transform: translateY(18px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
+@media (min-width: 901px) {
+  .studio-main.active { height: 100vh; min-height: 0; overflow: hidden; }
+  .workspace-grid { height: calc(100vh - 66px); min-height: 0; overflow: hidden; }
+  .workspace-process { min-height: 0; overflow-y: auto; }
+  .workspace-content { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .project-chat-history { max-height: min(360px, 28vh); }
+  .workspace-stage { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .workspace-stage .center-state { min-height: 100%; }
+  .workspace-stage .result-view { height: 100%; min-height: 100%; }
+  .workspace-tools { height: 100%; max-height: none; }
+}
+
 @media (max-width: 900px) {
   .workspace-grid { grid-template-columns: 190px minmax(0, 1fr); }
   .sidebar-header { justify-content: center; }.sidebar-header .brand { display: none; }.studio-sidebar .new-project span, .studio-sidebar .account-button > span, .studio-sidebar .admin-console-link span, .studio-sidebar .admin-console-link svg:last-child { display: none; }.studio-sidebar .account-button { width: 42px; height: 42px; display: grid; place-items: center; padding: 0; }.studio-sidebar .admin-console-link { width: 42px; grid-template-columns: 18px; justify-content: center; padding: 0; }
