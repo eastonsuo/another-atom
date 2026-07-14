@@ -2,6 +2,16 @@
 
 本文件按发布时间倒序记录 Another Atom 已完成验收的产品版本。未实现的设计 TODO 和 V2 规划不计入已发布能力。
 
+## 2026-07-14 — v0.2.1
+
+- **发布类型：** CI 与发布元数据修复
+- **产品功能：** 与 `v0.2.0` 相同，无新增产品能力
+
+### 本次修复
+
+- 将 Python 与 Studio 包版本同步更新为 `0.2.1`。
+- 重新生成 `uv.lock`，使锁文件与 `pyproject.toml` 的项目版本一致，修复 GitHub Actions 中 `uv sync --locked --dev` 失败。
+
 ## 2026-07-14 — v0.2.0
 
 - **发布主题：** 统一 Project Chat 与 Human-in-the-loop

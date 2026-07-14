@@ -1,6 +1,6 @@
 [project]
 name = "another-atom"
-version = "0.2.0"
+version = "0.2.1"
 description = "Inspectable AI application generation workspace"
 requires-python = ">=3.12"
 dependencies = [
