@@ -95,6 +95,7 @@ class ArtifactType(StrEnum):
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
     APP_SPEC_REPAIR = "app_spec_repair"
+    ENGINEER_OUTPUT_REPAIR = "engineer_output_repair"
     SOURCE_BUNDLE = "source_bundle"
     BUILD_ARTIFACT = "build_artifact"
     EXECUTION_REPORT = "execution_report"

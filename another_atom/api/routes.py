@@ -2301,6 +2301,9 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
     ArtifactType.APP_SPEC_REPAIR: ".another-atom/generated/app-spec-repair.json",
+    ArtifactType.ENGINEER_OUTPUT_REPAIR: (
+        ".another-atom/generated/engineer-output-repair.json"
+    ),
     ArtifactType.SOURCE_BUNDLE: ".another-atom/generated/source-bundle.json",
     ArtifactType.BUILD_ARTIFACT: ".another-atom/generated/build-artifact.json",
     ArtifactType.EXECUTION_REPORT: ".another-atom/generated/execution-report.json",

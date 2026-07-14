@@ -53,6 +53,13 @@ from another_atom.repository.service import (
 T = TypeVar("T", bound=BaseModel)
 ProviderEventHandler = Callable[[str, dict], None]
 
+# Raw structured output is persisted for inspection, but it must not create one
+# database event per token-sized Provider chunk. The Studio animates the
+# accumulated ProjectMessage payload character by character, so coarse batches
+# retain the visible stream while keeping event history bounded.
+_MODEL_OUTPUT_EVENT_MIN_CHARS = 2_048
+_MODEL_OUTPUT_EVENT_MAX_INTERVAL_SECONDS = 1.0
+
 _BUILD_TERMS = (
     "build",
     "create",
@@ -256,14 +263,14 @@ class LLMProvider(Protocol):
         prompt: str,
     ) -> EngineerOutput: ...
 
-    def repair_app_spec(
+    def repair_engineer_output(
         self,
         blueprint: Blueprint,
         architecture_spec: ArchitectureSpec,
-        app_spec: AppSpec,
+        engineer_output: EngineerOutput,
         validation_report: ValidationReport,
         prompt: str,
-    ) -> AppSpec: ...
+    ) -> EngineerOutput: ...
 
     def analyze_data(
         self,
@@ -916,7 +923,25 @@ class MockLLMProvider:
         )
         if "[fail:build]" in prompt.casefold():
             app_spec = app_spec.model_copy(update={"javascript": "const = ;"})
-        test_source = (
+        test_source = self._default_engineer_test_source()
+        if "[repair:unit-tests]" in prompt.casefold():
+            test_source = (
+                "import test from 'node:test';\n"
+                "import assert from 'node:assert/strict';\n\n"
+                "test('repair fixture initially fails', () => {\n"
+                "  assert.equal(1, 2);\n"
+                "});\n"
+            )
+        return EngineerOutput(
+            app_spec=app_spec,
+            unit_tests=[
+                SourceFileDraft(path="tests/app.test.js", role="test", content=test_source)
+            ],
+        )
+
+    @staticmethod
+    def _default_engineer_test_source() -> str:
+        return (
             "import test from 'node:test';\n"
             "import assert from 'node:assert/strict';\n"
             "import { readFile } from 'node:fs/promises';\n\n"
@@ -927,12 +952,6 @@ class MockLLMProvider:
             "  assert.match(html, /app\\.js/);\n"
             "  assert.ok(script.trim().length > 0);\n"
             "});\n"
-        )
-        return EngineerOutput(
-            app_spec=app_spec,
-            unit_tests=[
-                SourceFileDraft(path="tests/app.test.js", role="test", content=test_source)
-            ],
         )
 
     def create_app_spec(
@@ -1030,18 +1049,19 @@ class MockLLMProvider:
             pages[0] = pages[0].model_copy(update={"name": "Unmatched screen"})
         return app_spec.model_copy(update={"pages": pages})
 
-    def repair_app_spec(
+    def repair_engineer_output(
         self,
         blueprint: Blueprint,
         architecture_spec: ArchitectureSpec,
-        app_spec: AppSpec,
+        engineer_output: EngineerOutput,
         validation_report: ValidationReport,
         prompt: str,
-    ) -> AppSpec:
+    ) -> EngineerOutput:
         self._record_request()
         self._raise_if_requested(prompt, "engineer-repair")
         if "[repair:still-fails]" in prompt.casefold():
-            return app_spec
+            return engineer_output
+        app_spec = engineer_output.app_spec
         catalog_routes = {"home": "/", "catalog": "/catalog"}
         pages = [
             page.model_copy(
@@ -1057,7 +1077,7 @@ class MockLLMProvider:
             page_name = blueprint.pages[index]
             route = "/" if index == 0 else f"/screen-{index + 1}"
             pages.append(PageSpec(route=route, name=page_name, sections=["content"]))
-        return app_spec.model_copy(
+        repaired_app_spec = app_spec.model_copy(
             update={
                 "pages": pages,
                 "primary_color": architecture_spec.primary_color,
@@ -1065,6 +1085,16 @@ class MockLLMProvider:
                 "background_color": architecture_spec.background_color,
             }
         )
+        unit_tests = engineer_output.unit_tests
+        if "[repair:unit-tests]" in prompt.casefold():
+            unit_tests = [
+                SourceFileDraft(
+                    path="tests/app.test.js",
+                    role="test",
+                    content=self._default_engineer_test_source(),
+                )
+            ]
+        return EngineerOutput(app_spec=repaired_app_spec, unit_tests=unit_tests)
 
     def analyze_data(
         self,
@@ -1742,22 +1772,25 @@ class OllamaCloudProvider:
             stream=True,
         )
 
-    def repair_app_spec(
+    def repair_engineer_output(
         self,
         blueprint: Blueprint,
         architecture_spec: ArchitectureSpec,
-        app_spec: AppSpec,
+        engineer_output: EngineerOutput,
         validation_report: ValidationReport,
         prompt: str,
-    ) -> AppSpec:
+    ) -> EngineerOutput:
         return self._structured_chat(
-            AppSpec,
+            EngineerOutput,
             "Engineer Repair",
             (
-                "Repair the supplied Web AppSpec using the deterministic ValidationReport. "
-                "Return the complete revised AppSpec, not a patch. Address every failed check "
-                "whose root_cause is app_spec, including exact Blueprint screen names. Preserve "
-                "the accepted product goal, Blueprint pages and modules, existing behavior, data, "
+                "Repair the supplied EngineerOutput using the deterministic ValidationReport. "
+                "Return the complete revised AppSpec and complete revised unit_tests. Address every "
+                "failed check, including runtime.unit_tests failures and exact Blueprint screen names. "
+                "Use the reported test stdout/stderr as evidence; when a generated test is invalid or "
+                "does not match the generated source, repair that test instead of returning it unchanged. "
+                "Preserve passing tests, the accepted product goal, Blueprint pages and modules, "
+                "existing behavior, data, "
                 "content, visual direction, and source unless a failed check requires a change. "
                 "Preserve approved public Internet API calls and their visible failure handling, "
                 "but never add localhost, loopback, remote executable assets, dynamic imports, eval, "
@@ -1768,7 +1801,7 @@ class OllamaCloudProvider:
                 "request": prompt,
                 "blueprint": blueprint.model_dump(mode="json"),
                 "architecture_spec": architecture_spec.model_dump(mode="json"),
-                "current_app_spec": app_spec.model_dump(mode="json"),
+                "current_engineer_output": engineer_output.model_dump(mode="json"),
                 "validation_report": validation_report.model_dump(mode="json"),
             },
             stream=True,
@@ -2202,8 +2235,8 @@ class OllamaCloudProvider:
             if (
                 not force
                 and message_started
-                and len(output) - output_sent < 256
-                and now - output_last_emitted < 0.15
+                and len(output) - output_sent < _MODEL_OUTPUT_EVENT_MIN_CHARS
+                and now - output_last_emitted < _MODEL_OUTPUT_EVENT_MAX_INTERVAL_SECONDS
             ):
                 return
             if not message_started:
@@ -2313,8 +2346,8 @@ class OllamaCloudProvider:
             if (
                 not force
                 and message_started
-                and len(output) - output_sent < 256
-                and now - output_last_emitted < 0.15
+                and len(output) - output_sent < _MODEL_OUTPUT_EVENT_MIN_CHARS
+                and now - output_last_emitted < _MODEL_OUTPUT_EVENT_MAX_INTERVAL_SECONDS
             ):
                 return
             if not message_started:

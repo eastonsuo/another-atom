@@ -128,11 +128,35 @@ def test_repairable_validation_failure_is_repaired_once(client: TestClient) -> N
     assert ".another-atom/generated/app-spec.json" in paths
     assert ".another-atom/generated/validation-report.json" in paths
     assert ".another-atom/generated/app-spec-repair.json" in paths
+    assert ".another-atom/generated/engineer-output-repair.json" in paths
     assert ".another-atom/generated/repair-validation-report.json" in paths
 
     quota = client.get("/api/quota").json()
     assert quota["used"] == 4
     assert quota["reserved"] == 0
+
+
+def test_runtime_unit_test_failure_is_repaired_with_revised_tests(
+    client: TestClient,
+) -> None:
+    run = _create_run(
+        client,
+        {"prompt": "Build a product catalog [repair:unit-tests]", "mode": "team"},
+    )
+
+    assert run["status"] == "completed"
+    assert run["validation_report"]["passed"] is True
+    repaired_tests = [
+        item
+        for item in run["source_bundle"]["files"]
+        if item["role"] == "test"
+    ]
+    assert repaired_tests
+    assert all("assert.equal(1, 2)" not in item["content"] for item in repaired_tests)
+
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    repair_event = next(event for event in events if event["type"] == "repair.completed")
+    assert repair_event["payload"]["test_files"] == ["tests/app.test.js"]
 
 
 def test_failed_repair_stops_after_one_round(client: TestClient) -> None:

@@ -769,21 +769,13 @@ class Orchestrator:
             )
             validation_report = execution_result.validation_report
             if not validation_report.passed and self._can_auto_repair(validation_report):
-                app_spec = self._run_engineer_repair(
+                app_spec, source_bundle = self._run_engineer_repair(
                     run,
                     blueprint,
                     architecture_design.visual_tokens,
                     app_spec,
+                    source_bundle,
                     validation_report,
-                )
-                prior_tests = [
-                    item.model_dump(mode="python", exclude={"content_hash"})
-                    for item in source_bundle.files
-                    if item.role == "test"
-                ]
-                source_bundle = create_source_bundle(
-                    EngineerOutput(app_spec=app_spec, unit_tests=prior_tests),
-                    blueprint.product_type,
                 )
                 execution_result, build_job = self._run_build(
                     run,
@@ -805,17 +797,27 @@ class Orchestrator:
                 self._record_event_once(
                     run,
                     "repair.validation_completed",
-                    "The revised SourceBundle completed build, unit tests, and validation",
+                    (
+                        "The revised SourceBundle passed build, unit tests, and validation"
+                        if validation_report.passed
+                        else "The revised SourceBundle still has failed validation checks"
+                    ),
                     "build",
                     {"passed": validation_report.passed, "repair_attempt": 1},
                 )
             if not validation_report.passed:
+                failed_check_ids = [
+                    check.check_id
+                    for check in validation_report.checks
+                    if check.status == "fail"
+                ]
                 build_job.status = BuildStatus.FAILED.value
                 build_job.error_message = "Deterministic validation failed"
                 self._fail_run(
                     run,
                     "BUILD_VALIDATION_FAILED",
-                    "The Web source validator rejected the generated AppSpec",
+                    "Build validation failed after repair: "
+                    + ", ".join(failed_check_ids),
                 )
                 return
 
@@ -1524,8 +1526,9 @@ class Orchestrator:
         blueprint: Blueprint,
         architecture_spec: ArchitectureSpec,
         app_spec: AppSpec,
+        source_bundle: SourceBundle,
         validation_report: ValidationReport,
-    ) -> AppSpec:
+    ) -> tuple[AppSpec, SourceBundle]:
         run.status = RunStatus.ENGINEER_RUNNING.value
         run.current_stage = "engineer"
         failed_check_ids = [
@@ -1544,36 +1547,81 @@ class Orchestrator:
             "Engineer repair context is ready with deterministic validation evidence",
             "engineer",
             {
-                "inputs": ["blueprint", "architecture_spec", "app_spec", "validation_report"],
+                "inputs": [
+                    "blueprint",
+                    "architecture_spec",
+                    "app_spec",
+                    "unit_tests",
+                    "validation_report",
+                ],
                 "failed_check_ids": failed_check_ids,
                 "repair_attempt": 1,
             },
         )
-        repaired_app_spec, artifact, _ = self._run_agent_stage(
+        current_output = EngineerOutput(
+            app_spec=app_spec,
+            unit_tests=[
+                item.model_dump(mode="python", exclude={"content_hash"})
+                for item in source_bundle.files
+                if item.role == "test"
+            ],
+        )
+        repaired_output, artifact, _ = self._run_agent_stage(
             run,
             "engineer_repair",
-            ArtifactType.APP_SPEC_REPAIR,
-            AppSpec,
-            lambda: self._align_app_spec_visual_tokens(
-                self._provider(run).repair_app_spec(
+            ArtifactType.ENGINEER_OUTPUT_REPAIR,
+            EngineerOutput,
+            lambda: self._align_engineer_output_visual_tokens(
+                self._provider(run).repair_engineer_output(
                     blueprint,
                     architecture_spec,
-                    app_spec,
+                    current_output,
                     validation_report,
                     run.prompt,
                 ),
                 architecture_spec,
             ),
         )
+        repaired_app_spec = repaired_output.app_spec
+        repaired_source_bundle = create_source_bundle(
+            repaired_output,
+            blueprint.product_type,
+        )
+        app_artifact = save_artifact(
+            self.db,
+            run.id,
+            ArtifactType.APP_SPEC_REPAIR,
+            repaired_app_spec,
+        )
         self._record_event_once(
             run,
             "repair.completed",
-            "Engineer produced one revised AppSpec",
+            "Engineer produced revised source code and unit tests",
             "engineer",
-            {"artifact_id": artifact.id, "repair_attempt": 1},
+            {
+                "artifact_id": artifact.id,
+                "app_spec_artifact_id": app_artifact.id,
+                "repair_attempt": 1,
+                "test_files": [item.path for item in repaired_output.unit_tests],
+            },
         )
         self.db.commit()
-        return repaired_app_spec
+        return repaired_app_spec, repaired_source_bundle
+
+    @classmethod
+    def _align_engineer_output_visual_tokens(
+        cls,
+        output: EngineerOutput,
+        architecture_spec: ArchitectureSpec,
+    ) -> EngineerOutput:
+        return output.model_copy(
+            update={
+                "app_spec": cls._align_app_spec_visual_tokens(
+                    output.app_spec,
+                    architecture_spec,
+                )
+            }
+        )
 
     @staticmethod
     def _align_app_spec_visual_tokens(

@@ -6,7 +6,14 @@ import pytest
 from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
 from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
-from another_atom.contracts.schemas import LeadRoute, Mode, ProjectLeadIntent, SupportLevel
+from another_atom.contracts.schemas import (
+    EngineerOutput,
+    LeadRoute,
+    Mode,
+    ProjectLeadIntent,
+    SourceFileDraft,
+    SupportLevel,
+)
 
 
 @pytest.fixture
@@ -413,6 +420,9 @@ def test_visible_stream_emits_only_message_and_validates_enveloped_result(
         for kind, payload in events
         if kind == "agent.output.delta"
     ) == encoded
+    assert len(
+        [payload for kind, payload in events if kind == "agent.output.delta"]
+    ) <= len(encoded) // 2_048 + 2
     provider.end_stage()
     get_settings.cache_clear()
 
@@ -571,23 +581,34 @@ def test_engineer_repair_uses_validation_evidence_and_preserves_scope(
     )
 
     assert validation_report.passed is False
-    repaired = provider.repair_app_spec(
+    current_output = EngineerOutput(
+        app_spec=app_spec,
+        unit_tests=[
+            SourceFileDraft(
+                path="tests/app.test.js",
+                role="test",
+                content="import test from 'node:test';\n",
+            )
+        ],
+    )
+    repaired = provider.repair_engineer_output(
         blueprint,
         architecture,
-        app_spec,
+        current_output,
         validation_report,
         prompt,
     )
     repaired_report = validate_app_spec(
-        repaired,
+        repaired.app_spec,
         prompt,
         blueprint=blueprint,
         architecture_spec=architecture,
     )
 
-    assert repaired.pages[0].route == "/"
-    assert repaired.html == app_spec.html
-    assert repaired.javascript == app_spec.javascript
+    assert repaired.app_spec.pages[0].route == "/"
+    assert repaired.app_spec.html == app_spec.html
+    assert repaired.app_spec.javascript == app_spec.javascript
+    assert repaired.unit_tests == current_output.unit_tests
     assert repaired_report.passed is True
 
 
