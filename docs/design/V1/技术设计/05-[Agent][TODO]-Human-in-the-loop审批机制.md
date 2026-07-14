@@ -10,6 +10,7 @@
 - **Agent 基线：** [V1 多 Agent 设计](./01-[Agent]-多Agent设计.md)
 - **对话修改：** [V1 基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
 - **工程基线：** [V1 系统架构](./03-[工程]-系统架构.md)
+- **当前实现检查：** [20｜Project 对话路由与代码修改授权检查](../../../review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)
 
 ## 背景
 
@@ -94,6 +95,7 @@ Approval Service 不回调任意业务函数或执行 Agent Tool。`resume_kind 
 | 业务 | gate source | approval type | subject | resume adapter |
 | --- | --- | --- | --- | --- |
 | PM ProductSpec | workflow | `product_spec` | generation：规范化 generation ID + 简介 hash + Markdown blob SHA | `resume_architect` |
+| Project 代码修改 | workflow | `project_change` | ChangeBrief hash + base version/commit + Contract hashes + source manifest hash | `start_change_run` |
 | 范围变化 | risk_policy | `scope_change` | ProductSpec Delta / RequirementDelta | `resume_change_run` |
 | 额外预算 | risk_policy | `budget_increase` | budget version + limit | `resume_agent_stage` |
 | 破坏性 Diff | risk_policy | `destructive_diff` | SourceDiff hash + base version | `resume_materialization` |
@@ -136,6 +138,7 @@ PM 专项流程负责生成简介和 `docs/product-spec.md`、检测用户修改
 - 一个 Run 中按阶段出现不同 Approval 的能力；
 - 拒绝、取消、失效和重新请求；
 - 对话修改的执行前 Gate 与提交前 Diff Gate；
+- Project Chat 的 `project_change` workflow Gate：批准后才创建 `ai_edit` Run、BuildJob 和 Project 写占用；
 - pending 等待期间的锁释放、批准后的基线重验；
 - budget、worktree、version、project 和 deployment 动作适配器；
 - Project 对话结果卡片和通用查询/决定 API。
@@ -201,11 +204,12 @@ VALIDATION_BLOCKED
 对话修改不能只在一个时点判断风险：
 
 1. **Pre-execution Gate**
-   - 在 ChangeBrief 和 RequirementDelta 已持久化后执行；
-   - 判断范围变化、能力适配和预计预算；
-   - 命中后先暂停，避免继续消耗下游调用。
+   - Lead 形成 ChangeBrief 后由 workflow 固定触发，不依赖 Risk Policy 决定是否显示；
+   - subject 绑定基线版本/commit、有效 Contract hash 和全量源码 manifest hash；
+   - Risk Policy 在卡片上补充范围变化、能力适配和预计预算；
+   - 用户点击“修改代码”前不创建 `ai_edit` Run、BuildJob 或写占用。
 2. **Pre-commit Gate**
-   - CandidateAppSpec 物化并由 Runtime 生成 SourceDiff 后执行；
+   - SourcePatchSet 在隔离候选工作区 apply，并由 Runtime 重新生成 SourceDiff 后执行；
    - 判断真实删除文件、删除行数、入口变化和关键模块替换；
    - 命中后保留候选 Artifact 和 Evidence，但不创建 ProjectVersion。
 
@@ -416,7 +420,7 @@ WHERE id = :approval_id
 
 Approval 不修改已有 Artifact：
 
-- 批准前的 Blueprint、ChangeBrief、RequirementDelta、CandidateAppSpec、SourceDiff 和 ValidationReport继续保留；
+- 批准前的 Blueprint、ChangeBrief、RequirementDelta、SourcePatchSet、SourceDiff 和 ValidationReport 继续保留；
 - 用户编辑时创建新 Artifact/version，并通过 parent 引用保留来源；
 - 失败、拒绝或取消不会删除已生成 Artifact；
 - 未通过门禁的候选 Artifact 不进入 ProjectVersion，也不移动 Git/Deployment 指针；
@@ -498,6 +502,8 @@ run.resumed
 - pending 时重启，状态和 Artifact 可恢复且没有自动执行；
 - 决定事务提交后通知丢失，Worker 仍能领取持久化 Job；
 - 修改 Run 等待 Pre-execution Approval 时不持有 Project 写锁；
+- Project change Approval 批准前不存在修改 Run；批准事务只创建一个 Run/BuildJob，并重新校验 Contract 与全量源码 manifest hash；
+- Engineer 只返回 SourcePatchSet，Runtime 在隔离候选工作区 apply；Patch 无法 apply 或越权时不写当前版本；
 - Pre-commit Approval 前不创建 ProjectVersion，批准后基线变化则 stale；
 - 拒绝、取消和失败都不移动 Git、当前版本与线上版本；
 - 额外预算只在批准后预占并按实际请求结算；
@@ -509,7 +515,7 @@ run.resumed
 2. **[决定服务]** 实现通用查询/决定 API、CAS、事件、固定适配器注册和持久化恢复 Job。
 3. **[PM 接入]** 接入不可变 ProductSpec generation、编辑后 stale、重新生成和 `resume_architect`。
 4. **[Policy 收敛]** 把范围、预算、实际 Diff 和 deny 条件集中到确定性 Risk Policy。
-5. **[对话修改]** 接入 Pre-execution 与 Pre-commit Gate、stale 处理和 ProjectMessage 结果卡片。
+5. **[对话修改]** 接入 `project_change` workflow Gate、“修改代码”按钮、批准后建 Run、Pre-commit Gate、stale 处理和 ProjectMessage 结果卡片。
 6. **[高影响动作]** 接入 dirty worktree、Restore、删除和 Deployment operation adapter。
 7. **[验证]** 完成并发、重启、配额、双用户和 Railway 持久化验收。
 
