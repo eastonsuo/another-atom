@@ -7,7 +7,9 @@
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
 - V1 uses a fixed sequential role pipeline: Product Manager -> Architect -> Engineer -> Data Analyst -> Reviewer. Runtime Validator remains a deterministic non-Agent stage between Data Analyst and Reviewer.
 - V2 autonomous multi-agent behavior is a planned implementation version after V1 acceptance; it is not implemented yet.
-- User requirements may describe any product goal. V1 implements the goal as a self-contained browser application using generated HTML/CSS/JavaScript. Preserve the product identity; do not convert games or tools into catalogs. Server-side auth, payments, persistent database writes, external services, native runtimes, and unrestricted package/Shell execution remain capability boundaries and must be marked adapted or unsupported.
+- User requirements may describe any software product goal. Preserve the requested project type and target platform; never convert a non-Web project into a Web application or catalog merely because the current Runtime is easier to execute.
+- Preview is a project-type capability, not the generation boundary. Web projects may use the implemented HTML/CSS/JavaScript Preview and Public Route. Non-Web projects still belong to the same Project/code/version model, but may expose only source, Artifacts, validation, and export until a matching build/run adapter exists.
+- Keep product scope separate from Runtime support. Missing server-side auth, payments, persistent database writes, external services, native toolchains, dependencies, or Shell execution must be reported as an explicit capability gap; do not silently simulate, omit, or change the product type.
 
 ## Documentation Governance
 

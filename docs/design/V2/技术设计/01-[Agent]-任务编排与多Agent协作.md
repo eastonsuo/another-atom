@@ -602,7 +602,7 @@ V2 不通过直接替换 `orchestrator.py` 获得；Runtime、数据模型、预
 - 远程沙箱实现、网络策略和依赖白名单。
 - Data Analyst 是否加入页面数据可视化截图分析，以及 Reviewer 对应测试集如何构建。
 - 各回退边、总预算和 deadline 的压测结果。
-- V2 是否扩展商品目录站以外的应用类型。
+- V2 P0 首批新增哪些非 Web Source/Build/Runtime Adapter，以及各自需要哪些专用 Contract、Tool 和 Evidence。
 - Web、Agent Worker、Object Storage 和 Sandbox Provider 的实际部署成本。
 
 ## 18. V2 Agent 演进取舍摘要
