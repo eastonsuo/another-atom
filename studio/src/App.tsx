@@ -173,6 +173,7 @@ const ZH: Record<string, string> = {
   "Projects": "项目",
   "Your generated projects will appear here.": "生成的项目会显示在这里。",
   "Demo usage": "演示配额",
+  "Used": "已使用",
   "left": "剩余",
   "LLM usage is isolated to this account.": "LLM 用量按当前账号隔离。",
   "Sign out": "退出登录",
@@ -809,8 +810,7 @@ function Sidebar({
         </div>
       </div>
       <div className="quota-panel">
-        <div><span>{ui(language, "Demo usage")}</span><strong>{quota?.remaining ?? "–"} {ui(language, "left")}</strong></div>
-        <div className="quota-track"><span style={{ width: `${quota ? (quota.used / quota.limit) * 100 : 0}%` }} /></div>
+        <div><span>{ui(language, "Demo usage")}</span><strong>{ui(language, "Used")} {quota?.used ?? "–"}</strong></div>
         <small>{ui(language, "LLM usage is isolated to this account.")}</small>
       </div>
       {user.role === "admin" && <a className="admin-console-link" href="/admin"><ShieldCheck size={16} /><span>{ui(language, "Admin console")}</span><ChevronRight size={15} /></a>}
@@ -976,14 +976,15 @@ function Workspace({
 }) {
   const [approving, setApproving] = useState(false);
   const [blueprint, setBlueprint] = useState<Blueprint | null>(run.blueprint);
+  const effectiveBlueprint = blueprint ?? run.blueprint;
   const ready = run.status === "completed" || run.status === "completed_degraded";
 
   const approve = async () => {
-    if (!blueprint) return;
+    if (!effectiveBlueprint) return;
     setApproving(true);
     setError("");
     try {
-      const queued = await api.approve(run.run_id, blueprint);
+      const queued = await api.approve(run.run_id, effectiveBlueprint);
       setRun(queued);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Approval failed");
@@ -1001,15 +1002,15 @@ function Workspace({
         {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
       </section>
       <section className="workspace-content">
-        {run.status === "awaiting_approval" && blueprint ? (
-          <BlueprintEditor blueprint={blueprint} setBlueprint={setBlueprint} approve={approve} approving={approving} language={language} />
+        {run.status === "awaiting_approval" && effectiveBlueprint ? (
+          <BlueprintEditor blueprint={effectiveBlueprint} setBlueprint={setBlueprint} approve={approve} approving={approving} language={language} />
         ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
           <div className="failed-project-view">
             <ClarificationState run={run} language={language} />
             <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
         ) : run.status === "needs_input" ? (
-          <ScopeStop blueprint={blueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
+          <ScopeStop blueprint={effectiveBlueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : run.status === "failed" ? (
           <div className="failed-project-view">
             <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
@@ -1048,23 +1049,23 @@ function Workspace({
 }
 
 function Timeline({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
-  const requiresApproval = run.status === "awaiting_approval" || run.blueprint?.support_level === "adapted";
-  const needsInput = run.status === "needs_input";
-  const needsClarification = run.pending_human_task?.kind === "input_request";
-  const waitingStage = needsClarification ? "product_manager_clarification" : "scope_review";
   const stages = run.mode === "team"
-    ? ["team_leader", "product_manager", ...(needsInput ? [waitingStage] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "data", "build", "reviewer", "complete"]
-    : ["product_manager", ...(needsInput ? [waitingStage] : requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
-  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", product_manager_clarification: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", data: "data", build: "validator", reviewer: "reviewer", complete: "reviewer" };
-  const displayStage = run.current_stage === "build_queue" ? "engineer" : run.current_stage;
-  const currentIndex = stages.indexOf(displayStage);
+    ? ["team_leader", "product_manager", "architect", "engineer", "data", "reviewer", "complete"]
+    : ["product_manager", "engineer", "complete"];
+  const flow = run.mode === "team"
+    ? ["team_leader", "product_manager", "product_manager_clarification", "scope_review", "blueprint_approval", "build_queue", "architect", "engineer", "data", "build", "reviewer", "complete"]
+    : ["product_manager", "product_manager_clarification", "scope_review", "blueprint_approval", "build_queue", "engineer", "build", "complete"];
+  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", architect: "architect", engineer: "engineer", data: "data", reviewer: "reviewer", complete: "reviewer" };
+  const currentIndex = flow.indexOf(run.current_stage);
+  const runComplete = run.status === "completed" || run.status === "completed_degraded";
   return <div className="timeline">
-    {stages.map((stage, index) => {
-      const completed = currentIndex > index || TERMINAL.has(run.status) && run.status.startsWith("completed");
-      const active = displayStage === stage;
-      const state = active && needsInput ? "Waiting for your input" : active ? "In progress" : completed ? "Complete" : "Waiting";
+    {stages.map((stage) => {
+      const stageIndex = flow.indexOf(stage);
+      const completed = runComplete || currentIndex > stageIndex;
+      const active = !runComplete && run.current_stage === stage;
+      const state = active ? "In progress" : completed ? "Complete" : "Waiting";
       return <div className={active ? "timeline-item active" : completed ? "timeline-item complete" : "timeline-item"} key={stage}>
-        <div className="timeline-avatar"><RoleAvatar role={roles[stage]} size="small" /><span className="timeline-state">{completed ? <Check size={10} /> : active && needsInput ? <CircleAlert size={10} /> : active ? <LoaderCircle className="spin" size={10} /> : index + 1}</span></div>
+        <div className="timeline-avatar"><RoleAvatar role={roles[stage]} size="small" /><span className="timeline-state">{completed ? <Check size={10} /> : active ? <LoaderCircle className="spin" size={10} /> : stages.indexOf(stage) + 1}</span></div>
         <div><strong>{stageLabel(language, stage)}</strong><small>{ui(language, state)}</small></div>
       </div>;
     })}

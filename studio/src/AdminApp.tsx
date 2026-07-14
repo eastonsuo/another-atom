@@ -229,7 +229,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
                 {expanded === user.id ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
                 <span><strong>{user.display_name}</strong><small>@{user.username} · 注册于 {formatDate(user.created_at)}</small></span>
                 <span><b>{user.project_count}</b><small>Project</small></span>
-                <span><b>{user.quota_used} / {user.quota_limit}</b><small>已用 / 总额度 · 预占 {user.quota_reserved}</small></span>
+                <span><b>{user.quota_used}</b><small>已使用配额</small></span>
                 <em>{user.plan}</em>
               </button>
               {expanded === user.id && <div className="admin-projects">

@@ -47,6 +47,25 @@ def test_non_llm_failure_releases_unsettled_quota(client: TestClient) -> None:
     assert quota["used"] == 1
 
 
+def test_build_usage_is_recorded_without_enforcing_the_configured_limit(
+    client: TestClient,
+) -> None:
+    assert client.get("/api/quota").status_code == 200
+    with client.app.state.testing_session() as db:
+        user = db.get(User, "demo-user")
+        assert user is not None
+        user.quota_limit = 0
+        db.commit()
+
+    run = _create_run(client, {"prompt": "Build a catalog", "mode": "team"})
+
+    assert run["status"] == "completed"
+    quota = client.get("/api/quota").json()
+    assert quota["limit"] == 0
+    assert quota["used"] == 5
+    assert quota["reserved"] == 0
+
+
 def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> None:
     run = _create_run(client, {"prompt": "Build a catalog [fail:build]", "mode": "team"})
     assert run["status"] == "failed"

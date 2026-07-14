@@ -416,16 +416,13 @@ def route_lead_message(
     reserved = provider.reservation_units
     claimed = db.execute(
         update(User)
-        .where(
-            User.id == user.id,
-            User.quota_used + User.quota_reserved + reserved <= User.quota_limit,
-        )
+        .where(User.id == user.id)
         .values(quota_reserved=User.quota_reserved + reserved)
         .execution_options(synchronize_session=False)
     )
     if claimed.rowcount != 1:
         db.rollback()
-        raise AppError("QUOTA_EXCEEDED", "Not enough quota for the Lead request", 402)
+        raise AppError("USER_NOT_FOUND", "User does not exist", 404)
     db.commit()
     try:
         decision = provider.route_message(request.message, request.force_team)

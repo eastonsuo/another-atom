@@ -10,13 +10,6 @@ def reserve_quota(db: Session, user_id: str, run: Run, stage: str, units: int) -
     user = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if user is None:
         raise AppError("USER_NOT_FOUND", "User does not exist", 404)
-    remaining = user.quota_limit - user.quota_used - user.quota_reserved
-    if remaining < units:
-        raise AppError(
-            "QUOTA_EXCEEDED",
-            "Demo quota is exhausted. Reset the demo account quota before starting another run.",
-            409,
-        )
     user.quota_reserved += units
     run.quota_reserved += units
     db.add(
