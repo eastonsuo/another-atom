@@ -68,7 +68,7 @@ const EXAMPLE_PROMPTS: Record<Language, string[]> = {
 
 const STAGE_LABELS: Record<Language, Record<string, string>> = {
   zh: {
-    team_leader: "Lead 分派",
+    team_leader: "团队负责人",
     product_manager: "产品经理",
     product_manager_clarification: "产品经理澄清",
     blueprint_approval: "用户确认",
@@ -82,7 +82,7 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
     scope_review: "确认 PM 草案",
   },
   en: {
-    team_leader: "Team Leader",
+    team_leader: "AI Lead",
     product_manager: "Product Manager",
     product_manager_clarification: "PM clarification",
     blueprint_approval: "Your approval",
@@ -99,7 +99,7 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
 
 const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
   zh: {
-    team_leader: "Lead 正在分派请求",
+    team_leader: "团队负责人正在判断如何处理请求",
     product_manager: "产品经理正在整理需求",
     product_manager_clarification: "产品经理正在等待你补充需求",
     build_queue: "构建任务正在排队",
@@ -111,7 +111,7 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
     complete: "正在准备预览结果",
   },
   en: {
-    team_leader: "Lead is routing the request",
+    team_leader: "AI Lead is routing the request",
     product_manager: "Product Manager is structuring the requirement",
     product_manager_clarification: "Product Manager is waiting for your clarification",
     build_queue: "The build job is waiting to start",
@@ -126,7 +126,7 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
 
 const ROLE_LABELS: Record<Language, Partial<Record<RoleKey, string>>> = {
   zh: {
-    leader: "Lead",
+    leader: "团队负责人",
     product: "产品",
     architect: "架构",
     engineer: "工程",
@@ -136,7 +136,9 @@ const ROLE_LABELS: Record<Language, Partial<Record<RoleKey, string>>> = {
     renderer: "渲染",
     user: "你",
   },
-  en: {},
+  en: {
+    leader: "AI Lead",
+  },
 };
 
 const ZH: Record<string, string> = {
@@ -157,15 +159,15 @@ const ZH: Record<string, string> = {
   "Need an account? Sign up": "没有账号？注册",
   "Could not start the run": "无法启动任务",
   "Could not open the project": "无法打开项目",
-  "Lead request sent to {model}. Waiting for model response.": "已发送给 Lead（{model}），等待模型返回。",
-  "Lead is producing a direct/team decision": "Lead 正在生成 direct/team 路由决策",
+  "AI Lead request sent to {model}. Waiting for model response.": "已发送给团队负责人（{model}），等待模型返回。",
+  "AI Lead is deciding whether to answer directly or call the team": "团队负责人正在判断直接回答还是调用团队",
   "Project and Run logs start after this step completes.": "此步骤完成后才会创建 Project，并接入 Run 日志。",
   "Model response is slower than usual.": "模型响应比平时慢，仍在等待服务端返回。",
   "Ollama timed out. Switching provider to DeepSeek official API…": "Ollama 响应超时，服务商切换中：DeepSeek 官方 API……",
   "Provider fallback completed: {provider}.": "服务商切换完成：{provider}。",
   "seconds": "秒",
-  "Lead routed this message to {route}.": "Lead 将消息路由到 {route}。",
-  "No build run was created because Lead answered directly.": "Lead 已直接回答，没有创建构建任务。",
+  "AI Lead routed this message to {route}.": "团队负责人选择了{route}。",
+  "No build run was created because AI Lead answered directly.": "团队负责人已直接回答，没有创建构建任务。",
   "Creating Project and Build Run.": "正在创建项目和构建任务。",
   "Run created. Opening build event stream.": "任务已创建，正在打开构建事件流。",
   "Project workspace": "项目工作区",
@@ -182,16 +184,16 @@ const ZH: Record<string, string> = {
   "Real LLM is active": "真实 LLM 已启用",
   "Mock LLM is active": "Mock LLM 已启用",
   "Your build team": "你的构建团队",
-  "Talk to Lead": "和 Lead 对话",
+  "Talk to the AI team": "和 AI 团队沟通",
   "Ask a question, clarify the scope, or explicitly request a Web application build.": "可以询问、澄清范围，或明确要求构建任意 Web 应用。",
   "Describe the application, behavior, interactions, and visual direction…": "描述你想实现的应用、功能、交互和视觉方向……",
   "Add reference attachments": "添加参考附件",
   "Language model": "语言模型",
-  "Send to Lead": "发送给 Lead",
+  "Send message": "发送消息",
   "Remove attachment": "移除附件",
   "Call team": "调用团队",
-  "Lead handoff": "Lead 交接",
-  "Submit a message to see pre-project Lead progress. Project logs appear after a Run is created.": "提交消息后会显示项目创建前的 Lead 进度；任务创建后日志进入项目。",
+  "Request routing": "任务判断",
+  "Submit a message to see how it is handled. Project logs appear after a Run is created.": "提交消息后会先判断直接回答还是调用团队；任务创建后日志进入项目。",
   "Start with an example": "从示例开始",
   "Staged pipeline": "阶段流水线",
   "Build activity": "构建活动",
@@ -269,9 +271,9 @@ const ZH: Record<string, string> = {
   "Publish failed": "发布失败",
   "Preview": "预览",
   "Edit": "编辑",
-  "Continue with Lead": "继续和 Lead 对话",
+  "Project conversation": "项目对话",
   "Describe what should change in the current version.": "描述你希望基于当前版本修改什么。",
-  "Lead will inspect the current Project code automatically.": "Lead 会自动读取当前 Project 代码，不需要手动选择文件。",
+  "Ask about the Project or describe what you want to change.": "询问项目，或描述你想修改的内容。",
   "Send change": "发送修改",
   "Could not load Project messages": "无法读取 Project 对话",
   "Could not start Project change": "无法开始 Project 修改",
@@ -624,7 +626,7 @@ function Studio() {
     setActivityLog([
       {
         id: `${Date.now()}-lead-started`,
-        message: template(language, "Lead request sent to {model}. Waiting for model response.", { model }),
+        message: template(language, "AI Lead request sent to {model}. Waiting for model response.", { model }),
         tone: "pending",
       },
     ]);
@@ -643,9 +645,9 @@ function Studio() {
       if (decision.fallback_provider) {
         appendActivity(template(language, "Provider fallback completed: {provider}.", { provider: decision.fallback_provider }), "success");
       }
-      appendActivity(template(language, "Lead routed this message to {route}.", { route: routeLabel(language, decision.route) }), "success");
+      appendActivity(template(language, "AI Lead routed this message to {route}.", { route: routeLabel(language, decision.route) }), "success");
       if (decision.route === "direct") {
-        appendActivity(ui(language, "No build run was created because Lead answered directly."), "success");
+        appendActivity(ui(language, "No build run was created because AI Lead answered directly."), "success");
         await refreshShell();
         return;
       }
@@ -880,7 +882,7 @@ function Composer({
             </div>
           ))}
         </div>
-        <h1>{ui(language, "Talk to Lead")}</h1>
+        <h1>{ui(language, "Talk to the AI team")}</h1>
         <p>{ui(language, "Ask a question, clarify the scope, or explicitly request a Web application build.")}</p>
       </div>
       <div className="composer-layout">
@@ -908,13 +910,13 @@ function Composer({
                   {(models?.models ?? []).map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
                 </select>
               </label>
-              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting} onClick={() => sendToLead()} aria-label={ui(language, "Send to Lead")} title={ui(language, "Send to Lead")}>
+              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting} onClick={() => sendToLead()} aria-label={ui(language, "Send message")} title={ui(language, "Send message")}>
                 {submitting ? <LoaderCircle className="spin" size={19} /> : <ArrowUp size={19} />}
               </button>
             </div>
           </div>
           {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
-          {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>Lead</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
+          {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
         </div>
         <ActivityLog entries={activityLog} active={submitting} elapsed={leadElapsed} fallbackProvider={models?.fallback_provider ?? null} language={language} />
       </div>
@@ -929,18 +931,18 @@ function Composer({
 function ActivityLog({ entries, active, elapsed, fallbackProvider, language }: { entries: ActivityEntry[]; active: boolean; elapsed: number; fallbackProvider: string | null; language: Language }) {
   return <aside className="activity-panel" aria-live="polite">
     <div className="activity-heading">
-      <span>{ui(language, "Lead handoff")}</span>
+      <span>{ui(language, "Request routing")}</span>
       {active && <LoaderCircle className="spin" size={14} />}
     </div>
     {entries.length === 0 ? (
-      <p className="activity-empty">{ui(language, "Submit a message to see pre-project Lead progress. Project logs appear after a Run is created.")}</p>
+      <p className="activity-empty">{ui(language, "Submit a message to see how it is handled. Project logs appear after a Run is created.")}</p>
     ) : (
       <div className="activity-list">
         {entries.map((entry) => <div className={`activity-item ${entry.tone}`} key={entry.id}><i /> <p>{entry.message}</p></div>)}
       </div>
     )}
     {active && <div className="lead-wait-log">
-      <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "Lead is producing a direct/team decision")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
+      <div><LoaderCircle className="spin" size={14} /><strong>{ui(language, "AI Lead is deciding whether to answer directly or call the team")}</strong><time>{elapsed} {ui(language, "seconds")}</time></div>
       <p>{ui(language, "Project and Run logs start after this step completes.")}</p>
       {fallbackProvider && elapsed >= 30
         ? <small>{ui(language, "Ollama timed out. Switching provider to DeepSeek official API…")}</small>
@@ -1428,9 +1430,9 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
     }
   };
   return <section className="project-chat-panel">
-    <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Continue with Lead")}</strong><small>{ui(language, "Lead will inspect the current Project code automatically.")}</small></div></div>
+    <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
-    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? (message.message_type === "clarification" ? (language === "zh" ? "产品经理" : "Product Manager") : "Lead") : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span></div>)}</div>}
+    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? (message.message_type === "clarification" ? (language === "zh" ? "产品经理" : "Product Manager") : roleLabel(language, "leader")) : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span></div>)}</div>}
     <form onSubmit={submitChange}><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={run.pending_human_task?.kind === "input_request" ? run.pending_human_task.prompt : ui(language, "Describe what should change in the current version.")} /><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={16} />} {run.pending_human_task?.kind === "input_request" ? (language === "zh" ? "提交补充" : "Send clarification") : ui(language, "Send change")}</button></form>
   </section>;
 }

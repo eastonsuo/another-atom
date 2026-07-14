@@ -14,7 +14,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户可以提出任
 想法 / 资料 / 现有项目
           |
           v
-     与 Lead 对话
+   与 AI 团队沟通
           |
           v
    多智能体规划与执行
@@ -51,7 +51,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户可以提出任
 
 ### 多智能体协作
 
-- **[单一入口]** 用户主要与 Lead 对话，不需要先理解内部角色、模式和流程。
+- **[单一入口]** 用户通过“和 AI 团队沟通”进入统一对话，不需要先理解内部角色、模式和流程；内部由 Lead 接收请求并判断直接回答还是调用团队。
 - **[专业分工]** Product Manager、Architect、Engineer、Data Analyst、Reviewer 分别处理需求、结构、实现、数据和独立审查；确定性 Validator 提供不可由 Agent 改写的工程证据。
 - **[按任务演进]** 简单任务应走短路径，复杂任务再调用更多角色、工具和返工；多智能体的目的不是增加 Agent 数量，而是降低不同类型的不确定性。
 - **[用户介入]** 用户可以查看、修改和确认关键方案；系统只在范围、预算、破坏性操作和发布等真实风险处停下。
@@ -87,7 +87,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户可以提出任
   <img src="./docs/assets/readme/login-zh.png" alt="Another Atom 中文登录页：用户名密码登录与账号级项目隔离说明" width="480">
 </p>
 
-Studio 将 Lead 对话、专业 Agent、Project 历史、模型选择和账号用量放在同一工作区。
+Studio 将 AI 团队对话、专业 Agent、Project 历史、模型选择和账号用量放在同一工作区。
 
 <p align="center">
   <img src="./docs/assets/readme/studio-home-v2-zh.png" alt="Another Atom 中文 Studio 首页：Lead 对话、固定专业团队、项目列表和真实 LLM 状态" width="640">
