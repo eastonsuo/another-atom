@@ -166,8 +166,8 @@ def test_project_chat_proposes_then_modifies_existing_code(
         "requirement_delta",
         "base_source_snapshot",
         "source_context",
-        "source_patch_set",
-        "source_patch_apply_report",
+        "source_file_change_set",
+        "source_change_apply_report",
         "source_diff",
         "architecture_design",
         "architecture_spec",
@@ -195,13 +195,13 @@ def test_project_chat_proposes_then_modifies_existing_code(
         f"/api/projects/{project_id}/files", params={"run_id": run["run_id"]}
     ).json()
     project_paths = {entry["path"] for entry in project_files}
-    assert ".another-atom/generated/source-patch-set.json" in project_paths
-    assert ".another-atom/generated/source-patch-apply-report.json" in project_paths
+    assert ".another-atom/generated/source-file-change-set.json" in project_paths
+    assert ".another-atom/generated/source-change-apply-report.json" in project_paths
     events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
     event_types = [event["type"] for event in events]
-    assert "source.patch_created" in event_types
-    assert "source.patch_check_started" in event_types
-    assert "source.patch_applied" in event_types
+    assert "source.change_created" in event_types
+    assert "source.change_check_started" in event_types
+    assert "source.change_applied" in event_types
     assert "source.diff_created" in event_types
 
 
@@ -640,22 +640,24 @@ def test_failed_change_preserves_base_version_and_releases_project_lock(
     }
 
 
-def test_invalid_source_patch_fails_without_creating_a_version(
+def test_invalid_source_change_fails_without_creating_a_version(
     client: TestClient,
     monkeypatch,
 ) -> None:
     initial = _build_project(client)
     project_id = initial["project_id"]
-    original = MockLLMProvider.create_source_patch_set
+    original = MockLLMProvider.create_source_file_change_set
 
-    def tampered_patch(self, *args, **kwargs):
-        patch_set = original(self, *args, **kwargs)
-        first = patch_set.patches[0].model_copy(update={"before_hash": "0" * 64})
-        return patch_set.model_copy(
-            update={"patches": [first, *patch_set.patches[1:]]}
+    def tampered_change(self, *args, **kwargs):
+        change_set = original(self, *args, **kwargs)
+        first = change_set.changes[0].model_copy(update={"before_hash": "0" * 64})
+        return change_set.model_copy(
+            update={"changes": [first, *change_set.changes[1:]]}
         )
 
-    monkeypatch.setattr(MockLLMProvider, "create_source_patch_set", tampered_patch)
+    monkeypatch.setattr(
+        MockLLMProvider, "create_source_file_change_set", tampered_change
+    )
     proposal = _propose_change(
         client,
         project_id,
@@ -664,7 +666,7 @@ def test_invalid_source_patch_fails_without_creating_a_version(
     failed = _approve_change(client, project_id, proposal["proposal_id"])
 
     assert failed["status"] == "failed"
-    assert failed["error_code"] == "PATCH_HASH_MISMATCH"
+    assert failed["error_code"] == "SOURCE_CHANGE_HASH_MISMATCH"
     assert failed["version_id"] is None
     versions = client.get(f"/api/projects/{project_id}/versions").json()
     assert [version["id"] for version in versions] == [initial["version_id"]]
@@ -679,10 +681,10 @@ def test_invalid_source_patch_fails_without_creating_a_version(
         )
     assert project is not None
     assert project.active_write_run_id is None
-    assert "source_patch_set" in artifacts
-    assert "source_patch_apply_report" not in artifacts
+    assert "source_file_change_set" in artifacts
+    assert "source_change_apply_report" not in artifacts
     events = client.get(f"/api/runs/{failed['run_id']}/events/history").json()
-    assert "source.patch_failed" in [event["type"] for event in events]
+    assert "source.change_failed" in [event["type"] for event in events]
 
 
 def test_project_message_history_is_owner_scoped(client: TestClient) -> None:

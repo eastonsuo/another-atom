@@ -108,7 +108,7 @@ Lead(ProjectContextSnapshot) -> ProjectLeadDecision
 
 `GET/POST /api/projects/{project_id}/messages` 已将对话和执行拆开。POST 先持久化用户消息，组装 Project Context，再调用 `route_project_message` 返回 `answer | clarify | propose_change`。前两种只写回 Chat；第三种写入 pending `change_proposal` ProjectMessage。`POST /projects/{project_id}/change-proposals/{proposal_id}/approve` 重新校验基线，成功后才创建 Run、BuildJob 和 Project 写占用。
 
-当前 `team` 路径绑定 `base_version_id`，顺序生成 ChangeBrief、RequirementDelta、ArchitectureSpec 和完整修订后的 ArchitectureDesign。现有代码已经从完整候选 AppSpec 输出迁移为静态 SourceContext 下的 raw `SourcePatchSet`，但 [Review 29](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 已证明该 Interface 仍不可靠。目标路径改为 `SourceFileChangeSet`：Runtime 在隔离候选目录写入声明文件，再从真实文件重建兼容 AppSpec、SourceBundle、SourceDiff、ExecutionReport 和 ValidationReport，最后创建 `ai_edit` 版本。静态 ChangeSet 仍是过渡态，后续继续迁移全量 Manifest、RepositoryMap、受控动态读取、ContextReceipt、CandidateRevision 和有界 Repair ChangeSet。
+当前 `team` 路径绑定 `base_version_id`，顺序生成 ChangeBrief、RequirementDelta、ArchitectureSpec 和完整修订后的 ArchitectureDesign。Engineer 已使用静态 SourceContext 下的 `SourceFileChangeSet`：Runtime 在隔离候选目录写入声明文件，再从真实文件重建兼容 AppSpec、SourceBundle、SourceDiff、ExecutionReport 和 ValidationReport，最后创建 `ai_edit` 版本；新 Run 不再生成 raw `SourcePatchSet` 或执行模型提供的 `git apply`。静态 ChangeSet 仍是过渡态，后续继续迁移全量 Manifest、RepositoryMap、受控动态读取、ContextReceipt、CandidateRevision 和有界 Repair ChangeSet。
 
 已实现的正确性边界包括 Project 单写占用、最终基线检查、阶段 Artifact 复用、阶段配额、失败释放、用户归属校验和发布指针不变。
 
@@ -118,7 +118,7 @@ Lead(ProjectContextSnapshot) -> ProjectLeadDecision
 - Project Context 的完整内容只进入 Provider，请求后持久化的是 hash、有效文档类型、对话条数、源码 manifest 及包含/省略清单；尚无独立 ContextEnvelope 表；
 - `change_proposal` 当前复用 ProjectMessage payload 保存 pending/approved/stale，并由专用批准 API 恢复；通用 Approval subject、reject/cancel 和风险策略尚未接入；
 - 完整 ChangeBrief 仍在批准后的 Run 内生成，批准前卡片只有 Lead 的 `change_summary`；
-- 当前修改生产路径仍由 Engineer 输出 raw `SourcePatchSet` 并执行 `git apply`；目标 Contract 已修订为 `SourceFileChangeSet` 和 Runtime 隔离文件物化，代码尚未迁移；`EngineerAction`、受控动态读取、ContextReceipt、CandidateRevision、ChangeAttempt 和 Repair ChangeSet 也尚未实现；
+- 当前修改生产路径已使用 `SourceFileChangeSet` 和 Runtime 隔离文件物化；`EngineerAction`、受控动态读取、ContextReceipt、CandidateRevision、ChangeAttempt 和 Repair ChangeSet 尚未实现；
 - Risk Policy 尚未根据范围、破坏性 Diff 和额外预算扩充 Approval；
 - SourceDiff 已持久化并可从文件面板查看，但尚未形成独立结果卡片；
 - 外部 GitHub/本地目录导入和 Git/数据库之间的 VersionMaterialization 记录尚未实现。
@@ -491,7 +491,7 @@ create_engineer_action(
 ) -> EngineerAction
 ```
 
-`create_change_brief / create_requirement_delta / revise_architecture_spec / revise_architecture_design` 已接入 Mock 与 Ollama/DeepSeek Provider。现有 `create_source_patch_set` 是待替换兼容路径；目标 `create_source_file_change_set` 返回静态 Context 下的受控文件最终内容与 AppSpec 元数据 Delta，Runtime 负责隔离物化、候选重建和本地 Diff。`revise_app_spec` 只保留历史兼容，不再是已有 Project 的正式修改入口。动态阶段的目标接口 `create_engineer_action` 尚未实现；它将返回互斥的 `NeedContext | ProduceChanges | CannotProceed`，并复用同一文件变更执行 Module。
+`create_change_brief / create_requirement_delta / revise_architecture_spec / revise_architecture_design / create_source_file_change_set` 已接入 Mock 与 Ollama/DeepSeek Provider。`create_source_file_change_set` 返回静态 Context 下的受控文件最终内容与 AppSpec 元数据 Delta，Runtime 负责隔离物化、候选重建和本地 Diff。`revise_app_spec` 只保留历史兼容，不再是已有 Project 的正式修改入口；旧 SourcePatch Contract 只用于历史 Artifact 展示。动态阶段的目标接口 `create_engineer_action` 尚未实现；它将返回互斥的 `NeedContext | ProduceChanges | CannotProceed`，并复用同一文件变更执行 Module。
 
 当前 Project Lead 输出 answer、clarify 或带 `change_summary` 的 propose_change；批准后 PM 再生成完整 ChangeBrief。Project 对话已具备同步可用纵切，但尚未达到下节定义的异步 ConversationJob、租约恢复和消息幂等语义。
 
@@ -827,18 +827,17 @@ error_code / trace_id
 
 ## 17. 实施状态与后续顺序
 
-已完成 ProjectMessage、ProjectLeadDecision、Project Context 组装与 hash、answer/clarify 无 Run、pending change proposal、独立“修改代码”按钮、批准后建 Run/占写锁、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、基于旧版完整 ArchitectureDesign 的同步修订、BaseSourceSnapshot、`MAX_SOURCE_CHARS` 确定性静态源码装箱、SourceContext Artifact、Project 单写占用、最终基线检查和 `ai_edit` 版本，以及问答、澄清、批准幂等、旧提案失效、并发、失败和双用户测试。raw SourcePatchSet、隔离 `git apply` 与 Runtime 重建链虽已实现，但因 [Review 29](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 不再作为目标基线；需迁移为 SourceFileChangeSet 和隔离文件物化。
+已完成 ProjectMessage、ProjectLeadDecision、Project Context 组装与 hash、answer/clarify 无 Run、pending change proposal、独立“修改代码”按钮、批准后建 Run/占写锁、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、基于旧版完整 ArchitectureDesign 的同步修订、BaseSourceSnapshot、`MAX_SOURCE_CHARS` 确定性静态源码装箱、SourceContext Artifact、`SourceFileChangeSet`、隔离文件物化、Runtime 真实 SourceDiff、Project 单写占用、最终基线检查和 `ai_edit` 版本，以及问答、澄清、批准幂等、旧提案失效、并发、失败和双用户测试。真实 Provider 与 Railway 验收仍未完成。
 
 后续按以下顺序完成：
 
 1. **[异步可靠性]** ConversationJob、lease、重启恢复和消息 idempotency key。
 2. **[通用授权]** 将专用 change proposal 迁移到通用 Approval subject，并补 reject/cancel、风险对象和批准前完整 ChangeBrief。
-3. **[文件变更 Contract 迁移]** 先按[静态源码 Context 与受控文件变更执行](./10-[Agent][TODO]-静态源码Context与Patch执行.md)把 raw SourcePatchSet 替换为 SourceFileChangeSet、隔离文件物化和 Runtime 本地 Diff。
-4. **[动态 Context 与有界修正]** 再按[受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)扩展 BaseSourceManifest、RepositoryMap、EngineerAction、ContextReceipt、CandidateRevision、ChangeAttempt、增量/累计 Diff 和 RepairContext；复用新的文件变更 Module，不回退 raw diff 或完整 AppSpec。
-5. **[风险确认]** impact/risk Contract、范围与破坏性 Diff 判断、提交前 Approval。
-6. **[结果证据]** 独立 Diff/验收结果卡片和候选 hash。
-7. **[提交恢复]** VersionMaterialization，收窄 Git commit 成功而数据库事务未完成的窗口。
-8. **[接入与部署]** GitHub/本地目录首次导入，以及 Railway 真实 Provider、进程重启和 Volume 验收。
+3. **[动态 Context 与有界修正]** 按[受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)扩展 BaseSourceManifest、RepositoryMap、EngineerAction、ContextReceipt、CandidateRevision、ChangeAttempt、增量/累计 Diff 和 RepairContext；复用已经实现的文件变更 Module，不回退 raw diff 或完整 AppSpec。
+4. **[风险确认]** impact/risk Contract、范围与破坏性 Diff 判断、提交前 Approval。
+5. **[结果证据]** 独立 Diff/验收结果卡片和候选 hash。
+6. **[提交恢复]** VersionMaterialization，收窄 Git commit 成功而数据库事务未完成的窗口。
+7. **[接入与部署]** GitHub/本地目录首次导入，以及 Railway 真实 Provider、进程重启和 Volume 验收。
 
 不能先做一个只把 follow-up 拼进原 Prompt 的按钮再补数据模型。那样表面上有“继续对话”，但无法满足基线版本、代码归属、Diff、恢复和并发正确性。
 

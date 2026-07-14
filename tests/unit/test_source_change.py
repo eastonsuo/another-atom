@@ -1,4 +1,3 @@
-from difflib import unified_diff
 from hashlib import sha256
 
 import pytest
@@ -9,18 +8,18 @@ from another_atom.contracts.schemas import (
     EngineerOutput,
     Mode,
     ProductSpec,
+    SourceFileChange,
     SourceFileDraft,
-    SourcePatchOperation,
     VersionSource,
 )
 from another_atom.repository.service import (
-    SourcePatchError,
-    apply_source_patch_set,
+    SourceChangeError,
     build_source_context,
     build_source_snapshot,
     calculate_source_diff_from_files,
     commit_version,
     initialize_repository,
+    materialize_source_file_change_set,
 )
 from another_atom.runtime.artifacts import (
     create_architecture_design,
@@ -98,7 +97,7 @@ def _prepared_change(tmp_path, monkeypatch):
     )
 
 
-def test_static_source_patch_round_trip_rebuilds_runtime_contract(
+def test_static_source_change_round_trip_rebuilds_runtime_contract(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -119,7 +118,7 @@ def test_static_source_patch_round_trip_rebuilds_runtime_contract(
         runtime_managed_files=["app-spec.json"],
     )
 
-    patch_set = provider.create_source_patch_set(
+    change_set = provider.create_source_file_change_set(
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -131,10 +130,10 @@ def test_static_source_patch_round_trip_rebuilds_runtime_contract(
         requirements,
         app_spec,
     )
-    candidate_app, candidate_files, report = apply_source_patch_set(
+    candidate_app, candidate_files, report = materialize_source_file_change_set(
         snapshot,
         context,
-        patch_set,
+        change_set,
         app_spec,
         architecture,
     )
@@ -143,18 +142,22 @@ def test_static_source_patch_round_trip_rebuilds_runtime_contract(
     )
     source_diff = calculate_source_diff_from_files(snapshot, candidate_files)
 
-    assert {item.path for item in patch_set.patches} == {"index.html"}
-    assert all(item.path != "app-spec.json" for item in patch_set.patches)
+    assert {item.path for item in change_set.changes} == {"index.html"}
+    assert all(item.path != "app-spec.json" for item in change_set.changes)
+    assert "unified_diff" not in change_set.model_dump_json()
     assert candidate_app.hero_title == "夜间扫雷"
     assert "夜间扫雷" in candidate_files["index.html"]
     assert '"hero_title": "夜间扫雷"' in candidate_files["app-spec.json"]
     assert report.status == "passed"
+    assert candidate_files["tests/app.test.js"] == next(
+        item.content for item in snapshot.files if item.path == "tests/app.test.js"
+    )
     assert source_bundle.manifest_hash.startswith("sha256:")
     assert {"app-spec.json", "index.html"} <= set(source_diff.changed_files)
     get_settings.cache_clear()
 
 
-def test_static_source_patch_cannot_modify_omitted_baseline_file(
+def test_static_source_change_cannot_modify_omitted_baseline_file(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -176,7 +179,7 @@ def test_static_source_patch_cannot_modify_omitted_baseline_file(
         selected_files=["styles.css"],
         runtime_managed_files=["app-spec.json"],
     )
-    patch_set = provider.create_source_patch_set(
+    change_set = provider.create_source_file_change_set(
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -189,14 +192,16 @@ def test_static_source_patch_cannot_modify_omitted_baseline_file(
         app_spec,
     )
 
-    with pytest.raises(SourcePatchError) as raised:
-        apply_source_patch_set(snapshot, context, patch_set, app_spec, architecture)
+    with pytest.raises(SourceChangeError) as raised:
+        materialize_source_file_change_set(
+            snapshot, context, change_set, app_spec, architecture
+        )
 
     assert raised.value.code == "CONTEXT_INSUFFICIENT"
     get_settings.cache_clear()
 
 
-def test_static_source_patch_rejects_before_hash_mismatch(
+def test_static_source_change_rejects_before_hash_mismatch(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -216,7 +221,7 @@ def test_static_source_patch_rejects_before_hash_mismatch(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    patch_set = provider.create_source_patch_set(
+    change_set = provider.create_source_file_change_set(
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -228,11 +233,11 @@ def test_static_source_patch_rejects_before_hash_mismatch(
         requirements,
         app_spec,
     )
-    first = patch_set.patches[0]
-    patch_set = patch_set.model_copy(
+    first = change_set.changes[0]
+    change_set = change_set.model_copy(
         update={
-            "patches": [
-                SourcePatchOperation(
+            "changes": [
+                SourceFileChange(
                     **first.model_dump(mode="python", exclude={"before_hash"}),
                     before_hash="0" * 64,
                 )
@@ -240,85 +245,16 @@ def test_static_source_patch_rejects_before_hash_mismatch(
         }
     )
 
-    with pytest.raises(SourcePatchError) as raised:
-        apply_source_patch_set(snapshot, context, patch_set, app_spec, architecture)
+    with pytest.raises(SourceChangeError) as raised:
+        materialize_source_file_change_set(
+            snapshot, context, change_set, app_spec, architecture
+        )
 
-    assert raised.value.code == "PATCH_HASH_MISMATCH"
+    assert raised.value.code == "SOURCE_CHANGE_HASH_MISMATCH"
     get_settings.cache_clear()
 
 
-@pytest.mark.parametrize(
-    ("path", "operation", "before_hash", "old_header", "new_header"),
-    [
-        (
-            "app-spec.json",
-            "modify",
-            "0" * 64,
-            "a/app-spec.json",
-            "b/app-spec.json",
-        ),
-        (".git/hooks/evil.py", "add", None, "/dev/null", "b/.git/hooks/evil.py"),
-    ],
-)
-def test_static_source_patch_rejects_runtime_managed_and_git_paths(
-    tmp_path,
-    monkeypatch,
-    path,
-    operation,
-    before_hash,
-    old_header,
-    new_header,
-) -> None:
-    (
-        provider,
-        blueprint,
-        architecture,
-        architecture_design,
-        app_spec,
-        product_spec,
-        snapshot,
-        brief,
-        requirements,
-    ) = _prepared_change(tmp_path, monkeypatch)
-    context = build_source_context(
-        snapshot,
-        brief.original_request,
-        120_000,
-        runtime_managed_files=["app-spec.json"],
-    )
-    patch_set = provider.create_source_patch_set(
-        "33333333-3333-3333-3333-333333333333",
-        snapshot,
-        context,
-        product_spec,
-        blueprint,
-        architecture_design,
-        architecture,
-        brief,
-        requirements,
-        app_spec,
-    )
-    protected_patch = SourcePatchOperation(
-        path=path,
-        operation=operation,
-        before_hash=before_hash,
-        unified_diff=(
-            f"--- {old_header}\n"
-            f"+++ {new_header}\n"
-            "@@ -0,0 +1 @@\n"
-            "+print('forbidden')\n"
-        ),
-    )
-    patch_set = patch_set.model_copy(update={"patches": [protected_patch]})
-
-    with pytest.raises(SourcePatchError) as raised:
-        apply_source_patch_set(snapshot, context, patch_set, app_spec, architecture)
-
-    assert raised.value.code == "PATCH_PATH_FORBIDDEN"
-    get_settings.cache_clear()
-
-
-def test_static_source_patch_add_delete_survive_version_commit(
+def test_static_source_change_rejects_output_over_configured_limit(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -338,7 +274,111 @@ def test_static_source_patch_add_delete_survive_version_commit(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    patch_set = provider.create_source_patch_set(
+    change_set = provider.create_source_file_change_set(
+        "33333333-3333-3333-3333-333333333333",
+        snapshot,
+        context,
+        product_spec,
+        blueprint,
+        architecture_design,
+        architecture,
+        brief,
+        requirements,
+        app_spec,
+    )
+    monkeypatch.setenv("MAX_SOURCE_CHANGE_BYTES", "100")
+    get_settings.cache_clear()
+
+    with pytest.raises(SourceChangeError) as raised:
+        materialize_source_file_change_set(
+            snapshot, context, change_set, app_spec, architecture
+        )
+
+    assert raised.value.code == "SOURCE_CHANGE_OUTPUT_TOO_LARGE"
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("path", "operation", "before_hash"),
+    [
+        ("app-spec.json", "modify", "0" * 64),
+        (".git/hooks/evil.py", "add", None),
+    ],
+)
+def test_static_source_change_rejects_runtime_managed_and_git_paths(
+    tmp_path,
+    monkeypatch,
+    path,
+    operation,
+    before_hash,
+) -> None:
+    (
+        provider,
+        blueprint,
+        architecture,
+        architecture_design,
+        app_spec,
+        product_spec,
+        snapshot,
+        brief,
+        requirements,
+    ) = _prepared_change(tmp_path, monkeypatch)
+    context = build_source_context(
+        snapshot,
+        brief.original_request,
+        120_000,
+        runtime_managed_files=["app-spec.json"],
+    )
+    change_set = provider.create_source_file_change_set(
+        "33333333-3333-3333-3333-333333333333",
+        snapshot,
+        context,
+        product_spec,
+        blueprint,
+        architecture_design,
+        architecture,
+        brief,
+        requirements,
+        app_spec,
+    )
+    protected_change = SourceFileChange(
+        path=path,
+        operation=operation,
+        before_hash=before_hash,
+        replacement_content="print('forbidden')\n",
+    )
+    change_set = change_set.model_copy(update={"changes": [protected_change]})
+
+    with pytest.raises(SourceChangeError) as raised:
+        materialize_source_file_change_set(
+            snapshot, context, change_set, app_spec, architecture
+        )
+
+    assert raised.value.code == "SOURCE_CHANGE_PATH_FORBIDDEN"
+    get_settings.cache_clear()
+
+
+def test_static_source_change_add_delete_survive_version_commit(
+    tmp_path, monkeypatch
+) -> None:
+    (
+        provider,
+        blueprint,
+        architecture,
+        architecture_design,
+        app_spec,
+        product_spec,
+        snapshot,
+        brief,
+        requirements,
+    ) = _prepared_change(tmp_path, monkeypatch)
+    context = build_source_context(
+        snapshot,
+        brief.original_request,
+        120_000,
+        runtime_managed_files=["app-spec.json"],
+    )
+    change_set = provider.create_source_file_change_set(
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -356,37 +396,22 @@ def test_static_source_patch_add_delete_survive_version_commit(
         "import assert from 'node:assert/strict';\n"
         "test('replacement exists', () => assert.ok(true));\n"
     )
-    delete_test = SourcePatchOperation(
+    delete_test = SourceFileChange(
         path=old_test.path,
         operation="delete",
         before_hash=old_test.sha256,
-        unified_diff="".join(
-            unified_diff(
-                old_test.content.splitlines(keepends=True),
-                [],
-                fromfile=f"a/{old_test.path}",
-                tofile="/dev/null",
-            )
-        ),
     )
-    add_test = SourcePatchOperation(
+    add_test = SourceFileChange(
         path="tests/replacement.test.js",
         operation="add",
-        unified_diff="".join(
-            unified_diff(
-                [],
-                new_test_content.splitlines(keepends=True),
-                fromfile="/dev/null",
-                tofile="b/tests/replacement.test.js",
-            )
-        ),
+        replacement_content=new_test_content,
     )
-    patch_set = patch_set.model_copy(
-        update={"patches": [*patch_set.patches, delete_test, add_test]}
+    change_set = change_set.model_copy(
+        update={"changes": [*change_set.changes, delete_test, add_test]}
     )
 
-    candidate_app, candidate_files, _ = apply_source_patch_set(
-        snapshot, context, patch_set, app_spec, architecture
+    candidate_app, candidate_files, _ = materialize_source_file_change_set(
+        snapshot, context, change_set, app_spec, architecture
     )
     source_bundle = create_source_bundle_from_files(
         candidate_files, blueprint.product_type

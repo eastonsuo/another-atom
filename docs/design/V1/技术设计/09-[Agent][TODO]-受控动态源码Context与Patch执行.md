@@ -2,7 +2,7 @@
 
 [toc]
 
-- **文档状态：** V1 目标技术设计；当前 raw SourcePatchSet 路径需先迁移为 `SourceFileChangeSet`，动态读取、候选 revision、Repair ChangeSet、恢复与 Railway 验收尚未实现
+- **文档状态：** V1 目标技术设计；静态 `SourceFileChangeSet` 与隔离文件物化已本地实现，动态读取、候选 revision、Repair ChangeSet、恢复与 Railway 验收尚未实现
 - **更新日期：** 2026-07-15
 - **功能范围：** 已有 Project 的 Engineer 源码读取、受控文件变更、候选物化、验证与恢复
 - **上位设计：** [基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
@@ -19,7 +19,7 @@
 
 本文把目标确定为一条有边界的完整闭环：模型先读取初始源码，信息不足时结构化申请补充；信息足够后返回小范围 `SourceFileChangeSet`；Runtime 在隔离候选工作区物化声明文件并立即执行构建、单元测试和校验；属于代码问题且仍有预算时，把结构化错误和当前候选源码重新交给 Engineer 生成 Repair ChangeSet。所有候选修正通过后才创建 ProjectVersion 和 Git commit，失败或达到上限时丢弃候选，不影响当前版本。
 
-“静态源码 Context → raw Patch → 隔离 apply”第一阶段虽然已经完成本地实现，但 [Review 29](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 证明其 Engineer Interface 不再适合作为终态基础。迁移顺序调整为：先用 `SourceFileChangeSet` 和 Runtime 文件物化替换模型 raw diff，再补齐候选 revision、ChangeAttempt、ContextReceipt 和验证反馈。动态读取与有界修正复用新的文件变更 Module，不复用 `git apply` 链。
+“静态源码 Context → raw Patch → 隔离 apply”第一阶段已被 [Review 29](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 证明不适合作为终态基础。当前已完成 `SourceFileChangeSet` 和 Runtime 文件物化迁移；下一步补齐候选 revision、ChangeAttempt、ContextReceipt 和验证反馈。动态读取与有界修正复用新的文件变更 Module，不复用 `git apply` 链。
 
 ## 摘要
 
@@ -115,9 +115,9 @@ Engineer（工程师智能体）-> EngineerAction（工程师动作）
 
 ### 1.1 2026-07-15 实现状态校正
 
-静态 raw Patch 第一阶段已在本地完成：修改生产路径调用 `create_source_patch_set(...) -> SourcePatchSet`，Runtime 执行 `git apply --check` 与隔离 apply。但该实现已经被真实 Provider 的 `corrupt patch` 样本否定为目标基线。新目标是 `create_source_file_change_set(...) -> SourceFileChangeSet`，Runtime 校验并物化声明文件，再从真实候选文件重建 AppSpec、SourceBundle 和 SourceDiff。旧 Artifact 只读兼容，任何新路径都不回退完整 AppSpec。
+静态文件变更纵切已在本地完成：修改生产路径调用 `create_source_file_change_set(...) -> SourceFileChangeSet`，Runtime 校验并物化声明文件，再从真实候选文件重建 AppSpec、SourceBundle 和 SourceDiff。旧 Patch Artifact/Event 只读兼容，检测到旧 Patch Artifact 的未完成 Run 时明确拒绝跨协议恢复；任何新路径都不回退 raw diff 或完整 AppSpec。
 
-本节的文件变更迁移、动态与修正目标均未完成：当前没有 `SourceFileChangeSet`、`EngineerAction`、`NeedContext`、RepositoryMap、Context Exchange、ContextReceipt、CandidateRevision 或 Repair ChangeSet。因此当前只能表述为“raw Patch 路径已实现但可靠性不达标”，不能表述为“受控文件变更、动态 Context 或有界修正已实现”。
+本节的静态文件变更迁移已完成；`EngineerAction`、`NeedContext`、RepositoryMap、Context Exchange、ContextReceipt、CandidateRevision 和 Repair ChangeSet 尚未实现。因此当前可以表述为“静态受控文件变更已本地实现”，不能表述为“动态 Context 或有界修正已实现”。
 
 这里的循环只发生在固定 Engineer（工程师智能体）阶段内部，包括受控读取、生成 Patch、接收确定性验证反馈和生成 Repair Patch，不改变 V1 固定角色顺序。Lead（团队负责人智能体）不能借此选择角色，Engineer 不能调用其他 Agent（智能体），Runtime 也不因为模型请求而开放任意 Tool（工具）。产品经理、架构师、工程师和 Runtime 仍按既定顺序执行；TaskGraph（任务图）、角色子集、并行和跨角色自主返工继续属于 V2。
 
@@ -154,7 +154,7 @@ Engineer（工程师智能体）-> EngineerAction（工程师动作）
 - ChangeSet 即使成功物化，也可能产生语法、构建、单元测试或验收失败；
 - 如果验证错误不能回到 Engineer，系统只能终止，不能利用已经取得的确定性反馈修正候选。
 
-目标实现将静态 `SourceContext` 降级为迁移兼容对象，并以 `BaseSourceManifest + CandidateRevision + RepositoryMap + SourceContextReceipt + ChangeAttempt` 作为长期 Contract。下一步先用 `SourceFileChangeSet` 替换 raw `SourcePatchSet`，再用 `EngineerAction` 接入动态读取，并把单个 ChangeSet Artifact 扩展为可恢复的候选 revision 与 attempt 链。
+目标实现将静态 `SourceContext` 降级为迁移兼容对象，并以 `BaseSourceManifest + CandidateRevision + RepositoryMap + SourceContextReceipt + ChangeAttempt` 作为长期 Contract。静态 `SourceFileChangeSet` 已替换 raw `SourcePatchSet`；下一步用 `EngineerAction` 接入动态读取，并把单个 ChangeSet Artifact 扩展为可恢复的候选 revision 与 attempt 链。
 
 ## 3. 范围与明确不做
 
@@ -1140,7 +1140,7 @@ error_code / trace_id
 
 迁移不能同时改完所有路径后一次切换。推荐顺序：
 
-raw Patch 第一阶段曾按[静态源码 Context 与受控文件变更执行](./10-[Agent][TODO]-静态源码Context与Patch执行.md)完成本地代码与自动化测试，但真实 Provider 已出现与业务语义无关的 hunk 语法失败。动态 Context 实现前，必须先完成 `SourceFileChangeSet -> 隔离文件物化 -> 真实 Diff -> Build/Test/Validation` 迁移。
+raw Patch 第一阶段曾出现与业务语义无关的 hunk 语法失败。当前已按[静态源码 Context 与受控文件变更执行](./10-[Agent][TODO]-静态源码Context与Patch执行.md)完成 `SourceFileChangeSet -> 隔离文件物化 -> 真实 Diff -> Build/Test/Validation` 本地迁移，动态 Context 从这一文件变更 Module 继续扩展。
 
 第一阶段不能成为另一套长期协议。它在迁移时必须被归入终态 Contract 的受限子集：
 
@@ -1152,7 +1152,7 @@ raw Patch 第一阶段曾按[静态源码 Context 与受控文件变更执行](.
 
 后续顺序：
 
-1. **[文件变更 Contract]** 先增加 SourceFileChangeSet、SourceFileChange、隔离文件物化和 Runtime 本地 Diff，停止新 Run 生成 raw SourcePatchSet。
+1. **[已完成｜文件变更 Contract]** 已增加 SourceFileChangeSet、SourceFileChange、隔离文件物化和 Runtime 本地 Diff，新 Run 停止生成 raw SourcePatchSet。
 2. **[终态 Contract 骨架]** 增加 BaseSourceManifest、CandidateRevision、EngineerAction、SourceReadRequest/Result、SourceContextReceipt、扩展后的 SourceFileChangeSet、SourceChangeAttempt 和两类 SourceDiff；保留现有 SourceContext 只读兼容。
 3. **[静态 ChangeSet 对齐]** 将当前 `source_context_hash` 迁移为 revision 0 ContextReceipt，并把现有单次文件物化映射为 ChangeAttempt 1 和 CandidateRevision 1。
 4. **[初始动态 Context]** 增加 RepositoryMap，把 `build_source_context()` 改造成 InitialSourceContext builder：小仓库全量，大仓库不再按路径填充无关文件。

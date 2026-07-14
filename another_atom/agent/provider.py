@@ -4,7 +4,6 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from difflib import unified_diff
 from typing import Protocol, TypeVar
 from uuid import uuid4
 
@@ -39,9 +38,9 @@ from another_atom.contracts.schemas import (
     ReviewIssue,
     ReviewReport,
     SourceContext,
+    SourceFileChange,
+    SourceFileChangeSet,
     SourceFileDraft,
-    SourcePatchOperation,
-    SourcePatchSet,
     SupportLevel,
     ValidationReport,
 )
@@ -231,7 +230,7 @@ class LLMProvider(Protocol):
         source_context: SourceContext,
     ) -> AppSpec: ...
 
-    def create_source_patch_set(
+    def create_source_file_change_set(
         self,
         run_id: str,
         source_snapshot: BaseSourceSnapshot,
@@ -243,7 +242,7 @@ class LLMProvider(Protocol):
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
-    ) -> SourcePatchSet: ...
+    ) -> SourceFileChangeSet: ...
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
 
@@ -740,7 +739,7 @@ class MockLLMProvider:
             }
         )
 
-    def create_source_patch_set(
+    def create_source_file_change_set(
         self,
         run_id: str,
         source_snapshot: BaseSourceSnapshot,
@@ -752,7 +751,7 @@ class MockLLMProvider:
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
-    ) -> SourcePatchSet:
+    ) -> SourceFileChangeSet:
         self._record_request()
         self._raise_if_requested(change_brief.original_request, "engineer-change")
         candidate = self._revised_app_spec_candidate(
@@ -762,24 +761,18 @@ class MockLLMProvider:
         )
         before_files = {item.path: item for item in source_snapshot.files}
         after_files = render_version_files(candidate)
-        patches: list[SourcePatchOperation] = []
+        changes: list[SourceFileChange] = []
         for path in ("index.html", "styles.css", "app.js"):
             before = before_files.get(path)
             after = after_files.get(path)
             if before is None or after is None or before.content == after:
                 continue
-            patch_lines = unified_diff(
-                before.content.splitlines(keepends=True),
-                after.splitlines(keepends=True),
-                fromfile=f"a/{path}",
-                tofile=f"b/{path}",
-            )
-            patches.append(
-                SourcePatchOperation(
+            changes.append(
+                SourceFileChange(
                     path=path,
                     operation="modify",
                     before_hash=before.sha256,
-                    unified_diff="".join(patch_lines),
+                    replacement_content=after,
                 )
             )
         metadata_fields = (
@@ -795,7 +788,7 @@ class MockLLMProvider:
             for field in metadata_fields
             if getattr(candidate, field) != getattr(app_spec, field)
         }
-        return SourcePatchSet(
+        return SourceFileChangeSet(
             project_id=source_snapshot.project_id,
             run_id=run_id,
             base_version_id=source_snapshot.base_version_id,
@@ -804,7 +797,7 @@ class MockLLMProvider:
             source_context_hash=calculate_source_context_hash(source_context),
             summary=requirement_delta.change_summary,
             app_spec_delta=AppSpecDelta(**delta),
-            patches=patches,
+            changes=changes,
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
@@ -1626,7 +1619,7 @@ class OllamaCloudProvider:
             stream=True,
         )
 
-    def create_source_patch_set(
+    def create_source_file_change_set(
         self,
         run_id: str,
         source_snapshot: BaseSourceSnapshot,
@@ -1638,21 +1631,22 @@ class OllamaCloudProvider:
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
-    ) -> SourcePatchSet:
+    ) -> SourceFileChangeSet:
         app_spec_metadata = app_spec.model_dump(
             mode="json", exclude={"html", "css", "javascript"}
         )
         return self._structured_chat(
-            SourcePatchSet,
+            SourceFileChangeSet,
             "Engineer（工程师）",
             (
-                "基于固定基线和 supplied_source_context 返回一份结构化 SourcePatchSet，"
-                "不要返回完整 AppSpec 或完整候选文件。每个 patches 项只修改一个文件，"
-                "unified_diff 必须使用标准 a/path 与 b/path header，并与 operation、path 和 "
-                "before_hash 一致。只能 modify/delete supplied_source_context.included_files 中"
-                "完整提供的文件；不得猜测 omitted_files。禁止修改 app-spec.json、Runtime 管理的 "
-                "index.html 文档 shell 和 app.js network guard。只在 app_spec_delta 中返回确实变化的"
-                "非源码元数据；代码和颜色不得放入 Delta。保留需求未改变的源码、交互和测试。"
+                "基于固定基线和 supplied_source_context 返回一份结构化 SourceFileChangeSet，"
+                "不要返回完整 AppSpec、整个代码库或 unified diff。changes 中只列本轮真正变化的"
+                "文件；modify/add 必须在 replacement_content 中返回该文件的完整最终内容，delete "
+                "只返回 path、operation 和 before_hash。只能 modify/delete supplied_source_context."
+                "included_files 中完整提供的文件；不得猜测 omitted_files。禁止修改 app-spec.json、"
+                "Runtime 管理的 index.html 文档 shell 和 app.js network guard。只在 app_spec_delta "
+                "中返回确实变化的非源码元数据；代码和颜色不得放入 Delta。保留需求未改变的源码、"
+                "交互和测试，不要复制未修改文件。"
                 "公共 HTTPS API 仅在已确认需求要求时允许；禁止 localhost、回环地址、动态 import、"
                 "eval、包安装、后端和 Shell。所有 Project、Run、版本、commit、Manifest 与 Context "
                 "绑定字段必须原样复制 supplied_binding。"

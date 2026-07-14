@@ -127,3 +127,11 @@ Runtime 隐藏以下实现：
 5. 超过文件数、单文件大小或 Provider 输出上限时返回稳定错误，不静默裁剪，不回退到 raw diff 或完整 AppSpec。
 6. Build、Unit Test、Validator 未全部通过时不创建 ProjectVersion 和 Git commit。
 7. Railway 真实 Provider 至少完成一次 modify、一次 add/delete 和一次失败不污染基线的验收。
+
+## Update 2026-07-15（静态文件变更链已本地实现）
+
+- 新修改 Run 已切换到 `create_source_file_change_set() -> SourceFileChangeSet`。Mock 与 Ollama/DeepSeek Provider 不再生成 hunk、行号或 unified diff；modify/add 返回声明文件的完整最终内容，delete 只返回路径和基线 hash。
+- Repository Service 已删除新链路的 Patch header/hunk 校验和 `git apply`，改为在临时隔离目录校验绑定、Context、路径、`before_hash`、内容规则和大小后确定性写入、添加或删除文件；未声明文件保持不变，`SourceDiff` 仍由真实候选文件本地计算。
+- Orchestrator、Artifact、事件、文件面板和 Studio 已切换到 `source_file_change_set`、`source_change_apply_report` 与 `source.change_*`。旧 Patch Artifact/Event 保留只读展示；未完成旧 Patch Run 不跨协议续接。
+- 自动化证据：`tests/unit/test_source_change.py` 覆盖 modify、add/delete、Context 缺失、hash 冲突、受保护路径、输出超限、未声明文件不变和最终版本提交；Project Chat 集成测试覆盖成功修改及失败不创建版本。完整后端测试为 `157 passed`；`.venv/bin/ruff check another_atom tests` 通过；Studio `npm run lint` 与 `npm run build` 通过，Vite 仅保留既有大 chunk 警告。
+- 本 Review 继续保留在`待办`：尚未用真实 Provider 在 Railway 完成 modify、add/delete、失败不污染基线、Debug Log 导出和 Worker 重启恢复验收。

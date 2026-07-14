@@ -88,6 +88,8 @@ class ArtifactType(StrEnum):
     SOURCE_CONTEXT = "source_context"
     SOURCE_PATCH_SET = "source_patch_set"
     SOURCE_PATCH_APPLY_REPORT = "source_patch_apply_report"
+    SOURCE_FILE_CHANGE_SET = "source_file_change_set"
+    SOURCE_CHANGE_APPLY_REPORT = "source_change_apply_report"
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     PRODUCT_SPEC = "product_spec"
@@ -394,6 +396,73 @@ class AppSpecDelta(BaseModel):
     products: list[ProductItem] | None = Field(default=None, max_length=12)
 
 
+class SourceFileChange(BaseModel):
+    path: str = Field(min_length=1, max_length=240)
+    operation: Literal["modify", "add", "delete"]
+    before_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    replacement_content: str | None = Field(default=None, max_length=120_000)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_normalized_relative_posix(cls, value: str) -> str:
+        normalized = value.strip()
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or "\\" in normalized
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("Source change path must be a normalized relative POSIX path")
+        return normalized
+
+    @model_validator(mode="after")
+    def content_and_hash_match_operation(self) -> SourceFileChange:
+        if self.operation == "modify":
+            if self.before_hash is None or self.replacement_content is None:
+                raise ValueError("modify changes require before_hash and replacement_content")
+        elif self.operation == "add":
+            if self.before_hash is not None or self.replacement_content is None:
+                raise ValueError("add changes require replacement_content without before_hash")
+        elif self.before_hash is None or self.replacement_content is not None:
+            raise ValueError("delete changes require before_hash without replacement_content")
+        return self
+
+
+class SourceFileChangeSet(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: str = Field(min_length=1, max_length=80)
+    run_id: str = Field(min_length=1, max_length=80)
+    base_version_id: str = Field(min_length=1, max_length=80)
+    base_git_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    summary: str = Field(min_length=1, max_length=800)
+    app_spec_delta: AppSpecDelta = Field(default_factory=AppSpecDelta)
+    changes: list[SourceFileChange] = Field(min_length=1, max_length=20)
+
+    @field_validator("changes")
+    @classmethod
+    def change_paths_are_unique(
+        cls, value: list[SourceFileChange]
+    ) -> list[SourceFileChange]:
+        paths = [item.path for item in value]
+        if len(paths) != len(set(paths)):
+            raise ValueError("SourceFileChangeSet paths must be unique")
+        return value
+
+
+class SourceChangeApplyReport(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: Literal["passed"] = "passed"
+    source_context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    materialized_files: list[str] = Field(min_length=1, max_length=20)
+    candidate_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checks: list[str] = Field(min_length=1, max_length=20)
+
+
+# Read-only compatibility for Artifact payloads created before
+# SourceFileChangeSet replaced model-generated unified diffs.
 class SourcePatchOperation(BaseModel):
     path: str = Field(min_length=1, max_length=240)
     operation: Literal["modify", "add", "delete"]

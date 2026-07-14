@@ -2,7 +2,7 @@
 
 [toc]
 
-- **文档状态：** V1 目标技术设计；当前代码仍使用模型生成 `SourcePatchSet` 和 `git apply`，需按本文迁移后重新完成本地与 Railway 验收
+- **文档状态：** V1 本地实现基线；`SourceFileChangeSet`、隔离文件物化、Runtime 本地 Diff 与自动化测试已完成，真实 Provider 和 Railway 验收仍待完成
 - **功能范围：** 已有 Project 修改时的一次性源码 Context、受控文件变更、隔离候选、真实 Diff 与现有执行门禁
 - **上位设计：** [基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
 - **后续终态：** [受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)
@@ -150,7 +150,7 @@ Runtime 在候选物化后：
 
 ## 6. Provider Interface
 
-当前 `create_source_patch_set(...)` 迁移为：
+当前生产路径使用：
 
 ```text
 create_source_file_change_set(
@@ -268,15 +268,15 @@ SourceDiff
 
 ## 12. 迁移计划
 
-1. 新增 `SourceFileChangeSet / SourceFileChange / SourceChangeApplyReport` Contract 和单元测试；
-2. Mock、Ollama、DeepSeek Provider 改为 `create_source_file_change_set()`；
-3. Repository Service 增加确定性文件物化 Module，以接口级测试覆盖 add/modify/delete、hash、权限、超限和未声明文件不变；
-4. Orchestrator 切换 Artifact、事件、恢复检查点和错误语义；
-5. 删除新 Run 对 `create_source_patch_set()`、hunk/header 校验和 `git apply` 的依赖；
-6. 保留旧 Artifact/Event 的只读展示，不把旧 Run 续接到新路径；
-7. 完整后端测试、Studio lint/build 和 Debug Log 导出通过；
-8. Railway 真实 Provider 完成 modify、add/delete、失败不污染基线和 Worker 重启恢复验收；
-9. 验收通过后更新 Review 29 和 Review 26，再决定是否归档。
+1. **已完成：** 新增 `SourceFileChangeSet / SourceFileChange / SourceChangeApplyReport` Contract 和单元测试；
+2. **已完成：** Mock、Ollama、DeepSeek Provider 改为 `create_source_file_change_set()`；
+3. **已完成：** Repository Service 增加确定性文件物化 Module，以接口级测试覆盖 add/modify/delete、hash、权限、超限和未声明文件不变；
+4. **已完成：** Orchestrator 切换 Artifact、事件、恢复检查点和错误语义；
+5. **已完成：** 新 Run 不再依赖 `create_source_patch_set()`、hunk/header 校验和 `git apply`；
+6. **已完成：** 旧 Artifact/Event 只读展示；检测到旧 Patch Artifact 的未完成 Run 时明确拒绝跨协议恢复；
+7. **已完成：** 完整后端测试、Studio lint/build 通过；
+8. **待办：** Debug Log 实际导出，以及 Railway 真实 Provider 的 modify、add/delete、失败不污染基线和 Worker 重启恢复验收；
+9. **待办：** 部署验收通过后更新 Review 29 和 Review 26，再决定是否归档。
 
 迁移期间可以用 feature flag 选择旧 Run 或新 Run 的创建路径，但同一 Run 不允许双写两类候选，不允许新路径失败后隐式回退 raw diff。
 

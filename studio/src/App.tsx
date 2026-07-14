@@ -372,6 +372,10 @@ const ZH: Record<string, string> = {
   "event.provider.contract_correction.started": "正在修正结构化输出",
   "event.provider.deadline.exceeded": "模型阶段已超过总时限",
   "event.agent.output.delta": "模型返回内容已更新",
+  "event.source.change_created": "源码文件变更已生成",
+  "event.source.change_check_started": "正在校验源码文件变更",
+  "event.source.change_applied": "源码文件变更已物化",
+  "event.source.change_failed": "源码文件变更失败",
   "event.alternative.regeneration_requested": "PM 草案重新生成",
   "event.product_spec.updated": "产品说明摘要已更新",
   "event.product_spec.regenerated": "产品说明已重新生成",
@@ -506,6 +510,36 @@ function eventMessage(language: Language, event: RunEvent): string {
   }
   if (event.type === "provider.deadline.exceeded") {
     return language === "zh" ? "本阶段已达到共享总时限。" : "This stage reached its shared deadline.";
+  }
+  if (event.type === "source.change_created") {
+    const files = Array.isArray(event.payload.change_files)
+      ? event.payload.change_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `工程师已返回绑定当前基线的受控文件变更：${detail}。`
+      : `The Engineer returned controlled file changes bound to the current baseline: ${detail}.`;
+  }
+  if (event.type === "source.change_check_started") {
+    const count = typeof event.payload.change_count === "number" ? event.payload.change_count : 0;
+    return language === "zh"
+      ? `Runtime 正在校验并物化 ${count} 个文件变更的路径、基线 hash 和完整内容。`
+      : `Runtime is validating and materializing paths, baseline hashes, and full content for ${count} file changes.`;
+  }
+  if (event.type === "source.change_applied") {
+    const files = Array.isArray(event.payload.materialized_files)
+      ? event.payload.materialized_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `受控文件变更已在隔离候选工作区物化：${detail}。正在根据真实候选源码继续校验。`
+      : `Controlled file changes were materialized in an isolated candidate workspace: ${detail}. Validation is continuing against the resulting source.`;
+  }
+  if (event.type === "source.change_failed") {
+    const errorCode = typeof event.payload.error_code === "string" ? event.payload.error_code : "SOURCE_CHANGE_FAILED";
+    return language === "zh"
+      ? `文件变更本地校验或物化失败（${errorCode}），未写入新的项目版本。`
+      : `Local file-change validation or materialization failed (${errorCode}); no new project version was written.`;
   }
   if (event.type === "source.patch_created") {
     const files = Array.isArray(event.payload.patch_files)

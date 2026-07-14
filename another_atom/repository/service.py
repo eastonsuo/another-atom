@@ -10,14 +10,14 @@ from pathlib import Path
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    AppSpecDelta,
     ArchitectureSpec,
     BaseSourceSnapshot,
     SourceBundle,
+    SourceChangeApplyReport,
     SourceContext,
     SourceDiff,
-    SourcePatchApplyReport,
-    SourcePatchOperation,
-    SourcePatchSet,
+    SourceFileChangeSet,
     SourceSnapshotFile,
     VersionSource,
 )
@@ -27,7 +27,7 @@ class RepositoryError(RuntimeError):
     pass
 
 
-class SourcePatchError(RepositoryError):
+class SourceChangeError(RepositoryError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
@@ -321,13 +321,13 @@ def calculate_source_diff_from_files(
     )
 
 
-def apply_source_patch_set(
+def materialize_source_file_change_set(
     snapshot: BaseSourceSnapshot,
     context: SourceContext,
-    patch_set: SourcePatchSet,
+    change_set: SourceFileChangeSet,
     base_app_spec: AppSpec,
     architecture_spec: ArchitectureSpec,
-) -> tuple[AppSpec, dict[str, str], SourcePatchApplyReport]:
+) -> tuple[AppSpec, dict[str, str], SourceChangeApplyReport]:
     context_hash = calculate_source_context_hash(context)
     expected_bindings = {
         "project_id": snapshot.project_id,
@@ -337,125 +337,199 @@ def apply_source_patch_set(
         "source_context_hash": context_hash,
     }
     actual_bindings = {
-        "project_id": patch_set.project_id,
-        "base_version_id": patch_set.base_version_id,
-        "base_git_commit": patch_set.base_git_commit,
-        "source_manifest_hash": patch_set.source_manifest_hash,
-        "source_context_hash": patch_set.source_context_hash,
+        "project_id": change_set.project_id,
+        "base_version_id": change_set.base_version_id,
+        "base_git_commit": change_set.base_git_commit,
+        "source_manifest_hash": change_set.source_manifest_hash,
+        "source_context_hash": change_set.source_context_hash,
     }
     if actual_bindings != expected_bindings:
-        raise SourcePatchError(
-            "PATCH_BASE_MISMATCH",
-            "SourcePatchSet does not match the fixed Project baseline or SourceContext",
+        raise SourceChangeError(
+            "SOURCE_CHANGE_BASE_MISMATCH",
+            "SourceFileChangeSet does not match the fixed Project baseline or SourceContext",
         )
 
     snapshot_files = {item.path: item for item in snapshot.files}
     included_files = {item.path: item for item in context.included_files}
     managed_files = set(context.runtime_managed_files) | {"app-spec.json"}
-    allowed_add_suffixes = CODE_SUFFIXES
     required_files = {"index.html", "styles.css", "app.js"}
-    patch_texts: list[str] = []
-    for patch in patch_set.patches:
-        path = patch.path
+    if not change_set.changes or len(change_set.changes) > 20:
+        raise SourceChangeError(
+            "SOURCE_CHANGE_CONTENT_INVALID",
+            "SourceFileChangeSet must contain between 1 and 20 changes",
+        )
+    change_paths = [item.path for item in change_set.changes]
+    if len(change_paths) != len(set(change_paths)):
+        raise SourceChangeError(
+            "SOURCE_CHANGE_CONTENT_INVALID",
+            "SourceFileChangeSet paths must be unique",
+        )
+    try:
+        serialized_size = len(change_set.model_dump_json().encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise SourceChangeError(
+            "SOURCE_CHANGE_CONTENT_INVALID",
+            "SourceFileChangeSet contains text that cannot be encoded as UTF-8",
+        ) from exc
+    if serialized_size > get_settings().max_source_change_bytes:
+        raise SourceChangeError(
+            "SOURCE_CHANGE_OUTPUT_TOO_LARGE",
+            "SourceFileChangeSet exceeds the configured output limit",
+        )
+    for change in change_set.changes:
+        path = change.path
+        if change.operation not in {"modify", "add", "delete"}:
+            raise SourceChangeError(
+                "SOURCE_CHANGE_CONTENT_INVALID",
+                f"Unsupported source change operation: {change.operation}",
+            )
+        path_parts = path.split("/")
+        if (
+            not path
+            or path.startswith("/")
+            or "\\" in path
+            or any(part in {"", ".", ".."} for part in path_parts)
+        ):
+            raise SourceChangeError(
+                "SOURCE_CHANGE_PATH_FORBIDDEN",
+                f"Source change path is not a normalized relative POSIX path: {path}",
+            )
+        if change.operation in {"modify", "add"}:
+            if change.replacement_content is None:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_CONTENT_INVALID",
+                    f"{change.operation} requires replacement_content: {path}",
+                )
+        elif change.replacement_content is not None:
+            raise SourceChangeError(
+                "SOURCE_CHANGE_CONTENT_INVALID",
+                f"delete cannot include replacement_content: {path}",
+            )
+        if change.operation in {"modify", "delete"}:
+            if change.before_hash is None:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_CONTENT_INVALID",
+                    f"{change.operation} requires before_hash: {path}",
+                )
+        elif change.before_hash is not None:
+            raise SourceChangeError(
+                "SOURCE_CHANGE_CONTENT_INVALID",
+                f"add cannot include before_hash: {path}",
+            )
         if (
             path in managed_files
             or path == ".git"
             or path.startswith(".git/")
             or path.startswith(".another-atom/")
         ):
-            raise SourcePatchError(
-                "PATCH_PATH_FORBIDDEN",
-                f"Runtime-managed file cannot be patched: {path}",
+            raise SourceChangeError(
+                "SOURCE_CHANGE_PATH_FORBIDDEN",
+                f"Runtime-managed file cannot be changed: {path}",
             )
-        if patch.operation in {"modify", "delete"}:
+        if change.operation in {"modify", "delete"}:
             source_file = snapshot_files.get(path)
             if source_file is None:
-                raise SourcePatchError(
-                    "PATCH_PATH_FORBIDDEN",
-                    f"Patch target does not exist in the fixed baseline: {path}",
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_PATH_FORBIDDEN",
+                    f"Source change target does not exist in the fixed baseline: {path}",
                 )
             if path not in included_files:
-                raise SourcePatchError(
+                raise SourceChangeError(
                     "CONTEXT_INSUFFICIENT",
-                    f"Patch target was not fully included in SourceContext: {path}",
+                    f"Source change target was not fully included in SourceContext: {path}",
                 )
-            if patch.before_hash != source_file.sha256:
-                raise SourcePatchError(
-                    "PATCH_HASH_MISMATCH",
-                    f"Patch before_hash does not match the fixed baseline: {path}",
+            if change.before_hash != source_file.sha256:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_HASH_MISMATCH",
+                    f"Source change before_hash does not match the fixed baseline: {path}",
                 )
-            if patch.operation == "delete" and path in required_files:
-                raise SourcePatchError(
-                    "PATCH_PATH_FORBIDDEN",
+            if change.operation == "delete" and path in required_files:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_PATH_FORBIDDEN",
                     f"Required web-static-v1 file cannot be deleted: {path}",
                 )
         else:
             if path in snapshot_files:
-                raise SourcePatchError(
-                    "PATCH_PATH_FORBIDDEN",
-                    f"Add patch target already exists in the fixed baseline: {path}",
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_PATH_FORBIDDEN",
+                    f"Added source change target already exists in the fixed baseline: {path}",
                 )
-            if Path(path).suffix.casefold() not in allowed_add_suffixes:
-                raise SourcePatchError(
-                    "PATCH_PATH_FORBIDDEN",
+            if Path(path).suffix.casefold() not in CODE_SUFFIXES:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_PATH_FORBIDDEN",
                     f"Added file type is not allowed by web-static-v1: {path}",
                 )
-        _validate_patch_headers(patch)
-        patch_texts.append(
-            patch.unified_diff
-            if patch.unified_diff.endswith("\n")
-            else f"{patch.unified_diff}\n"
-        )
+        if change.replacement_content is not None:
+            try:
+                encoded = change.replacement_content.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_CONTENT_INVALID",
+                    f"Replacement content is not valid UTF-8 text: {path}",
+                ) from exc
+            if len(change.replacement_content) > 120_000 or len(encoded) > 256_000:
+                raise SourceChangeError(
+                    "SOURCE_CHANGE_OUTPUT_TOO_LARGE",
+                    f"Replacement content exceeds the V1 per-file limit: {path}",
+                )
 
-    combined_patch = "".join(patch_texts)
-    with tempfile.TemporaryDirectory(prefix="another-atom-patch-") as directory:
+    with tempfile.TemporaryDirectory(prefix="another-atom-change-") as directory:
         workspace = Path(directory)
         for source_file in snapshot.files:
             target = workspace / source_file.path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source_file.content, encoding="utf-8")
-        checked = _run_git_apply(workspace, combined_patch, check=True)
-        if checked.returncode != 0:
-            raise SourcePatchError(
-                "PATCH_CHECK_FAILED",
-                checked.stderr.strip() or "git apply --check rejected SourcePatchSet",
-            )
-        applied = _run_git_apply(workspace, combined_patch, check=False)
-        if applied.returncode != 0:
-            raise SourcePatchError(
-                "PATCH_APPLY_FAILED",
-                applied.stderr.strip() or "git apply rejected SourcePatchSet",
-            )
+        try:
+            for change in change_set.changes:
+                target = workspace / change.path
+                if change.operation == "delete":
+                    target.unlink()
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(change.replacement_content or "", encoding="utf-8")
+        except OSError as exc:
+            raise SourceChangeError(
+                "SOURCE_CHANGE_CONTENT_INVALID",
+                "SourceFileChangeSet could not be materialized as regular files",
+            ) from exc
         candidate_paths = set(snapshot_files)
-        for patch in patch_set.patches:
-            if patch.operation == "delete":
-                candidate_paths.discard(patch.path)
+        for change in change_set.changes:
+            if change.operation == "delete":
+                candidate_paths.discard(change.path)
             else:
-                candidate_paths.add(patch.path)
+                candidate_paths.add(change.path)
         candidate_files: dict[str, str] = {}
         for path in sorted(candidate_paths):
             target = workspace / path
             if not target.is_file() or target.is_symlink():
-                raise SourcePatchError(
+                raise SourceChangeError(
                     "CANDIDATE_CONTRACT_INVALID",
                     f"Candidate source is missing or not a regular file: {path}",
                 )
             try:
                 content = target.read_text(encoding="utf-8")
             except UnicodeDecodeError as exc:
-                raise SourcePatchError(
+                raise SourceChangeError(
                     "CANDIDATE_CONTRACT_INVALID",
                     f"Candidate source is not UTF-8 text: {path}",
                 ) from exc
             if len(content) > 120_000:
-                raise SourcePatchError(
+                raise SourceChangeError(
                     "CANDIDATE_CONTRACT_INVALID",
                     f"Candidate source exceeds the V1 per-file limit: {path}",
                 )
             candidate_files[path] = content
 
+    declared_paths = {item.path for item in change_set.changes}
+    for path, source_file in snapshot_files.items():
+        if path not in declared_paths and candidate_files.get(path) != source_file.content:
+            raise SourceChangeError(
+                "CANDIDATE_CONTRACT_INVALID",
+                f"Undeclared source file changed while materializing candidate: {path}",
+            )
+
     if not required_files <= set(candidate_files):
-        raise SourcePatchError(
+        raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "Candidate source is missing a required web-static-v1 entry file",
         )
@@ -463,7 +537,7 @@ def apply_source_patch_set(
         path.startswith("tests/") and path.endswith(".test.js")
         for path in candidate_files
     ):
-        raise SourcePatchError(
+        raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "Candidate source must retain at least one tests/*.test.js file",
         )
@@ -471,92 +545,45 @@ def apply_source_patch_set(
     app_spec = _rebuild_app_spec_from_candidate(
         base_app_spec,
         architecture_spec,
-        patch_set,
+        change_set.app_spec_delta,
         candidate_files,
     )
     rendered = render_version_files(app_spec)
     for path in sorted(required_files):
         if candidate_files[path] != rendered[path]:
-            raise SourcePatchError(
+            raise SourceChangeError(
                 "CANDIDATE_CONTRACT_INVALID",
-                "Applied source cannot be represented by the AppSpec compatibility "
+                "Materialized source cannot be represented by the AppSpec compatibility "
                 f"contract: {path}",
             )
     candidate_files["app-spec.json"] = rendered["app-spec.json"]
     candidate_hash = _candidate_source_hash(candidate_files)
-    report = SourcePatchApplyReport(
+    report = SourceChangeApplyReport(
         source_context_hash=context_hash,
-        applied_files=sorted(patch.path for patch in patch_set.patches),
+        materialized_files=sorted(change.path for change in change_set.changes),
         candidate_source_hash=candidate_hash,
         checks=[
             "baseline-and-context-binding",
             "path-and-before-hash-policy",
-            "git-apply-check",
-            "git-apply",
+            "isolated-file-materialization",
+            "undeclared-files-unchanged",
             "app-spec-source-consistency",
         ],
     )
     return app_spec, candidate_files, report
 
 
-def _validate_patch_headers(patch: SourcePatchOperation) -> None:
-    old_headers = [
-        line[4:].strip()
-        for line in patch.unified_diff.splitlines()
-        if line.startswith("--- ")
-    ]
-    new_headers = [
-        line[4:].strip()
-        for line in patch.unified_diff.splitlines()
-        if line.startswith("+++ ")
-    ]
-    if len(old_headers) != 1 or len(new_headers) != 1:
-        raise SourcePatchError(
-            "PATCH_CHECK_FAILED",
-            f"Patch must contain exactly one old/new file header: {patch.path}",
-        )
-    expected = {
-        "modify": (f"a/{patch.path}", f"b/{patch.path}"),
-        "add": ("/dev/null", f"b/{patch.path}"),
-        "delete": (f"a/{patch.path}", "/dev/null"),
-    }[patch.operation]
-    if (old_headers[0], new_headers[0]) != expected:
-        raise SourcePatchError(
-            "PATCH_CHECK_FAILED",
-            f"Patch headers do not match declared operation/path: {patch.path}",
-        )
-
-
-def _run_git_apply(
-    workspace: Path,
-    patch: str,
-    *,
-    check: bool,
-) -> subprocess.CompletedProcess[str]:
-    arguments = ["git", "apply", "--whitespace=nowarn"]
-    if check:
-        arguments.append("--check")
-    return subprocess.run(
-        arguments,
-        cwd=workspace,
-        input=patch,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
 def _rebuild_app_spec_from_candidate(
     base_app_spec: AppSpec,
     architecture_spec: ArchitectureSpec,
-    patch_set: SourcePatchSet,
+    app_spec_delta: AppSpecDelta,
     candidate_files: dict[str, str],
 ) -> AppSpec:
     html_document = candidate_files["index.html"]
     body_start = "<body>\n"
     body_end = '\n<script src="./app.js"></script>\n</body>\n</html>\n'
     if html_document.count(body_start) != 1 or not html_document.endswith(body_end):
-        raise SourcePatchError(
+        raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "index.html changed the Runtime-managed document shell",
         )
@@ -564,7 +591,7 @@ def _rebuild_app_spec_from_candidate(
 
     css_file = candidate_files["styles.css"]
     if not css_file.endswith("\n"):
-        raise SourcePatchError(
+        raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "styles.css must retain the Runtime-managed final newline",
         )
@@ -573,12 +600,12 @@ def _rebuild_app_spec_from_candidate(
     javascript_file = candidate_files["app.js"]
     javascript_prefix = f"{NETWORK_GUARD_JAVASCRIPT}\n\n"
     if not javascript_file.startswith(javascript_prefix) or not javascript_file.endswith("\n"):
-        raise SourcePatchError(
+        raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "app.js changed the Runtime-managed network guard",
         )
     javascript = javascript_file[len(javascript_prefix) : -1]
-    metadata_updates = patch_set.app_spec_delta.model_dump(
+    metadata_updates = app_spec_delta.model_dump(
         mode="python", exclude_none=True
     )
     return base_app_spec.model_copy(

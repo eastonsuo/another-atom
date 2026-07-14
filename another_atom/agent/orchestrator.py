@@ -43,7 +43,7 @@ from another_atom.contracts.schemas import (
     RunStatus,
     SourceBundle,
     SourceContext,
-    SourcePatchSet,
+    SourceFileChangeSet,
     SupportLevel,
     ValidationReport,
     VersionSource,
@@ -55,12 +55,12 @@ from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
 from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
-    SourcePatchError,
-    apply_source_patch_set,
+    SourceChangeError,
     build_source_context,
     build_source_snapshot,
     calculate_source_diff_from_files,
     commit_version,
+    materialize_source_file_change_set,
     write_architecture_design,
     write_product_spec,
 )
@@ -1163,18 +1163,28 @@ class Orchestrator:
                 "Engineer is modifying the current Project source",
                 "engineer",
             )
-            patch_artifact = get_artifact(
+            legacy_patch_artifact = get_artifact(
                 self.db, run.id, ArtifactType.SOURCE_PATCH_SET
             )
-            if patch_artifact is not None:
-                patch_set = SourcePatchSet.model_validate(patch_artifact.payload)
+            if legacy_patch_artifact is not None:
+                raise AppError(
+                    "LEGACY_SOURCE_PATCH_RUN_UNSUPPORTED",
+                    "This Run was created with the retired SourcePatchSet path and cannot "
+                    "resume through SourceFileChangeSet",
+                    409,
+                )
+            change_artifact = get_artifact(
+                self.db, run.id, ArtifactType.SOURCE_FILE_CHANGE_SET
+            )
+            if change_artifact is not None:
+                change_set = SourceFileChangeSet.model_validate(change_artifact.payload)
             else:
-                patch_set, patch_artifact, _ = self._run_agent_stage(
+                change_set, change_artifact, _ = self._run_agent_stage(
                     run,
                     "engineer",
-                    ArtifactType.SOURCE_PATCH_SET,
-                    SourcePatchSet,
-                    lambda: self._provider(run).create_source_patch_set(
+                    ArtifactType.SOURCE_FILE_CHANGE_SET,
+                    SourceFileChangeSet,
+                    lambda: self._provider(run).create_source_file_change_set(
                         run.id,
                         source_snapshot,
                         source_context,
@@ -1187,42 +1197,44 @@ class Orchestrator:
                         base_app_spec,
                     ),
                 )
-            if patch_set.run_id != run.id:
+            if change_set.run_id != run.id:
                 raise AppError(
-                    "PATCH_BASE_MISMATCH",
-                    "SourcePatchSet does not match the active Run",
+                    "SOURCE_CHANGE_BASE_MISMATCH",
+                    "SourceFileChangeSet does not match the active Run",
                     422,
                 )
             self._record_event_once(
                 run,
-                "source.patch_created",
-                "Engineer produced a baseline-bound SourcePatchSet",
+                "source.change_created",
+                "Engineer produced a baseline-bound SourceFileChangeSet",
                 "engineer",
                 {
-                    "artifact_id": patch_artifact.id,
-                    "patch_files": [item.path for item in patch_set.patches],
+                    "artifact_id": change_artifact.id,
+                    "change_files": [item.path for item in change_set.changes],
                 },
             )
             self._record_event_once(
                 run,
-                "source.patch_check_started",
-                "Runtime is validating and checking the SourcePatchSet",
+                "source.change_check_started",
+                "Runtime is validating and materializing the SourceFileChangeSet",
                 "engineer",
-                {"patch_count": len(patch_set.patches)},
+                {"change_count": len(change_set.changes)},
             )
             self.db.commit()
             try:
-                app_spec, candidate_files, apply_report = apply_source_patch_set(
-                    source_snapshot,
-                    source_context,
-                    patch_set,
-                    base_app_spec,
-                    architecture_spec,
+                app_spec, candidate_files, apply_report = (
+                    materialize_source_file_change_set(
+                        source_snapshot,
+                        source_context,
+                        change_set,
+                        base_app_spec,
+                        architecture_spec,
+                    )
                 )
-            except SourcePatchError as exc:
+            except SourceChangeError as exc:
                 self._record_event_once(
                     run,
-                    "source.patch_failed",
+                    "source.change_failed",
                     str(exc),
                     "engineer",
                     {"error_code": exc.code},
@@ -1243,17 +1255,17 @@ class Orchestrator:
             apply_artifact = save_artifact(
                 self.db,
                 run.id,
-                ArtifactType.SOURCE_PATCH_APPLY_REPORT,
+                ArtifactType.SOURCE_CHANGE_APPLY_REPORT,
                 apply_report,
             )
             self._record_event_once(
                 run,
-                "source.patch_applied",
-                "Runtime applied the SourcePatchSet in an isolated candidate workspace",
+                "source.change_applied",
+                "Runtime materialized the SourceFileChangeSet in an isolated candidate workspace",
                 "engineer",
                 {
                     "artifact_id": apply_artifact.id,
-                    "applied_files": apply_report.applied_files,
+                    "materialized_files": apply_report.materialized_files,
                     "candidate_source_hash": apply_report.candidate_source_hash,
                 },
             )
@@ -1281,10 +1293,13 @@ class Orchestrator:
             self._record_event_once(
                 run,
                 "stage.completed",
-                "SourcePatchSet passed local apply and candidate Contract validation",
+                (
+                    "SourceFileChangeSet passed local materialization and candidate "
+                    "Contract validation"
+                ),
                 "engineer",
                 {
-                    "artifact_id": patch_artifact.id,
+                    "artifact_id": change_artifact.id,
                     "source_context_artifact_id": source_context_artifact.id,
                     "source_trimming_applied": source_context.trimming_applied,
                 },
@@ -1307,7 +1322,7 @@ class Orchestrator:
                 self._fail_run(
                     run,
                     "BUILD_VALIDATION_FAILED",
-                    "The Web source validator rejected the applied SourcePatchSet",
+                    "The Web source validator rejected the materialized SourceFileChangeSet",
                 )
                 return
             compatibility_review = ReviewReport(

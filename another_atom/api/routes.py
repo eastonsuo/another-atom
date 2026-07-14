@@ -2447,6 +2447,12 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.SOURCE_PATCH_APPLY_REPORT: (
         ".another-atom/generated/source-patch-apply-report.json"
     ),
+    ArtifactType.SOURCE_FILE_CHANGE_SET: (
+        ".another-atom/generated/source-file-change-set.json"
+    ),
+    ArtifactType.SOURCE_CHANGE_APPLY_REPORT: (
+        ".another-atom/generated/source-change-apply-report.json"
+    ),
     ArtifactType.SOURCE_DIFF: ".another-atom/generated/source-diff.json",
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
     ArtifactType.ARCHITECTURE_DESIGN: ".another-atom/generated/architecture-design.json",
