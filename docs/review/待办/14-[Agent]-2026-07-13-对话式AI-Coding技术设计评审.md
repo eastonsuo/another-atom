@@ -8,6 +8,8 @@
 
 本轮产品验收重新确认：所有自然语言代码修改都先形成修改任务，并通过“修改代码”workflow Approval 后再创建 `ai_edit` Run；Engineer 接收完整有效文档链和基线全量受控源码，输出代码 Diff，由 Runtime 在隔离候选工作区 apply。原发现 5 的“全量 CandidateAppSpec”前提和发现 8 的“普通修改风险驱动自动继续”结论已被新决策替代。
 
+同日补充决定：Runtime 先在本地计算完整 Engineer Context；未超限时发送全量源码，超限时才确定性裁剪并记录 ContextReceipt，不再以 Context 超限直接终止。本决定替代本文发现 5 中“超限直接失败”的建议。
+
 新的实现偏差、目标链路和验证要求由 [20｜Project 对话路由与代码修改授权检查](./20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)接管；本文其他状态机、配额、写锁和幂等问题仍保持待办。
 
 - 评审对象：[V1 基于现有代码的对话式 AI Coding](../../design/V1/技术设计/02-[Agent]-基于现有代码的对话式AI-Coding.md)

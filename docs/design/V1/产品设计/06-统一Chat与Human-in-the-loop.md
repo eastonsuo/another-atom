@@ -222,5 +222,5 @@ ai_edit Run
 6. `answer / clarify` 不创建 Run、BuildJob、写占用或 ProjectVersion；批准后的修改成功才创建新版本，且不改变线上发布指针。
 7. Lead 路由和直接回答能引用当前 Project 的产品身份、版本、有效方案与最近对话；跨 Project Context 不得混入。
 8. `propose_change` 只创建修改任务与 pending Approval；用户点击“修改代码”后才创建一个 `ai_edit` Run。
-9. Engineer 修改输入包含完整有效 ProductSpec、Blueprint、ArchitectureSpec、AppSpec 和基线全量受控源码；源码不得静默裁剪，超限时明确停止，Lead 对话所用的有界 Context 另行记录裁剪说明。
+9. Engineer 修改输入先组装完整有效 ProductSpec、Blueprint、ArchitectureSpec、AppSpec 和基线全量受控源码；服务端在本地计算 Context，未超限时全部发送，超限时才裁剪，并记录实际发送范围。
 10. 失败后 Artifact、错误和上一成功版本均可见，后续 Chat 不会把失败候选代码当成已发布或已成功版本。
