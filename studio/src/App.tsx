@@ -432,8 +432,8 @@ function eventMessage(language: Language, event: RunEvent): string {
   const maxAttempts = typeof event.payload.max_attempts === "number" ? event.payload.max_attempts : null;
   if (event.type === "agent.attempt.started" && attempt && maxAttempts) {
     return language === "zh"
-      ? `第 ${attempt}/${maxAttempts} 次模型请求已开始，正在等待模型生成结果。`
-      : `Model attempt ${attempt}/${maxAttempts} started; waiting for the model response.`;
+      ? `第 ${attempt} 次模型请求已发出（最多尝试 ${maxAttempts} 次），正在生成本阶段结果。`
+      : `Model request ${attempt} was sent (up to ${maxAttempts} attempts); waiting for this stage's result.`;
   }
   if (event.type === "agent.output.validated" && attempt && maxAttempts) {
     return language === "zh"
@@ -456,6 +456,12 @@ function eventMessage(language: Language, event: RunEvent): string {
       : `Attempt ${attempt}/${maxAttempts} failed: ${reason}. ${willRetry ? "Preparing the next attempt." : "The retry budget is exhausted."}`;
   }
   return displayText(language, event.payload.message ?? event.type) || eventTitle(language, event);
+}
+
+function eventTimestampMs(timestamp: string): number | null {
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp);
+  const parsed = Date.parse(hasTimezone ? timestamp : `${timestamp}Z`);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function rewriteSuggestion(language: Language, blueprint: Blueprint | null, events: RunEvent[]): string {
@@ -1431,13 +1437,14 @@ function BuildingState({ run, events, language }: { run: RunView; events: RunEve
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [latest?.event_id, waitingForModel]);
-  const elapsed = latest && waitingForModel ? Math.max(0, Math.floor((now - new Date(latest.timestamp).getTime()) / 1000)) : 0;
+  const modelRequestStartedAt = latest && waitingForModel ? eventTimestampMs(latest.timestamp) : null;
+  const elapsed = modelRequestStartedAt === null ? 0 : Math.max(0, Math.floor((now - modelRequestStartedAt) / 1000));
   return <div className="center-state building-cartoon">
     <div className="working-avatar"><RoleAvatar role={role} size="hero" /></div>
     <div className="working-stage"><LoaderCircle className="spin" size={15} /><span>{stageLabel(language, run.current_stage)}</span></div>
     <h1>{title}</h1>
     <p>{latest ? eventMessage(language, latest) : ui(language, "The current stage is persisted. Refreshing this page will not lose the run.")}</p>
-    {waitingForModel && <small>{language === "zh" ? `已等待 ${elapsed} 秒；模型返回后会继续显示解析、校验和保存步骤。` : `Waiting for ${elapsed}s; parsing, validation, and save steps will appear after the response.`}</small>}
+    {waitingForModel && <small>{language === "zh" ? `已等待 ${elapsed} 秒；模型返回后将继续解析、校验并保存本阶段结果。` : `Waiting for ${elapsed}s; the stage result will then be parsed, validated, and saved.`}</small>}
     <div className="build-meter"><span /></div>
   </div>;
 }

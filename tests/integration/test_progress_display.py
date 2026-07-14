@@ -8,6 +8,8 @@ backend emits a stage/status the frontend cannot map (which would freeze the
 progress display or leave every step stuck on "Waiting").
 """
 
+from datetime import datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 # Stage identifiers the frontend Timeline knows how to render (App.tsx).
@@ -154,6 +156,10 @@ def test_all_persisted_events_expose_message_and_valid_stage(client: TestClient)
         stage = event["payload"].get("stage")
         if stage is not None:
             assert stage in FRONTEND_TEAM_STAGES
+        timestamp = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+        assert timestamp.utcoffset() == timedelta(0), (
+            "event timestamp without an explicit UTC offset makes Studio add the browser timezone"
+        )
 
 
 def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:

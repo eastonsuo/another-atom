@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -474,6 +474,13 @@ class EventView(BaseModel):
     type: str
     payload: dict[str, Any]
     timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def timestamp_is_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class VersionView(BaseModel):

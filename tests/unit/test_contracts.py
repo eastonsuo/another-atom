@@ -1,14 +1,31 @@
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
 from another_atom.api.routes import _coerce_review_report
 from another_atom.contracts.schemas import (
     Blueprint,
+    EventView,
     LeadDecision,
     LeadRoute,
     RunCreate,
     SupportLevel,
 )
+
+
+def test_event_view_normalizes_naive_database_timestamp_to_utc() -> None:
+    event = EventView(
+        event_id="1",
+        sequence=1,
+        run_id="run-1",
+        type="agent.attempt.started",
+        payload={},
+        timestamp=datetime(2026, 7, 14, 15, 0, 0),
+    )
+
+    assert event.timestamp.tzinfo is UTC
+    assert '"timestamp":"2026-07-14T15:00:00Z"' in event.model_dump_json()
 
 
 def test_prompt_must_not_be_blank() -> None:
