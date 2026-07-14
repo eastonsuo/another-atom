@@ -92,6 +92,10 @@ class Project(Base, TimestampMixin):
     active_write_run_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, index=True
     )
+    active_turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    active_turn_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ProjectSession(Base, TimestampMixin):

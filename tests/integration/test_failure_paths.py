@@ -318,9 +318,16 @@ def test_local_model_request_exposes_localhost_as_an_approval_gap(
     )
     assert updated.status_code == 200
     regenerated = updated.json()
-    assert regenerated["product_spec"]["summary"].startswith("保留当前方案")
     assert regenerated["blueprint"]["modules"][0] in regenerated["product_spec"]["summary"]
-    assert regenerated["product_spec"]["content"] == run["product_spec"]["content"]
+    assert regenerated["product_spec"]["content_hash"] != run["product_spec"]["content_hash"]
+    messages = queued_client.get(
+        f"/api/projects/{run['project_id']}/messages"
+    ).json()
+    assert any(
+        message["role"] == "user"
+        and message["content"] == "将当前方案摘要修改为：保留当前方案，但突出翻译结果复制"
+        for message in messages
+    )
 
 
 def test_unavailable_model_is_rejected_before_project_creation(client: TestClient) -> None:

@@ -703,6 +703,13 @@ function Studio() {
       "provider.response.received",
       "provider.contract_correction.started",
       "provider.deadline.exceeded",
+      "agent.message.started",
+      "agent.message.delta",
+      "agent.message.completed",
+      "agent.message.failed",
+      "product_spec.regeneration_started",
+      "product_spec.regenerated",
+      "product_spec.regeneration_failed",
       "run.needs_input",
       "run.completed",
       "run.failed",
@@ -1180,10 +1187,16 @@ function Workspace({
 
   const updateProductSpec = async (summary: string, action: "save" | "regenerate") => {
     setError("");
+    if (action === "regenerate") {
+      setRun({ ...run, status: "product_running", current_stage: "product_manager" });
+    }
     try {
       const updated = await api.updateProductSpec(run.run_id, summary, action);
       setRun(updated);
     } catch (reason) {
+      if (action === "regenerate") {
+        await refreshRun(run.run_id).catch(() => undefined);
+      }
       const message = reason instanceof Error ? reason.message : "Product specification update failed";
       setError(message);
       throw reason;
@@ -1199,24 +1212,45 @@ function Workspace({
         {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
       </section>
       <section className="workspace-content">
+        <ProjectChatPanel
+          key={run.project_id}
+          run={run}
+          events={events}
+          refreshShell={refreshShell}
+          refreshRun={refreshRun}
+          setError={setError}
+          language={language}
+          onReviseProductSpec={async (instruction) => {
+            setRun({ ...run, status: "product_running", current_stage: "product_manager" });
+            try {
+              const updated = await api.updateProductSpec(
+                run.run_id,
+                null,
+                "regenerate",
+                instruction,
+              );
+              setRun(updated);
+            } catch (reason) {
+              await refreshRun(run.run_id).catch(() => undefined);
+              throw reason;
+            }
+          }}
+        />
         {run.status === "awaiting_approval" && effectiveBlueprint ? (
           <ProductSpecApproval key={`${run.product_spec?.content_hash}:${run.product_spec?.summary}`} productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} onOpenDocument={() => setRequestedFilePath(run.product_spec?.path ?? "docs/product-spec.md")} onUpdate={updateProductSpec} />
         ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
           <div className="failed-project-view">
             <ClarificationState run={run} language={language} />
-            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
         ) : run.status === "needs_input" ? (
           <ScopeStop blueprint={effectiveBlueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : run.status === "failed" ? (
           <div className="failed-project-view">
             <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
-            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
         ) : run.status === "cancelled" && run.error_code === "BASE_VERSION_CHANGED" ? (
           <div className="failed-project-view">
             <StaleClarificationState language={language} />
-            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
         ) : ready && (run.version_id || versions.length > 0) ? (
           <ResultWorkspace
@@ -1236,7 +1270,6 @@ function Workspace({
         ) : (
           <div className="failed-project-view">
             <BuildingState run={run} events={events} language={language} />
-            {versions.length > 0 && <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />}
           </div>
         )}
       </section>
@@ -1590,7 +1623,6 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
         <button className="publish-button" onClick={publish} disabled={publishing}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
       </div>
     </div>
-    <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
     {deploymentUrl && <div className="published-banner"><Check size={16} /><span>{ui(language, "Published successfully")}</span><a href={deploymentUrl} target="_blank" rel="noreferrer">{ui(language, "Open public app")} <ExternalLink size={14} /></a></div>}
     {tab === "preview" && current && <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div>}
     {tab === "edit" && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
@@ -1598,29 +1630,46 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   </div>;
 }
 
-function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }: { run: RunView; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (value: string) => void; language: Language }) {
-  const [changeMessage, setChangeMessage] = useState("");
+function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, language, onReviseProductSpec }: { run: RunView; events: RunEvent[]; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (value: string) => void; language: Language; onReviseProductSpec: (instruction: string) => Promise<void> }) {
+  const draftKey = `another-atom:project-chat-draft:${run.project_id}`;
+  const [changeMessage, setChangeMessage] = useState(() => window.localStorage.getItem(draftKey) ?? "");
   const [changeSubmitting, setChangeSubmitting] = useState(false);
   const [projectMessages, setProjectMessages] = useState<ProjectMessageView[]>([]);
   const [messagesError, setMessagesError] = useState("");
   const [approvingProposalId, setApprovingProposalId] = useState("");
+  const isClarification = run.status === "needs_input" && run.pending_human_task?.kind === "input_request";
+  const isProductSpecRevision = run.status === "awaiting_approval" && run.pending_human_task?.kind === "approval" && Boolean(run.product_spec);
+  const canSend = isClarification || isProductSpecRevision || (
+    TERMINAL.has(run.status) && run.status !== "needs_input"
+  );
+  const latestMessageEvent = [...events].reverse().find((event) => event.type.startsWith("agent.message."));
+
+  useEffect(() => {
+    window.localStorage.setItem(draftKey, changeMessage);
+  }, [changeMessage, draftKey]);
   useEffect(() => {
     let active = true;
     api.projectMessages(run.project_id)
       .then((messages) => { if (active) { setProjectMessages(messages); setMessagesError(""); } })
       .catch((reason) => { if (active) setMessagesError(reason instanceof Error ? reason.message : ui(language, "Could not load Project messages")); });
     return () => { active = false; };
-  }, [language, run.project_id, run.run_id]);
+  }, [language, latestMessageEvent?.sequence, run.project_id, run.run_id]);
   const submitChange = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!changeMessage.trim() || changeSubmitting) return;
+    if (!changeMessage.trim() || changeSubmitting || !canSend) return;
     setChangeSubmitting(true);
     setError("");
     try {
-      if (run.pending_human_task?.kind === "input_request") {
+      if (isClarification && run.pending_human_task) {
         const created = await api.respondHumanTask(run.pending_human_task.id, changeMessage.trim());
         setChangeMessage("");
         await refreshRun(created.run_id);
+        await refreshShell();
+        return;
+      }
+      if (isProductSpecRevision) {
+        await onReviseProductSpec(changeMessage.trim());
+        setChangeMessage("");
         await refreshShell();
         return;
       }
@@ -1658,11 +1707,31 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
       setApprovingProposalId("");
     }
   };
+  const roleName = (role: ProjectMessageView["role"]) => {
+    if (role === "user") return language === "zh" ? "你" : "You";
+    if (role === "lead") return roleLabel(language, "leader");
+    if (role === "product_manager") return language === "zh" ? "产品经理" : "Product Manager";
+    if (role === "architect") return language === "zh" ? "架构师" : "Architect";
+    if (role === "engineer") return language === "zh" ? "工程师" : "Engineer";
+    return language === "zh" ? "系统" : "System";
+  };
+  const inputHint = isClarification
+    ? (language === "zh" ? "回答产品经理的问题" : "Answer the Product Manager's question")
+    : isProductSpecRevision
+      ? (language === "zh" ? "告诉产品经理需要调整什么，或使用方案卡确认" : "Tell the Product Manager what to revise, or approve the specification card")
+      : canSend
+        ? (language === "zh" ? "询问当前项目，或描述你希望修改的内容。" : "Ask about the current Project or describe a change.")
+        : (language === "zh" ? `${stageLabel(language, run.current_stage)}正在工作，完成后可以继续发送。` : `${stageLabel(language, run.current_stage)} is working; you can send after it finishes.`);
+  const submitLabel = isClarification
+    ? (language === "zh" ? "提交补充" : "Send clarification")
+    : isProductSpecRevision
+      ? (language === "zh" ? "提交方案修改" : "Revise ProductSpec")
+      : (language === "zh" ? "发送" : "Send");
   return <section className="project-chat-panel">
     <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
-    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? roleLabel(language, "leader") : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span>{message.message_type === "change_proposal" && <div className="project-change-proposal"><strong>{String(message.payload.change_summary ?? (language === "zh" ? "修改当前项目" : "Modify the current Project"))}</strong><small>{language === "zh" ? "确认后才会创建修改 Run 并写入代码。" : "A change Run and code write start only after confirmation."}</small><button type="button" onClick={() => void approveProposal(message)} disabled={message.payload.status !== "pending" || Boolean(approvingProposalId)}>{approvingProposalId === message.id ? <LoaderCircle className="spin" size={14} /> : <Code2 size={14} />}{message.payload.status === "approved" ? (language === "zh" ? "已开始修改" : "Change started") : message.payload.status === "stale" ? (language === "zh" ? "已失效" : "Expired") : (language === "zh" ? "修改代码" : "Modify code")}</button></div>}</div>)}</div>}
-    <form onSubmit={submitChange}><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={run.pending_human_task?.kind === "input_request" ? run.pending_human_task.prompt : (language === "zh" ? "询问当前项目，或描述你希望修改的内容。" : "Ask about the current Project or describe a change.")} /><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={16} />} {run.pending_human_task?.kind === "input_request" ? (language === "zh" ? "提交补充" : "Send clarification") : (language === "zh" ? "发送" : "Send")}</button></form>
+    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-30).map((message) => <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`} key={message.id}><b>{roleName(message.role)}</b><span>{message.content || (message.payload.status === "streaming" ? (language === "zh" ? "正在回复…" : "Responding…") : "")}{message.payload.status === "streaming" && message.content ? <i className="streaming-cursor" /> : null}</span>{message.message_type === "change_proposal" && <div className="project-change-proposal"><strong>{String(message.payload.change_summary ?? (language === "zh" ? "修改当前项目" : "Modify the current Project"))}</strong><small>{language === "zh" ? "确认后才会创建修改 Run 并写入代码。" : "A change Run and code write start only after confirmation."}</small><button type="button" onClick={() => void approveProposal(message)} disabled={message.payload.status !== "pending" || Boolean(approvingProposalId)}>{approvingProposalId === message.id ? <LoaderCircle className="spin" size={14} /> : <Code2 size={14} />}{message.payload.status === "approved" ? (language === "zh" ? "已开始修改" : "Change started") : message.payload.status === "stale" ? (language === "zh" ? "已失效" : "Expired") : (language === "zh" ? "修改代码" : "Modify code")}</button></div>}</div>)}</div>}
+    <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={inputHint} /><small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend} title={!canSend ? inputHint : undefined}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} {submitLabel}</button></form>
   </section>;
 }
 

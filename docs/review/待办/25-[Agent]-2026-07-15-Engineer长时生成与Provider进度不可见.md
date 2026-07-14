@@ -99,3 +99,15 @@
 本次没有为旧 `AppSpec` 增加临时语义分批协议。`Plan/HTML/CSS/JavaScript/Assemble/Validate` 分批仍与 [Review 22](./22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md) 的 `SourceBundle` 迁移一起处理，避免重复建设两套生成 Contract。
 
 尚未完成的是部署环境真实长输出验收，以及对重复扣费/重复生成的部署证据采集。因此本 Review 继续保持“待办”。
+
+### Update 补充（2026-07-15）
+
+在上述 Provider 生命周期事件基础上，继续完成了主对话可见性链路：
+
+1. [常驻流式对话与执行期间输入控制](../../design/V1/产品设计/07-常驻流式对话与执行期间输入控制.md) 已更新为当前产品设计基线。
+2. PM、Architect、Engineer 主生成请求采用“用户可见 `message` + 完整结构化 `result`”响应；只增量提取前者，后者仍在流结束后统一校验。Contract 校验失败时可见消息标记为 `failed`，不能被误认为有效产物。
+3. 可见增量以稳定 Message ID 和有界字符批次写入 `ProjectMessage`，SSE 事件触发 Studio 重放；刷新后不依赖浏览器内存恢复完整回复。
+4. Workspace 的 Project Chat 已常驻，执行期间保留本地草稿但禁发；后端同时用非终态 Run 检查和 Project active turn 锁阻止多标签页并发请求。
+5. 自动化测试增加可见消息增量、持久化重放、Project active turn、活动 Run 禁发，以及 ProductSpec 基于当前文档重新生成的覆盖；全量 Python 测试继续通过，Studio 生产构建通过。
+
+仍未完成部署环境的真实 Provider/SSE 交互验收、Lead 问答增量、对话内 Build/Test 操作卡和语义分批。因此本 Review 仍保持“待办”。

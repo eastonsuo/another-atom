@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -335,7 +337,7 @@ def test_pending_proposal_becomes_stale_when_base_version_changes(
     assert stale_message["payload"]["status"] == "stale"
 
 
-def test_project_allows_chat_but_only_one_active_code_writer(
+def test_project_blocks_new_chat_while_a_change_run_is_active(
     queued_client: TestClient,
 ) -> None:
     initial = _build_project(queued_client)
@@ -344,13 +346,12 @@ def test_project_allows_chat_but_only_one_active_code_writer(
     first = _approve_change(queued_client, project_id, first_proposal["proposal_id"])
     assert first["status"] == "build_queued"
 
-    second_proposal = _propose_change(queued_client, project_id, "再修改标题")
     second = queued_client.post(
-        f"/api/projects/{project_id}/change-proposals/"
-        f"{second_proposal['proposal_id']}/approve"
+        f"/api/projects/{project_id}/messages",
+        json={"message": "再修改标题", "model": "mock"},
     )
     assert second.status_code == 409
-    assert second.json()["code"] == "PROJECT_WRITE_BUSY"
+    assert second.json()["code"] == "PROJECT_CONVERSATION_BUSY"
 
     assert process_next_job(
         queued_client.app.state.testing_session,
@@ -362,6 +363,46 @@ def test_project_allows_chat_but_only_one_active_code_writer(
         project = db.get(Project, project_id)
         assert project is not None
         assert project.active_write_run_id is None
+
+    next_message = _propose_change(queued_client, project_id, "再修改标题")
+    assert next_message["intent"] == "propose_change"
+
+
+def test_project_lead_turn_is_locked_across_requests_and_stale_lock_recovers(
+    client: TestClient,
+) -> None:
+    initial = _build_project(client)
+    project_id = initial["project_id"]
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.active_turn_id = "11111111-1111-4111-8111-111111111111"
+        project.active_turn_started_at = datetime.now(UTC)
+        db.commit()
+
+    busy = client.post(
+        f"/api/projects/{project_id}/messages",
+        json={"message": "这个项目有哪些页面？", "model": "mock"},
+    )
+    assert busy.status_code == 409
+    assert busy.json()["code"] == "PROJECT_CONVERSATION_BUSY"
+
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.active_turn_started_at = datetime.now(UTC) - timedelta(hours=1)
+        db.commit()
+
+    recovered = client.post(
+        f"/api/projects/{project_id}/messages",
+        json={"message": "这个项目有哪些页面？", "model": "mock"},
+    )
+    assert recovered.status_code == 200
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        assert project.active_turn_id is None
+        assert project.active_turn_started_at is None
 
 
 def test_failed_change_preserves_base_version_and_releases_project_lock(

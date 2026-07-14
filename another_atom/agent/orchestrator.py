@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from another_atom.agent.provider import (
@@ -90,6 +90,10 @@ _PROVIDER_EVENT_MESSAGES = {
     "provider.response.received": "Provider response received",
     "provider.contract_correction.started": "Provider is correcting structured output",
     "provider.deadline.exceeded": "Agent stage deadline exceeded",
+    "agent.message.started": "Agent response started",
+    "agent.message.delta": "Agent response updated",
+    "agent.message.completed": "Agent response completed",
+    "agent.message.failed": "Agent response interrupted",
 }
 
 
@@ -256,6 +260,8 @@ class Orchestrator:
             current = self.db.get(Run, run_id)
             if current is None:
                 return
+            if event_type.startswith("agent.message."):
+                self._persist_agent_message_event(current, stage, event_type, payload)
             record_event(
                 self.db,
                 run_id,
@@ -267,6 +273,66 @@ class Orchestrator:
             self.db.commit()
 
         return handle
+
+    def _persist_agent_message_event(
+        self,
+        run: Run,
+        stage: str,
+        event_type: str,
+        payload: dict,
+    ) -> None:
+        message_id = payload.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            return
+        message = self.db.get(ProjectMessage, message_id)
+        if event_type == "agent.message.started":
+            if message is not None:
+                return
+            provider_role = str(payload.get("role") or stage)
+            message = ProjectMessage(
+                id=message_id,
+                project_id=run.project_id,
+                session_id=run.session_id,
+                user_id=run.user_id,
+                run_id=run.id,
+                role=self._project_message_role(provider_role, stage),
+                message_type="agent_update",
+                content="",
+                payload={
+                    "status": "streaming",
+                    "stage": stage,
+                    "provider_role": provider_role,
+                },
+            )
+            self.db.add(message)
+            return
+        if message is None:
+            return
+        if event_type == "agent.message.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                message.content = f"{message.content}{delta}"
+            return
+        next_payload = dict(message.payload or {})
+        next_payload["status"] = (
+            "completed" if event_type == "agent.message.completed" else "failed"
+        )
+        if event_type == "agent.message.failed" and payload.get("reason"):
+            next_payload["reason"] = payload["reason"]
+        message.payload = next_payload
+
+    @staticmethod
+    def _project_message_role(provider_role: str, stage: str) -> str:
+        normalized = f"{provider_role} {stage}".casefold()
+        if "product" in normalized or stage == "product_manager":
+            return "product_manager"
+        if "architect" in normalized or stage == "architect":
+            return "architect"
+        if "engineer" in normalized or stage in {"engineer", "engineer_repair"}:
+            return "engineer"
+        if "lead" in normalized:
+            return "lead"
+        return "system"
 
     def create_blueprint(self, run: Run) -> Blueprint | None:
         if run.status in {
@@ -475,6 +541,165 @@ class Orchestrator:
             if any(not _contains_chinese(value) for value in localized_fields):
                 raise ValueError("Product Manager output must use the user's Chinese language")
         return blueprint
+
+    def regenerate_product_spec(
+        self,
+        run: Run,
+        instruction: str,
+        current_product_spec: ProductSpec,
+    ) -> tuple[Blueprint, ProductSpec, Artifact]:
+        pending_task = self.db.scalar(
+            select(HumanTask).where(
+                HumanTask.run_id == run.id,
+                HumanTask.user_id == run.user_id,
+                HumanTask.kind == HumanTaskKind.APPROVAL.value,
+                HumanTask.status == HumanTaskStatus.PENDING.value,
+            )
+        )
+        if run.status != RunStatus.AWAITING_APPROVAL.value or pending_task is None:
+            raise AppError(
+                "PRODUCT_SPEC_UPDATE_NOT_ALLOWED",
+                "This run is not waiting for ProductSpec approval",
+                409,
+            )
+        run_claimed = self.db.execute(
+            update(Run)
+            .where(
+                Run.id == run.id,
+                Run.user_id == run.user_id,
+                Run.status == RunStatus.AWAITING_APPROVAL.value,
+            )
+            .values(
+                status=RunStatus.PRODUCT_RUNNING.value,
+                current_stage="product_manager",
+            )
+            .execution_options(synchronize_session=False)
+        )
+        task_claimed = self.db.execute(
+            update(HumanTask)
+            .where(
+                HumanTask.id == pending_task.id,
+                HumanTask.user_id == run.user_id,
+                HumanTask.status == HumanTaskStatus.PENDING.value,
+            )
+            .values(
+                status=HumanTaskStatus.STALE.value,
+                resolved_at=func.now(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if run_claimed.rowcount != 1 or task_claimed.rowcount != 1:
+            self.db.rollback()
+            raise AppError(
+                "PRODUCT_SPEC_UPDATE_NOT_ALLOWED",
+                "The ProductSpec approval state changed; refresh before revising",
+                409,
+            )
+        self.db.expire_all()
+        run = self.db.get(Run, run.id)
+        if run is None:
+            self.db.rollback()
+            raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
+        self.db.add(
+            ProjectMessage(
+                project_id=run.project_id,
+                session_id=run.session_id,
+                user_id=run.user_id,
+                run_id=run.id,
+                role="user",
+                message_type="request",
+                content=instruction,
+                payload={"target": "product_spec", "action": "regenerate"},
+            )
+        )
+        record_event(
+            self.db,
+            run.id,
+            "product_spec.regeneration_started",
+            "Product Manager is revising the ProductSpec from the current document",
+            stage="product_manager",
+            payload={"previous_content_hash": current_product_spec.content_hash},
+        )
+        self.db.commit()
+        revision_prompt = (
+            f"{run.prompt}\n\n"
+            "已有产品说明如下。请保留未被修改要求影响的内容，只调整用户明确要求的部分。\n\n"
+            f"{current_product_spec.content}\n\n"
+            f"用户本次修改要求：\n{instruction}"
+        )
+        try:
+            blueprint = self._run_unpersisted_agent_stage(
+                run,
+                "product_manager",
+                lambda: self._create_blueprint_in_request_language(
+                    run,
+                    revision_prompt,
+                    Mode(run.mode),
+                ),
+            )
+            blueprint = _enforce_network_capability_policy(run.prompt, blueprint)
+            product_spec = render_product_spec(run.prompt, blueprint)
+            write_product_spec(run.project_id, product_spec.content)
+            save_artifact(self.db, run.id, ArtifactType.BLUEPRINT, blueprint)
+            artifact = save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.PRODUCT_SPEC,
+                product_spec,
+            )
+            project = self.db.get(Project, run.project_id)
+            if project is not None:
+                project.name = blueprint.project_name
+            run.status = RunStatus.AWAITING_APPROVAL.value
+            run.current_stage = "blueprint_approval"
+            self._create_human_task(
+                run,
+                kind=HumanTaskKind.APPROVAL,
+                stage="blueprint_approval",
+                prompt="查看并确认重新生成的产品说明后继续构建",
+                subject=f"product_spec:{artifact.id}:{product_spec.content_hash}",
+                payload={
+                    "artifact_id": artifact.id,
+                    "artifact_type": ArtifactType.PRODUCT_SPEC.value,
+                    "path": product_spec.path,
+                    "content_hash": product_spec.content_hash,
+                    "support_level": blueprint.support_level.value,
+                    "previous_human_task_id": pending_task.id,
+                },
+            )
+            record_event(
+                self.db,
+                run.id,
+                "product_spec.regenerated",
+                "Product specification was regenerated from the current document",
+                stage="blueprint_approval",
+                payload={
+                    "artifact_id": artifact.id,
+                    "content_hash": product_spec.content_hash,
+                },
+            )
+            self.db.commit()
+            return blueprint, product_spec, artifact
+        except Exception:
+            self.db.rollback()
+            current = self.db.get(Run, run.id)
+            if current is not None:
+                current.status = RunStatus.AWAITING_APPROVAL.value
+                current.current_stage = "blueprint_approval"
+                previous_task = self.db.get(HumanTask, pending_task.id)
+                if previous_task is not None:
+                    previous_task.status = HumanTaskStatus.PENDING.value
+                    previous_task.resolved_at = None
+                record_event(
+                    self.db,
+                    current.id,
+                    "product_spec.regeneration_failed",
+                    "Product specification regeneration failed; the previous document is retained",
+                    stage="blueprint_approval",
+                    payload={"content_hash": current_product_spec.content_hash},
+                )
+                self.db.commit()
+            raise
 
     def execute_approved_run(self, run_id: str) -> None:
         run = self.db.get(Run, run_id)

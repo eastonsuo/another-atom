@@ -121,10 +121,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt }),
     }),
-  updateProductSpec: (runId: string, summary: string, action: "save" | "regenerate") =>
+  updateProductSpec: (runId: string, summary: string | null, action: "save" | "regenerate", instruction?: string) =>
     request<RunView>(`/api/runs/${runId}/product-spec`, {
       method: "POST",
-      body: JSON.stringify({ summary, action }),
+      body: JSON.stringify({ summary, action, instruction }),
     }),
   events: (runId: string) =>
     request<RunEvent[]>(`/api/runs/${runId}/events/history`),

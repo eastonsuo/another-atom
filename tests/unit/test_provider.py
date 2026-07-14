@@ -354,6 +354,64 @@ def test_engineer_stream_is_buffered_before_contract_validation(monkeypatch) -> 
     get_settings.cache_clear()
 
 
+def test_visible_stream_emits_only_message_and_validates_enveloped_result(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    get_settings.cache_clear()
+    blueprint = MockLLMProvider().create_blueprint("构建翻译工具", Mode.TEAM)
+    visible = "我正在根据需求整理产品方案。"
+    encoded = json.dumps(
+        {"message": visible, "result": blueprint.model_dump(mode="json")},
+        ensure_ascii=False,
+    )
+    chunks = [encoded[index : index + 9] for index in range(0, len(encoded), 9)]
+
+    class VisibleStreamResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            for index, chunk in enumerate(chunks):
+                yield json.dumps(
+                    {
+                        "message": {"content": chunk},
+                        "done": index == len(chunks) - 1,
+                    }
+                )
+
+    monkeypatch.setattr(
+        "another_atom.agent.provider.httpx.stream",
+        lambda *args, **kwargs: VisibleStreamResponse(),
+    )
+    provider = OllamaCloudProvider(model="deepseek-v4-pro")
+    events: list[tuple[str, dict]] = []
+    provider.begin_stage(
+        timeout_seconds=60,
+        event_handler=lambda event_type, payload: events.append((event_type, payload)),
+    )
+
+    result = provider.create_blueprint("构建翻译工具", Mode.TEAM)
+
+    assert result == blueprint
+    assert [kind for kind, _ in events].count("agent.message.started") == 1
+    assert [kind for kind, _ in events].count("agent.message.completed") == 1
+    assert "".join(
+        payload["delta"]
+        for kind, payload in events
+        if kind == "agent.message.delta"
+    ) == visible
+    provider.end_stage()
+    get_settings.cache_clear()
+
+
 def test_engineer_stream_continues_through_deepseek_fallback(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
@@ -567,25 +625,34 @@ def test_ollama_provider_requests_structured_format(monkeypatch) -> None:
     captured: dict = {}
 
     class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict:
-            return {
+        def iter_lines(self):
+            yield json.dumps({
                 "message": {"content": blueprint.model_dump_json()},
+                "done": True,
                 "prompt_eval_count": 10,
                 "eval_count": 5,
-            }
+            })
 
-    def fake_post(*args, **kwargs):
+    def fake_stream(*args, **kwargs):
         captured.update(kwargs.get("json", {}))
         return Response()
 
-    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    monkeypatch.setattr("another_atom.agent.provider.httpx.stream", fake_stream)
     OllamaCloudProvider(model="deepseek-v4-pro").create_blueprint("Build a catalog", Mode.TEAM)
     # Real reliability fix: the request must constrain output to the JSON schema.
     assert isinstance(captured.get("format"), dict)
     assert captured["format"].get("type") == "object"
+    assert captured["format"].get("required") == ["message", "result"]
+    assert captured["stream"] is True
     get_settings.cache_clear()
 
 
@@ -595,18 +662,25 @@ def test_ollama_provider_records_response_token_usage(monkeypatch) -> None:
     blueprint = MockLLMProvider().create_blueprint("Build a catalog", Mode.TEAM)
 
     class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict:
-            return {
+        def iter_lines(self):
+            yield json.dumps({
                 "message": {"content": blueprint.model_dump_json()},
+                "done": True,
                 "prompt_eval_count": 120,
                 "eval_count": 80,
-            }
+            })
 
     monkeypatch.setattr(
-        "another_atom.agent.provider.httpx.post",
+        "another_atom.agent.provider.httpx.stream",
         lambda *args, **kwargs: Response(),
     )
     provider = OllamaCloudProvider(model="deepseek-v4-pro")

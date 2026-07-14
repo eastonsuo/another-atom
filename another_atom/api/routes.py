@@ -19,12 +19,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from websockets.asyncio.client import connect as websocket_connect
 
-from another_atom.agent.orchestrator import render_product_spec
+from another_atom.agent.orchestrator import Orchestrator, render_product_spec
 from another_atom.agent.provider import LLMProviderError, get_llm_provider
 from another_atom.api.dependencies import (
     get_blueprint_executor,
@@ -655,30 +655,39 @@ def update_product_spec(
             409,
         )
     blueprint = _artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint)
-    if blueprint is None:
+    current_product_spec = _artifact_model(
+        db,
+        run.id,
+        ArtifactType.PRODUCT_SPEC,
+        ProductSpec,
+    )
+    if blueprint is None or current_product_spec is None:
         raise AppError("PRODUCT_SPEC_NOT_FOUND", "Product specification was not found", 404)
+
+    if request.action == "regenerate":
+        instruction = request.instruction or (
+            f"将当前方案摘要修改为：{request.summary}" if request.summary else ""
+        )
+        try:
+            Orchestrator(db).regenerate_product_spec(
+                run,
+                instruction,
+                current_product_spec,
+            )
+        except AppError:
+            raise
+        except (LLMProviderError, ValueError) as exc:
+            raise AppError("PRODUCT_SPEC_REGENERATION_FAILED", str(exc), 502) from exc
+        db.commit()
+        db.refresh(run)
+        return _run_view(db, run)
+
     try:
         content = read_repository_file(run.project_id, "docs/product-spec.md")
     except RepositoryError as exc:
         raise AppError("PRODUCT_SPEC_NOT_FOUND", str(exc), 404) from exc
 
-    summary = " ".join(request.summary.split())
-    if request.action == "regenerate":
-        features = ("、" if any("\u3400" <= char <= "\u9fff" for char in summary) else ", ").join(
-            blueprint.modules[:4]
-        )
-        if features and not any(module in summary for module in blueprint.modules[:4]):
-            suffix = (
-                f"核心功能包括{features}。"
-                if any("\u3400" <= char <= "\u9fff" for char in summary)
-                else f" Core features include {features}."
-            )
-            summary = (
-                f"{summary.rstrip('。.! ')}。{suffix}"
-                if any("\u3400" <= char <= "\u9fff" for char in summary)
-                else f"{summary.rstrip('.! ')}.{suffix}"
-            )
-            summary = summary[:600]
+    summary = " ".join((request.summary or "").split())
 
     product_spec = ProductSpec(
         summary=summary,
@@ -706,10 +715,8 @@ def update_product_spec(
     record_event(
         db,
         run.id,
-        "product_spec.regenerated" if request.action == "regenerate" else "product_spec.updated",
-        "Product specification was regenerated from the current draft"
-        if request.action == "regenerate"
-        else "Product specification summary was updated",
+        "product_spec.updated",
+        "Product specification summary was updated",
         stage="blueprint_approval",
         payload={"artifact_id": artifact.id, "content_hash": product_spec.content_hash},
     )
@@ -1285,6 +1292,26 @@ def _project_message_view(message: ProjectMessage) -> ProjectMessageView:
     )
 
 
+def _release_project_turn(db: Session, project_id: str, turn_id: str) -> None:
+    try:
+        db.execute(
+            update(Project)
+            .where(
+                Project.id == project_id,
+                Project.active_turn_id == turn_id,
+            )
+            .values(active_turn_id=None, active_turn_started_at=None)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "project_turn_release_failed",
+            extra={"project_id": project_id, "turn_id": turn_id},
+        )
+
+
 @router.get(
     "/runs/{run_id}/human-tasks",
     response_model=list[HumanTaskView],
@@ -1783,6 +1810,40 @@ def send_project_message(
     user: User = Depends(get_current_user),
 ) -> ProjectMessageResult:
     project = _owned_project(db, project_id, user.id)
+    terminal_statuses = {
+        RunStatus.COMPLETED.value,
+        RunStatus.COMPLETED_DEGRADED.value,
+        RunStatus.FAILED.value,
+        RunStatus.CANCELLED.value,
+    }
+    active_run = db.scalar(
+        select(Run)
+        .where(
+            Run.project_id == project.id,
+            Run.user_id == user.id,
+            Run.status.notin_(terminal_statuses),
+        )
+        .order_by(Run.created_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+    if active_run is not None:
+        if active_run.status == RunStatus.NEEDS_INPUT.value:
+            raise AppError(
+                "PROJECT_INPUT_REQUIRED",
+                "Reply to the pending Product Manager question before starting another turn",
+                409,
+            )
+        if active_run.status == RunStatus.AWAITING_APPROVAL.value:
+            raise AppError(
+                "PROJECT_APPROVAL_PENDING",
+                "Review or revise the pending ProductSpec before starting another turn",
+                409,
+            )
+        raise AppError(
+            "PROJECT_CONVERSATION_BUSY",
+            "The current Agent turn is still running",
+            409,
+        )
     model_config = models()
     base_version = (
         db.get(ProjectVersion, project.latest_version_id)
@@ -1793,43 +1854,73 @@ def send_project_message(
     selected_model = request.model or (base_run.model if base_run else model_config.default_model)
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
-    project_session = ProjectSession(
-        project_id=project.id,
-        user_id=user.id,
-        title="Project conversation",
+    turn_id = str(uuid4())
+    stale_before = now_utc() - timedelta(
+        seconds=max(get_settings().agent_stage_timeout_seconds + 60, 600)
     )
-    db.add(project_session)
-    db.flush()
-    user_message = ProjectMessage(
-        project_id=project.id,
-        session_id=project_session.id,
-        user_id=user.id,
-        run_id=None,
-        role="user",
-        message_type="request",
-        content=request.message,
-        payload={
-            "selected_files": request.selected_files,
-            "model": selected_model,
-        },
+    turn_claimed = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            Project.user_id == user.id,
+            or_(
+                Project.active_turn_id.is_(None),
+                Project.active_turn_started_at < stale_before,
+            ),
+        )
+        .values(active_turn_id=turn_id, active_turn_started_at=now_utc())
+        .execution_options(synchronize_session=False)
     )
-    db.add(user_message)
-    db.flush()
+    if turn_claimed.rowcount != 1:
+        db.rollback()
+        raise AppError(
+            "PROJECT_CONVERSATION_BUSY",
+            "Another Project conversation turn is still running",
+            409,
+        )
     db.commit()
-    context = _project_context_snapshot(
-        db,
-        project,
-        request.message,
-        request.selected_files,
-    )
-    provider = get_llm_provider(model=selected_model)
-    reserved = provider.reservation_units
-    db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(quota_reserved=User.quota_reserved + reserved)
-    )
-    db.commit()
+    try:
+        project_session = ProjectSession(
+            project_id=project.id,
+            user_id=user.id,
+            title="Project conversation",
+        )
+        db.add(project_session)
+        db.flush()
+        user_message = ProjectMessage(
+            project_id=project.id,
+            session_id=project_session.id,
+            user_id=user.id,
+            run_id=None,
+            role="user",
+            message_type="request",
+            content=request.message,
+            payload={
+                "selected_files": request.selected_files,
+                "model": selected_model,
+            },
+        )
+        db.add(user_message)
+        db.flush()
+        db.commit()
+        context = _project_context_snapshot(
+            db,
+            project,
+            request.message,
+            request.selected_files,
+        )
+        provider = get_llm_provider(model=selected_model)
+        reserved = provider.reservation_units
+        db.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(quota_reserved=User.quota_reserved + reserved)
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        _release_project_turn(db, project.id, turn_id)
+        raise
     try:
         decision = provider.route_project_message(request.message, context)
         usage = provider.take_usage()
@@ -1847,6 +1938,7 @@ def send_project_message(
         )
         db.add(error_message)
         db.commit()
+        _release_project_turn(db, project.id, turn_id)
         raise AppError("PROJECT_LEAD_FAILED", str(exc), 502) from exc
     except Exception as exc:
         logger.exception(
@@ -1867,6 +1959,7 @@ def send_project_message(
             )
         )
         db.commit()
+        _release_project_turn(db, project.id, turn_id)
         raise AppError(
             "PROJECT_LEAD_PLATFORM_FAILED",
             "Project conversation failed",
@@ -1922,6 +2015,7 @@ def send_project_message(
     )
     _settle_lead_quota(db, user.id, reserved, usage.request_count)
     db.commit()
+    _release_project_turn(db, project.id, turn_id)
     db.refresh(user_message)
     db.refresh(lead_message)
     return ProjectMessageResult(

@@ -156,8 +156,17 @@ class ProductSpec(BaseModel):
 
 
 class ProductSpecUpdateRequest(BaseModel):
-    summary: str = Field(min_length=1, max_length=600)
+    summary: str | None = Field(default=None, min_length=1, max_length=600)
+    instruction: str | None = Field(default=None, min_length=1, max_length=4000)
     action: Literal["save", "regenerate"]
+
+    @model_validator(mode="after")
+    def content_matches_action(self) -> ProductSpecUpdateRequest:
+        if self.action == "save" and not self.summary:
+            raise ValueError("Saving requires a summary")
+        if self.action == "regenerate" and not (self.instruction or self.summary):
+            raise ValueError("Regeneration requires an instruction or edited summary")
+        return self
 
 
 class PMRequirementAssessment(BaseModel):
@@ -737,7 +746,14 @@ class ProjectMessageView(BaseModel):
     id: str
     project_id: str
     run_id: str | None = None
-    role: Literal["user", "lead", "system"]
+    role: Literal[
+        "user",
+        "lead",
+        "product_manager",
+        "architect",
+        "engineer",
+        "system",
+    ]
     message_type: Literal[
         "request",
         "answer",
@@ -745,6 +761,7 @@ class ProjectMessageView(BaseModel):
         "clarification_response",
         "change_proposal",
         "change_brief",
+        "agent_update",
         "result",
         "error",
     ]

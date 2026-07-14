@@ -67,6 +67,8 @@ def init_database(target_engine: Engine | None = None) -> None:
             "repository_path": "VARCHAR(500)",
             "repository_branch": "VARCHAR(80) DEFAULT 'main' NOT NULL",
             "active_write_run_id": "VARCHAR(36)",
+            "active_turn_id": "VARCHAR(36)",
+            "active_turn_started_at": "TIMESTAMP",
         }
         for name, column_type in project_additions.items():
             if name not in project_columns:
@@ -138,6 +140,12 @@ def init_database(target_engine: Engine | None = None) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_projects_active_write_run_id "
                 "ON projects (active_write_run_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_projects_active_turn_id "
+                "ON projects (active_turn_id)"
             )
         )
 

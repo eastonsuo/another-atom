@@ -128,8 +128,8 @@ export interface ProjectMessageView {
   id: string;
   project_id: string;
   run_id: string | null;
-  role: "user" | "lead" | "system";
-  message_type: "request" | "answer" | "clarification" | "clarification_response" | "change_proposal" | "change_brief" | "result" | "error";
+  role: "user" | "lead" | "product_manager" | "architect" | "engineer" | "system";
+  message_type: "request" | "answer" | "clarification" | "clarification_response" | "change_proposal" | "change_brief" | "agent_update" | "result" | "error";
   content: string;
   payload: Record<string, unknown>;
   created_at: string;

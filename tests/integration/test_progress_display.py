@@ -203,6 +203,51 @@ def test_provider_lifecycle_events_are_persisted_for_replay(
     assert all(event["payload"]["provider"] == "ollama" for event in provider_events[-2:])
 
 
+def test_visible_agent_message_is_persisted_and_replayable(
+    queued_client: TestClient,
+) -> None:
+    run = _create_team_run(queued_client, "Build a product catalog with login")
+    session_factory = queued_client.app.state.testing_session
+    message_id = "11111111-1111-4111-8111-111111111111"
+
+    with session_factory() as db:
+        handler = Orchestrator(db)._provider_event_handler(run["run_id"], "engineer")
+        handler(
+            "agent.message.started",
+            {"message_id": message_id, "role": "Engineer（工程师）"},
+        )
+        handler(
+            "agent.message.delta",
+            {
+                "message_id": message_id,
+                "role": "Engineer（工程师）",
+                "delta": "我正在生成并校验应用源码。",
+            },
+        )
+        handler(
+            "agent.message.completed",
+            {"message_id": message_id, "role": "Engineer（工程师）"},
+        )
+
+    messages = queued_client.get(
+        f"/api/projects/{run['project_id']}/messages"
+    ).json()
+    visible = next(message for message in messages if message["id"] == message_id)
+    assert visible["run_id"] == run["run_id"]
+    assert visible["role"] == "engineer"
+    assert visible["message_type"] == "agent_update"
+    assert visible["content"] == "我正在生成并校验应用源码。"
+    assert visible["payload"]["status"] == "completed"
+
+    events = queued_client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    message_events = [event for event in events if event["type"].startswith("agent.message.")]
+    assert [event["type"] for event in message_events[-3:]] == [
+        "agent.message.started",
+        "agent.message.delta",
+        "agent.message.completed",
+    ]
+
+
 def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:
     """An out-of-scope request must settle on needs_input / scope_review.
 

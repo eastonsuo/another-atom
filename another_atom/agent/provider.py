@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -1297,6 +1298,7 @@ class OllamaCloudProvider:
                 "data requirements, and visual_direction must be written in Chinese."
             ),
             {"request": prompt, "mode": mode.value},
+            stream=True,
         )
 
     def create_change_brief(
@@ -1440,6 +1442,7 @@ class OllamaCloudProvider:
                 "product_spec": product_spec.model_dump(mode="json"),
                 "blueprint": blueprint.model_dump(mode="json"),
             },
+            stream=True,
         )
 
     def create_engineer_output(
@@ -1592,14 +1595,26 @@ class OllamaCloudProvider:
         stream: bool = False,
     ) -> T:
         schema = contract.model_json_schema()
+        response_schema = self._visible_response_schema(schema) if stream else schema
         messages = [
             {
                 "role": "system",
                 "content": (
                     f"You are the {role} in Another Atom. {instruction} "
-                    "Return one JSON object only: no markdown fences, commentary, or hidden "
-                    "reasoning. "
-                    f"The JSON must satisfy this schema: {schema}"
+                    + (
+                        "Return one JSON object with exactly two top-level keys in this order: "
+                        "message, then result. message is a concise user-visible update in the "
+                        "user's language describing what you are producing; it must not include "
+                        "private reasoning, raw JSON, or code. result is the structured deliverable. "
+                        "Do not use markdown fences or add text outside the JSON object. "
+                        f"The JSON must satisfy this schema: {response_schema}"
+                        if stream
+                        else (
+                            "Return one JSON object only: no markdown fences, commentary, or hidden "
+                            "reasoning. "
+                            f"The JSON must satisfy this schema: {schema}"
+                        )
+                    )
                 ),
             },
             {"role": "user", "content": str(payload)},
@@ -1633,7 +1648,7 @@ class OllamaCloudProvider:
                     # Constrain the model to emit strictly valid JSON matching the
                     # contract. Reasoning-capable models (DeepSeek V4) otherwise emit
                     # think-text and prose that corrupt free-form JSON extraction.
-                    "format": schema,
+                    "format": response_schema,
                 }
                 if think is not None:
                     request_body["think"] = think
@@ -1648,6 +1663,7 @@ class OllamaCloudProvider:
                     fallback_provider=self._usage.fallback_provider,
                 )
                 request_started = time.monotonic()
+                visible_message_id = str(uuid4()) if stream else None
                 self._emit_provider_event(
                     "provider.request.started",
                     provider="ollama",
@@ -1663,6 +1679,7 @@ class OllamaCloudProvider:
                             timeout=primary_timeout,
                             role=role,
                             request_attempt=attempt + 1,
+                            visible_message_id=visible_message_id,
                         )
                     else:
                         response = httpx.post(
@@ -1674,6 +1691,13 @@ class OllamaCloudProvider:
                         response.raise_for_status()
                         body = response.json()
                 except httpx.TimeoutException:
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.failed",
+                            message_id=visible_message_id,
+                            role=role,
+                            reason="provider_timeout",
+                        )
                     elapsed_ms = round((time.monotonic() - request_started) * 1000)
                     self._emit_provider_event(
                         "provider.timeout",
@@ -1720,11 +1744,29 @@ class OllamaCloudProvider:
                     elapsed_ms=round((time.monotonic() - request_started) * 1000),
                 )
                 self._record_response_usage(body)
-                content = self._message_content(body)
-                json_content = self._extract_json(content)
                 try:
-                    return contract.model_validate_json(json_content)
-                except ValidationError as exc:
+                    content = self._message_content(body)
+                    json_content = self._extract_json(content)
+                    result = self._validate_structured_result(
+                        contract,
+                        json_content,
+                        visible=stream,
+                    )
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.completed",
+                            message_id=visible_message_id,
+                            role=role,
+                        )
+                    return result
+                except (ValidationError, ValueError) as exc:
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.failed",
+                            message_id=visible_message_id,
+                            role=role,
+                            reason="contract_validation",
+                        )
                     if attempt == 1:
                         raise
                     self._emit_provider_event(
@@ -1781,6 +1823,7 @@ class OllamaCloudProvider:
                     fallback_provider="deepseek",
                 )
                 request_started = time.monotonic()
+                visible_message_id = str(uuid4()) if stream else None
                 self._emit_provider_event(
                     "provider.request.started",
                     provider="deepseek",
@@ -1796,6 +1839,7 @@ class OllamaCloudProvider:
                             timeout=request_timeout,
                             role=role,
                             request_attempt=attempt + 1,
+                            visible_message_id=visible_message_id,
                         )
                     else:
                         response = httpx.post(
@@ -1809,6 +1853,13 @@ class OllamaCloudProvider:
                         usage = body.get("usage") or {}
                         content = body["choices"][0]["message"]["content"]
                 except httpx.TimeoutException:
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.failed",
+                            message_id=visible_message_id,
+                            role=role,
+                            reason="provider_timeout",
+                        )
                     self._emit_provider_event(
                         "provider.timeout",
                         provider="deepseek",
@@ -1831,10 +1882,28 @@ class OllamaCloudProvider:
                     + int(usage.get("completion_tokens", 0)),
                     fallback_provider="deepseek",
                 )
-                json_content = self._extract_json(content)
                 try:
-                    return contract.model_validate_json(json_content)
-                except ValidationError as exc:
+                    json_content = self._extract_json(content)
+                    result = self._validate_structured_result(
+                        contract,
+                        json_content,
+                        visible=stream,
+                    )
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.completed",
+                            message_id=visible_message_id,
+                            role=role,
+                        )
+                    return result
+                except (ValidationError, ValueError) as exc:
+                    if visible_message_id:
+                        self._emit_provider_event(
+                            "agent.message.failed",
+                            message_id=visible_message_id,
+                            role=role,
+                            reason="contract_validation",
+                        )
                     if attempt == 1:
                         raise
                     self._emit_provider_event(
@@ -1866,12 +1935,15 @@ class OllamaCloudProvider:
         timeout: float,
         role: str,
         request_attempt: int,
+        visible_message_id: str | None,
     ) -> dict:
         content_parts: list[str] = []
         activity_chars = 0
         first_token_seen = False
         last_progress = time.monotonic()
         final_body: dict = {}
+        visible_content = ""
+        visible_message_closed = False
         with httpx.stream(
             "POST",
             f"{self.host}/api/chat",
@@ -1890,6 +1962,29 @@ class OllamaCloudProvider:
                 hidden_activity = message.get("thinking") or ""
                 if content:
                     content_parts.append(content)
+                    if visible_message_id and not visible_message_closed:
+                        next_visible, message_complete = self._partial_visible_message(
+                            "".join(content_parts)
+                        )
+                        if len(next_visible) > len(visible_content) and (
+                            len(next_visible) - len(visible_content) >= 24
+                            or message_complete
+                        ):
+                            delta = next_visible[len(visible_content) :]
+                            if not visible_content:
+                                self._emit_provider_event(
+                                    "agent.message.started",
+                                    message_id=visible_message_id,
+                                    role=role,
+                                )
+                            self._emit_provider_event(
+                                "agent.message.delta",
+                                message_id=visible_message_id,
+                                role=role,
+                                delta=delta,
+                            )
+                            visible_content = next_visible
+                        visible_message_closed = message_complete
                 activity_chars += len(content) + len(hidden_activity)
                 if not first_token_seen and (content or hidden_activity):
                     first_token_seen = True
@@ -1919,12 +2014,15 @@ class OllamaCloudProvider:
         timeout: float,
         role: str,
         request_attempt: int,
+        visible_message_id: str | None,
     ) -> tuple[str, dict]:
         content_parts: list[str] = []
         usage: dict = {}
         activity_chars = 0
         first_token_seen = False
         last_progress = time.monotonic()
+        visible_content = ""
+        visible_message_closed = False
         request_body = {
             **request_body,
             "stream_options": {"include_usage": True},
@@ -1950,6 +2048,29 @@ class OllamaCloudProvider:
                 hidden_activity = delta.get("reasoning_content") or ""
                 if content:
                     content_parts.append(content)
+                    if visible_message_id and not visible_message_closed:
+                        next_visible, message_complete = self._partial_visible_message(
+                            "".join(content_parts)
+                        )
+                        if len(next_visible) > len(visible_content) and (
+                            len(next_visible) - len(visible_content) >= 24
+                            or message_complete
+                        ):
+                            delta_text = next_visible[len(visible_content) :]
+                            if not visible_content:
+                                self._emit_provider_event(
+                                    "agent.message.started",
+                                    message_id=visible_message_id,
+                                    role=role,
+                                )
+                            self._emit_provider_event(
+                                "agent.message.delta",
+                                message_id=visible_message_id,
+                                role=role,
+                                delta=delta_text,
+                            )
+                            visible_content = next_visible
+                        visible_message_closed = message_complete
                 activity_chars += len(content) + len(hidden_activity)
                 if not first_token_seen and (content or hidden_activity):
                     first_token_seen = True
@@ -1971,6 +2092,81 @@ class OllamaCloudProvider:
                     last_progress = now
                 self._request_timeout(timeout)
         return "".join(content_parts), usage
+
+    @staticmethod
+    def _visible_response_schema(result_schema: dict) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1200,
+                },
+                "result": result_schema,
+            },
+            "required": ["message", "result"],
+            "additionalProperties": False,
+        }
+
+    @staticmethod
+    def _validate_structured_result(
+        contract: type[T],
+        json_content: str,
+        *,
+        visible: bool,
+    ) -> T:
+        parsed = json.loads(json_content)
+        if visible and isinstance(parsed, dict) and "result" in parsed:
+            message = parsed.get("message")
+            if not isinstance(message, str) or not message.strip():
+                raise ValueError("visible structured response message was empty")
+            return contract.model_validate(parsed["result"])
+        return contract.model_validate(parsed)
+
+    @staticmethod
+    def _partial_visible_message(content: str) -> tuple[str, bool]:
+        match = re.search(r'"message"\s*:\s*"', content)
+        if match is None:
+            return "", False
+        index = match.end()
+        decoded: list[str] = []
+        while index < len(content):
+            char = content[index]
+            if char == '"':
+                return "".join(decoded), True
+            if char != "\\":
+                decoded.append(char)
+                index += 1
+                continue
+            if index + 1 >= len(content):
+                break
+            escaped = content[index + 1]
+            simple = {
+                '"': '"',
+                "\\": "\\",
+                "/": "/",
+                "b": "\b",
+                "f": "\f",
+                "n": "\n",
+                "r": "\r",
+                "t": "\t",
+            }
+            if escaped in simple:
+                decoded.append(simple[escaped])
+                index += 2
+                continue
+            if escaped == "u":
+                digits = content[index + 2 : index + 6]
+                if len(digits) < 4 or any(
+                    digit not in "0123456789abcdefABCDEF" for digit in digits
+                ):
+                    break
+                decoded.append(chr(int(digits, 16)))
+                index += 6
+                continue
+            break
+        return "".join(decoded), False
 
     @staticmethod
     def _message_content(body: dict) -> str:
