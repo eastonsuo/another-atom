@@ -2,8 +2,9 @@
 
 [toc]
 
-- **文档状态：** V1 技术设计基线；Blueprint adapted 审批已实现，通用 Approval Contract 待扩展
+- **文档状态：** V1 技术设计基线；持久化 HumanTask、PM 补充输入和 Blueprint adapted 审批已实现，通用 Risk Policy 适配器待扩展
 - **技术范围：** 通用 Approval Contract、业务适配器、Risk Policy 接入、状态机、API、持久化、并发、恢复、事件与验收
+- **合并流程基线：** [统一 Chat 与 Human-in-the-loop](../产品设计/06-统一Chat与Human-in-the-loop.md)；本文重点展开 `approval`，`input_request` 以合并流程为准
 - **产品设计：** [V1 Human-in-the-loop 用户审批](../产品设计/04-[TODO]-Human-in-the-loop用户审批.md)
 - **PM 专项设计：** [PM 整理产品方案并由用户确认](../产品设计/05-[TODO]-PM整理产品方案并由用户确认.md)
 - **Agent 基线：** [V1 多 Agent 设计](./01-[Agent]-多Agent设计.md)
@@ -516,7 +517,7 @@ run.resumed
 
 ## 14. V1 边界与 V2 兼容
 
-V1 Approval 只服务单用户 Project、固定 Agent 流水线和受控 Web Runtime，不实现组织审批、多审批人、永久授权、Tool Permission Center 或跨 Project 批量决定。
+V1 Approval 只服务单用户 Project、固定 Agent 流水线和当前已接入的受控 Runtime Adapter；现阶段执行链主要是 Web Adapter。不实现组织审批、多审批人、永久授权、Tool Permission Center 或跨 Project 批量决定。
 
 V2 可以复用 Approval 的 owner、subject version/hash、状态 CAS、事件和恢复 Contract，并扩展：
 
