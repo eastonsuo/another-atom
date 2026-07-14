@@ -39,8 +39,23 @@ class RunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class HumanTaskKind(StrEnum):
+    INPUT_REQUEST = "input_request"
+    APPROVAL = "approval"
+
+
+class HumanTaskStatus(StrEnum):
+    PENDING = "pending"
+    ANSWERED = "answered"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+    STALE = "stale"
+
+
 class BuildStatus(StrEnum):
     QUEUED = "queued"
+    WAITING_INPUT = "waiting_input"
     BUILDING = "building"
     VALIDATING = "validating"
     SUCCEEDED = "succeeded"
@@ -57,6 +72,10 @@ class ProjectStatus(StrEnum):
 
 
 class ArtifactType(StrEnum):
+    CHANGE_BRIEF = "change_brief"
+    REQUIREMENT_DELTA = "requirement_delta"
+    BASE_SOURCE_SNAPSHOT = "base_source_snapshot"
+    SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
@@ -71,6 +90,7 @@ class ArtifactType(StrEnum):
 
 class VersionSource(StrEnum):
     BUILD = "build"
+    AI_EDIT = "ai_edit"
     EDIT = "edit"
     RESOLVE = "resolve"
     RESTORE = "restore"
@@ -109,6 +129,21 @@ class Blueprint(BaseModel):
         if any(not item for item in cleaned):
             raise ValueError("Blueprint page and module labels cannot be blank")
         return cleaned
+
+
+class PMRequirementAssessment(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    outcome: Literal["ready", "needs_input"]
+    summary: str = Field(min_length=1, max_length=600)
+    question: str | None = Field(default=None, max_length=500)
+    missing_fields: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("question")
+    @classmethod
+    def question_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("PM clarification question cannot be blank")
+        return value.strip() if value else None
 
 
 class ArchitectureSpec(BaseModel):
@@ -153,6 +188,58 @@ class AppSpec(BaseModel):
     html: str = Field(default="", max_length=40_000)
     css: str = Field(default="", max_length=40_000)
     javascript: str = Field(default="", max_length=40_000)
+
+
+class PreviousFailureContext(BaseModel):
+    run_id: str
+    stage: str
+    error_code: str | None = None
+    error_message: str | None = None
+    artifact_types: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ChangeBrief(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    original_request: str = Field(min_length=1, max_length=4000)
+    goal: str = Field(min_length=1, max_length=800)
+    preserve: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=20)
+    previous_failure: PreviousFailureContext | None = None
+
+
+class RequirementDelta(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    change_summary: str = Field(min_length=1, max_length=800)
+    changed_requirements: list[str] = Field(min_length=1, max_length=20)
+    preserved_requirements: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=20)
+
+
+class SourceSnapshotFile(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0, le=256_000)
+    content: str = Field(max_length=256_000)
+
+
+class BaseSourceSnapshot(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: str
+    base_version_id: str
+    base_git_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    files: list[SourceSnapshotFile] = Field(min_length=1, max_length=8)
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SourceDiff(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    base_version_id: str
+    changed_files: list[str] = Field(default_factory=list, max_length=20)
+    added_files: list[str] = Field(default_factory=list, max_length=20)
+    removed_files: list[str] = Field(default_factory=list, max_length=20)
+    line_additions: int = Field(ge=0)
+    line_deletions: int = Field(ge=0)
+    unified_diff: str = Field(default="", max_length=120_000)
 
 
 class ValidationCheck(BaseModel):
@@ -259,6 +346,20 @@ class PublishRequest(BaseModel):
     strategy: PublicationStrategy = PublicationStrategy.SPECIFY_VERSION
 
 
+class HumanTaskView(BaseModel):
+    id: str
+    project_id: str
+    run_id: str
+    kind: HumanTaskKind
+    status: HumanTaskStatus
+    stage: str
+    prompt: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
 class RunView(BaseModel):
     run_id: str
     project_id: str
@@ -266,6 +367,8 @@ class RunView(BaseModel):
     prompt: str
     mode: Mode
     model: str
+    trigger: Literal["build", "ai_edit"] = "build"
+    base_version_id: str | None = None
     status: RunStatus
     current_stage: str
     blueprint: Blueprint | None = None
@@ -278,20 +381,57 @@ class RunView(BaseModel):
     version_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    pending_human_task: HumanTaskView | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class HumanTaskResponse(BaseModel):
+    response: str | None = Field(default=None, max_length=4000)
+    decision: Literal["approve", "reject", "cancel"] | None = None
+
+    @field_validator("response")
+    @classmethod
+    def response_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("Human task response cannot be blank")
+        return value.strip() if value else None
 
 
 class ProjectFileEntry(BaseModel):
     path: str
     source: Literal["repository", "artifact"]
     size: int = Field(ge=0)
+    kind: Literal["markdown", "json", "code", "text"] = "text"
+    text: bool = True
+    editable: bool = False
+    render_mode: Literal["markdown", "source"] = "source"
 
 
 class ProjectFileContent(BaseModel):
     path: str
     source: Literal["repository", "artifact"]
     content: str
+    content_hash: str
+    editable: bool = False
+    kind: Literal["markdown", "json", "code", "text"] = "text"
+    render_mode: Literal["markdown", "source"] = "source"
+
+
+class ProjectFileSaveRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    content: str
+    expected_content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    operation_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9._-]+$")
+
+
+class ProjectFileSaveResult(BaseModel):
+    path: str
+    content_hash: str
+    size: int = Field(ge=0)
+    git_commit: str
+    version: VersionView | None = None
+    saved_at: datetime
 
 
 class EventView(BaseModel):
@@ -334,6 +474,38 @@ class ProjectView(BaseModel):
     updated_at: datetime
     repository_ready: bool = False
     repository_branch: str = "main"
+
+
+class ProjectMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    model: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("message")
+    @classmethod
+    def project_message_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message cannot be blank")
+        return value
+
+
+class ProjectMessageView(BaseModel):
+    id: str
+    project_id: str
+    run_id: str | None = None
+    role: Literal["user", "lead", "system"]
+    message_type: Literal[
+        "request",
+        "answer",
+        "clarification",
+        "clarification_response",
+        "change_brief",
+        "result",
+        "error",
+    ]
+    content: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
 
 
 class QuotaView(BaseModel):
@@ -425,6 +597,13 @@ class AdminProjectSummary(BaseModel):
     updated_at: datetime
     support_level: str | None = None
     latest_run: AdminRunSummary | None = None
+
+
+class AdminProjectList(BaseModel):
+    items: list[AdminProjectSummary]
+    page: int
+    page_size: int
+    total: int
 
 
 class AdminProjectDetail(BaseModel):

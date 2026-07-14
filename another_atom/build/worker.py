@@ -65,6 +65,8 @@ def claim_next_job(
                     if run
                     and run.status
                     in {RunStatus.COMPLETED.value, RunStatus.COMPLETED_DEGRADED.value}
+                    else BuildStatus.WAITING_INPUT.value
+                    if run and run.status == RunStatus.NEEDS_INPUT.value
                     else BuildStatus.FAILED.value
                 )
                 job.lease_owner = None
@@ -119,6 +121,8 @@ def execute_claimed_job(
             RunStatus.COMPLETED_DEGRADED.value,
         }:
             job.status = BuildStatus.SUCCEEDED.value
+        elif run.status == RunStatus.NEEDS_INPUT.value:
+            job.status = BuildStatus.WAITING_INPUT.value
         job.lease_owner = None
         job.lease_expires_at = None
         job.finished_at = now_utc()
@@ -164,6 +168,8 @@ def _fail_job(db: Session, job_id: str, message: str) -> None:
                 if project.latest_version_id
                 else ProjectStatus.DRAFT.value
             )
+            if project.active_write_run_id == run.id:
+                project.active_write_run_id = None
         record_event(
             db,
             run.id,

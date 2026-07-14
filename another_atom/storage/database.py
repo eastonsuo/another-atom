@@ -1,7 +1,7 @@
 import re
 from collections.abc import Generator
 
-from sqlalchemy import Engine, create_engine, event, inspect, select, text
+from sqlalchemy import Engine, create_engine, event, inspect, or_, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from another_atom.config import get_settings
@@ -47,10 +47,14 @@ def init_database(target_engine: Engine | None = None) -> None:
         column["name"] for column in database_inspector.get_columns("sandbox_sessions")
     }
     with database_engine.begin() as connection:
-        if "model" not in run_columns:
-            connection.execute(
-                text("ALTER TABLE runs ADD COLUMN model VARCHAR(100) DEFAULT 'mock' NOT NULL")
-            )
+        run_additions = {
+            "model": "VARCHAR(100) DEFAULT 'mock' NOT NULL",
+            "trigger": "VARCHAR(24) DEFAULT 'build' NOT NULL",
+            "base_version_id": "VARCHAR(36)",
+        }
+        for name, column_type in run_additions.items():
+            if name not in run_columns:
+                connection.execute(text(f"ALTER TABLE runs ADD COLUMN {name} {column_type}"))
         user_additions = {
             "username": "VARCHAR(80)",
             "password_hash": "VARCHAR(255)",
@@ -62,6 +66,7 @@ def init_database(target_engine: Engine | None = None) -> None:
         project_additions = {
             "repository_path": "VARCHAR(500)",
             "repository_branch": "VARCHAR(80) DEFAULT 'main' NOT NULL",
+            "active_write_run_id": "VARCHAR(36)",
         }
         for name, column_type in project_additions.items():
             if name not in project_columns:
@@ -103,14 +108,41 @@ def init_database(target_engine: Engine | None = None) -> None:
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_run_idx ON approvals (run_id)")
         )
         connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_human_task_run_kind_subject_idx "
+                "ON human_tasks (run_id, kind, subject_hash)"
+            )
+        )
+        connection.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_idx ON users (username)")
         )
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_role ON users (role)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_runs_trigger ON runs (trigger)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_runs_base_version_id ON runs (base_version_id)")
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_projects_active_write_run_id "
+                "ON projects (active_write_run_id)"
+            )
+        )
 
     from another_atom.contracts.schemas import AppSpec, VersionSource
     from another_atom.domain.auth import hash_password, verify_password
-    from another_atom.repository.service import commit_version, initialize_repository
-    from another_atom.storage.models import Project, ProjectVersion, User
+    from another_atom.observability import get_logger
+    from another_atom.repository.service import (
+        commit_version,
+        find_file_save_commit,
+        initialize_repository,
+        read_repository_file,
+        repository_content_hash,
+    )
+    from another_atom.storage.models import FileSaveOperation, Project, ProjectVersion, User
+
+    logger = get_logger("database")
 
     bootstrap_session = sessionmaker(bind=database_engine, expire_on_commit=False)
     with bootstrap_session() as db:
@@ -125,8 +157,25 @@ def init_database(target_engine: Engine | None = None) -> None:
             )
             db.commit()
         settings = get_settings()
+        protected_environment = settings.environment not in {"development", "test"}
         if bool(settings.admin_username) != bool(settings.admin_password):
             raise RuntimeError("ADMIN_USERNAME and ADMIN_PASSWORD must be configured together")
+        if (
+            protected_environment
+            and settings.admin_username == "admin"
+            and settings.admin_password == "admin12345"
+        ):
+            # Accepted V1 boundary: the default admin stays usable in public deployments,
+            # but the operator must be able to see that the well-known credentials are live.
+            logger.warning(
+                "default_admin_credentials_active",
+                extra={"status": "warning"},
+            )
+        if protected_environment and not settings.session_cookie_secure:
+            logger.warning(
+                "session_cookie_secure_disabled",
+                extra={"status": "warning"},
+            )
         if settings.admin_username and settings.admin_password:
             admin_username = settings.admin_username.lower()
             if not re.fullmatch(r"[a-zA-Z0-9_-]{3,80}", admin_username):
@@ -151,6 +200,20 @@ def init_database(target_engine: Engine | None = None) -> None:
                     settings.admin_password, admin.password_hash
                 ):
                     admin.password_hash = hash_password(settings.admin_password)
+            # The configured credentials are the only source of admin identity;
+            # demote any stale admin account left behind by earlier configurations.
+            leftover_admins = db.scalars(
+                select(User).where(
+                    User.role == "admin",
+                    or_(User.username.is_(None), User.username != admin_username),
+                )
+            ).all()
+            for leftover in leftover_admins:
+                leftover.role = "user"
+                logger.warning(
+                    "stale_admin_demoted",
+                    extra={"user_id": leftover.id, "status": "warning"},
+                )
             db.commit()
         projects = db.scalars(select(Project).order_by(Project.created_at)).all()
         for project in projects:
@@ -170,6 +233,32 @@ def init_database(target_engine: Engine | None = None) -> None:
                     version.version_number,
                     VersionSource(version.source),
                     AppSpec.model_validate(version.app_spec),
+                )
+                db.commit()
+        interrupted_saves = db.scalars(
+            select(FileSaveOperation).where(
+                FileSaveOperation.status.in_(["pending", "writing", "committed"])
+            )
+        ).all()
+        for operation in interrupted_saves:
+            try:
+                git_commit = find_file_save_commit(operation.project_id, operation.id)
+                if git_commit:
+                    content = read_repository_file(operation.project_id, operation.path)
+                    operation.git_commit = git_commit
+                    operation.target_hash = repository_content_hash(content)
+                    operation.status = "completed"
+                    operation.error_code = None
+                else:
+                    operation.status = "failed"
+                    operation.error_code = "REPOSITORY_FILE_SAVE_INTERRUPTED"
+                project = db.get(Project, operation.project_id)
+                if project and project.active_write_run_id == operation.id:
+                    project.active_write_run_id = None
+            except Exception:
+                logger.exception(
+                    "file_save_recovery_failed",
+                    extra={"project_id": operation.project_id, "operation_id": operation.id},
                 )
         db.commit()
 

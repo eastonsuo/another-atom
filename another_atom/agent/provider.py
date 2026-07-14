@@ -12,13 +12,17 @@ from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
     Blueprint,
+    ChangeBrief,
     DataCheck,
     DataProfile,
     LeadDecision,
     LeadRoute,
     Mode,
     PageSpec,
+    PMRequirementAssessment,
+    PreviousFailureContext,
     ProductItem,
+    RequirementDelta,
     ReviewIssue,
     ReviewReport,
     SupportLevel,
@@ -33,6 +37,12 @@ _BUILD_TERMS = (
     "make",
     "generate",
     "develop",
+    "update",
+    "change",
+    "revise",
+    "fix",
+    "add",
+    "remove",
     "构建",
     "创建",
     "生成",
@@ -41,6 +51,14 @@ _BUILD_TERMS = (
     "做一个",
     "给我一个",
     "帮我做",
+    "修改",
+    "改成",
+    "改一下",
+    "调整",
+    "修复",
+    "增加",
+    "添加",
+    "删除",
 )
 _INQUIRY_PREFIXES = (
     "what can",
@@ -64,6 +82,30 @@ def _is_explicit_build_request(message: str) -> bool:
     )
 
 
+def requires_pm_clarification(request: str) -> bool:
+    normalized = " ".join(request.casefold().split()).strip("。.!！?？ ")
+    if "user clarification:" in normalized or "用户补充:" in normalized:
+        return False
+    if "[pm:clarify]" in normalized:
+        return True
+    return normalized in {
+        "build an app",
+        "create an app",
+        "make an app",
+        "build a website",
+        "create a website",
+        "帮我做一个应用",
+        "做一个应用",
+        "创建一个应用",
+        "帮我做一个网站",
+        "做一个网站",
+        "创建一个网站",
+        "帮我做个东西",
+        "改一下",
+        "帮我修改",
+    }
+
+
 class LLMProviderError(RuntimeError):
     pass
 
@@ -84,7 +126,40 @@ class LLMProvider(Protocol):
 
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision: ...
 
+    def assess_requirements(
+        self, request: str, project_context: dict | None = None
+    ) -> PMRequirementAssessment: ...
+
     def create_blueprint(self, prompt: str, mode: Mode) -> Blueprint: ...
+
+    def create_change_brief(
+        self,
+        request: str,
+        blueprint: Blueprint,
+        app_spec: AppSpec,
+        previous_failure: PreviousFailureContext | None = None,
+    ) -> ChangeBrief: ...
+
+    def create_requirement_delta(
+        self, change_brief: ChangeBrief, blueprint: Blueprint
+    ) -> RequirementDelta: ...
+
+    def revise_architecture_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureSpec: ...
+
+    def revise_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> AppSpec: ...
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
 
@@ -186,6 +261,27 @@ class MockLLMProvider:
             reason="The message is a question or clarification rather than a build instruction.",
         )
 
+    def assess_requirements(
+        self, request: str, project_context: dict | None = None
+    ) -> PMRequirementAssessment:
+        if requires_pm_clarification(request):
+            self._record_request()
+            self._raise_if_requested(request, "product-manager-clarification")
+            return PMRequirementAssessment(
+                outcome="needs_input",
+                summary="The product goal or requested change is not concrete enough to build.",
+                question=(
+                    "请补充你希望用户完成的核心操作，以及至少一个可以直接验收的结果。"
+                    if any("\u3400" <= character <= "\u9fff" for character in request)
+                    else "What should the user be able to do, and what is one observable result?"
+                ),
+                missing_fields=["core_user_action", "observable_result"],
+            )
+        return PMRequirementAssessment(
+            outcome="ready",
+            summary="The request contains enough information for the Product Manager to proceed.",
+        )
+
     def create_blueprint(self, prompt: str, mode: Mode) -> Blueprint:
         self._record_request()
         self._raise_if_requested(prompt, "llm")
@@ -252,6 +348,111 @@ class MockLLMProvider:
             modules=modules,
             visual_direction=visual_direction,
             data_requirements=data_requirements,
+        )
+
+    def create_change_brief(
+        self,
+        request: str,
+        blueprint: Blueprint,
+        app_spec: AppSpec,
+        previous_failure: PreviousFailureContext | None = None,
+    ) -> ChangeBrief:
+        self._record_request()
+        self._raise_if_requested(request, "lead")
+        return ChangeBrief(
+            original_request=request,
+            goal=" ".join(request.split()),
+            preserve=[
+                f"Preserve the {blueprint.project_name} product identity",
+                "Preserve behavior and source files outside the requested change",
+                f"Preserve the existing {len(app_spec.pages)} page contract",
+            ],
+            acceptance_criteria=[
+                "The requested change is visible in the interactive preview",
+                "Existing deterministic validation still passes",
+            ],
+            previous_failure=previous_failure,
+        )
+
+    def create_requirement_delta(
+        self, change_brief: ChangeBrief, blueprint: Blueprint
+    ) -> RequirementDelta:
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "product-manager-change")
+        return RequirementDelta(
+            change_summary=change_brief.goal,
+            changed_requirements=[change_brief.goal],
+            preserved_requirements=[
+                *blueprint.mapped_requirements,
+                *change_brief.preserve,
+            ][:20],
+            acceptance_criteria=change_brief.acceptance_criteria,
+        )
+
+    def revise_architecture_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureSpec:
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "architect-change")
+        normalized = change_brief.original_request.casefold()
+        color_updates: dict[str, str] = {}
+        if "blue" in normalized or "蓝色" in normalized:
+            color_updates["primary_color"] = "#2457D6"
+        if "green" in normalized or "绿色" in normalized:
+            color_updates["primary_color"] = "#217A58"
+        return architecture_spec.model_copy(update=color_updates)
+
+    def revise_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> AppSpec:
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "engineer-change")
+        request = change_brief.original_request.strip()
+        hero_title = app_spec.hero_title
+        quoted = re.findall(r"[\"“”']([^\"“”']{1,120})[\"“”']", request)
+        if quoted and any(term in request.casefold() for term in ("title", "headline", "标题")):
+            hero_title = quoted[-1]
+        html = app_spec.html
+        if hero_title != app_spec.hero_title:
+            if app_spec.hero_title in html:
+                html = html.replace(app_spec.hero_title, hero_title)
+            else:
+                html = re.sub(
+                    r"(<h1(?:\s[^>]*)?>).*?(</h1>)",
+                    rf"\g<1>{html_lib.escape(hero_title)}\g<2>",
+                    html,
+                    count=1,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+        elif html:
+            html += f'\n<p class="ai-change-note">{html_lib.escape(request)}</p>'
+        css = app_spec.css
+        if architecture_spec.primary_color != app_spec.primary_color:
+            css = re.sub(
+                re.escape(app_spec.primary_color),
+                architecture_spec.primary_color,
+                css,
+                flags=re.IGNORECASE,
+            )
+        return app_spec.model_copy(
+            update={
+                "hero_title": hero_title,
+                "hero_body": request[:300],
+                "html": html,
+                "css": css,
+                "primary_color": architecture_spec.primary_color,
+                "accent_color": architecture_spec.accent_color,
+                "background_color": architecture_spec.background_color,
+            }
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
@@ -694,6 +895,31 @@ class OllamaCloudProvider:
             think=False,
         )
 
+    def assess_requirements(
+        self, request: str, project_context: dict | None = None
+    ) -> PMRequirementAssessment:
+        if not requires_pm_clarification(request):
+            return PMRequirementAssessment(
+                outcome="ready",
+                summary="The request is concrete enough to prepare a bounded product plan.",
+            )
+        return self._structured_chat(
+            PMRequirementAssessment,
+            "Product Manager",
+            (
+                "Decide whether the request contains enough information to produce a bounded, "
+                "testable product plan. Use ready whenever the product goal and at least one "
+                "observable behavior can be inferred from the user's words or existing Project "
+                "context. A short but concrete request such as 'minesweeper game' is ready. Use "
+                "needs_input only when a missing choice would materially change what is built. "
+                "When input is needed, ask exactly one focused question that the user can answer "
+                "in one message. Do not turn reasonable defaults, visual taste, or implementation "
+                "details into mandatory questions. Preserve the user's product type and platform."
+            ),
+            {"request": request, "project_context": project_context or {}},
+            think=False,
+        )
+
     def _record_response_usage(self, body: dict) -> None:
         self._usage = ProviderUsage(
             request_count=self._usage.request_count,
@@ -718,6 +944,102 @@ class OllamaCloudProvider:
                 "expand concrete pages, interactions, states, error feedback, and visual direction."
             ),
             {"request": prompt, "mode": mode.value},
+        )
+
+    def create_change_brief(
+        self,
+        request: str,
+        blueprint: Blueprint,
+        app_spec: AppSpec,
+        previous_failure: PreviousFailureContext | None = None,
+    ) -> ChangeBrief:
+        return self._structured_chat(
+            ChangeBrief,
+            "Lead",
+            (
+                "The user is continuing an existing Project. Turn the request into one bounded "
+                "change brief. Preserve the existing product identity and all behavior outside "
+                "the requested change. Acceptance criteria must be observable in the preview. "
+                "Do not propose publication, Shell commands, package installation, backend "
+                "services, or capabilities outside the accepted Web runtime."
+            ),
+            {
+                "request": request,
+                "current_blueprint": blueprint.model_dump(mode="json"),
+                "current_app_spec": app_spec.model_dump(mode="json"),
+                "previous_failure": (
+                    previous_failure.model_dump(mode="json") if previous_failure else None
+                ),
+            },
+            think=False,
+        )
+
+    def create_requirement_delta(
+        self, change_brief: ChangeBrief, blueprint: Blueprint
+    ) -> RequirementDelta:
+        return self._structured_chat(
+            RequirementDelta,
+            "Product Manager",
+            (
+                "Translate the Lead change brief into the smallest requirement delta. Keep the "
+                "accepted Blueprint as the product baseline. State changed and preserved "
+                "requirements separately and keep acceptance criteria observable."
+            ),
+            {
+                "change_brief": change_brief.model_dump(mode="json"),
+                "current_blueprint": blueprint.model_dump(mode="json"),
+            },
+        )
+
+    def revise_architecture_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureSpec:
+        return self._structured_chat(
+            ArchitectureSpec,
+            "Architect",
+            (
+                "Return the complete revised ArchitectureSpec for this bounded change. Preserve "
+                "the current architecture and visual tokens unless the requirement explicitly "
+                "changes them. Do not introduce backend, network, package, or native runtime "
+                "capabilities."
+            ),
+            {
+                "blueprint": blueprint.model_dump(mode="json"),
+                "current_architecture_spec": architecture_spec.model_dump(mode="json"),
+                "change_brief": change_brief.model_dump(mode="json"),
+                "requirement_delta": requirement_delta.model_dump(mode="json"),
+            },
+        )
+
+    def revise_app_spec(
+        self,
+        blueprint: Blueprint,
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> AppSpec:
+        return self._structured_chat(
+            AppSpec,
+            "Engineer",
+            (
+                "Modify the supplied existing AppSpec rather than regenerating from a starter. "
+                "Return the complete revised AppSpec. Change only what the ChangeBrief and "
+                "RequirementDelta require, preserve all other pages, interactions, data and "
+                "source, and copy visual tokens from ArchitectureSpec. Do not add external URLs, "
+                "network calls, dynamic imports, eval, packages, backend calls, or Shell steps."
+            ),
+            {
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
+                "current_app_spec": app_spec.model_dump(mode="json"),
+                "change_brief": change_brief.model_dump(mode="json"),
+                "requirement_delta": requirement_delta.model_dump(mode="json"),
+            },
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:

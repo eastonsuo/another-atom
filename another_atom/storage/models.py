@@ -89,6 +89,9 @@ class Project(Base, TimestampMixin):
     latest_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     repository_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     repository_branch: Mapped[str] = mapped_column(String(80), default="main")
+    active_write_run_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
 
 
 class ProjectSession(Base, TimestampMixin):
@@ -116,6 +119,10 @@ class Run(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     mode: Mapped[str] = mapped_column(String(24))
     model: Mapped[str] = mapped_column(String(100), default="mock")
+    trigger: Mapped[str] = mapped_column(String(24), default="build", index=True)
+    base_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_versions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(32))
     current_stage: Mapped[str] = mapped_column(String(40))
     prompt: Mapped[str] = mapped_column(Text)
@@ -123,6 +130,45 @@ class Run(Base, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     quota_reserved: Mapped[int] = mapped_column(Integer, default=0)
     quota_spent: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ProjectMessage(Base, TimestampMixin):
+    __tablename__ = "project_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("project_sessions.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))
+    message_type: Mapped[str] = mapped_column(String(40))
+    content: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class FileSaveOperation(Base, TimestampMixin):
+    __tablename__ = "file_save_operations"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    path: Mapped[str] = mapped_column(String(500))
+    expected_hash: Mapped[str] = mapped_column(String(71))
+    target_hash: Mapped[str | None] = mapped_column(String(71), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    git_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 class Artifact(Base, TimestampMixin):
@@ -146,6 +192,36 @@ class Approval(Base, TimestampMixin):
     artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id", ondelete="CASCADE"))
     approved: Mapped[bool] = mapped_column(Boolean)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class HumanTask(Base, TimestampMixin):
+    __tablename__ = "human_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "kind", "subject_hash", name="uq_human_task_run_kind_subject"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    stage: Mapped[str] = mapped_column(String(40))
+    prompt: Mapped[str] = mapped_column(Text)
+    subject_hash: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RunEvent(Base):

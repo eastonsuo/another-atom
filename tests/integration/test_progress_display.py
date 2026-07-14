@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 FRONTEND_TEAM_STAGES = {
     "team_leader",
     "product_manager",
+    "product_manager_clarification",
     "blueprint_approval",
     "architect",
     "engineer",
@@ -106,6 +107,19 @@ def test_adapted_run_pauses_at_awaiting_approval_stage(client: TestClient) -> No
     assert run["status"] == "awaiting_approval"
     assert run["current_stage"] in FRONTEND_TEAM_STAGES
     assert run["current_stage"] == "blueprint_approval"
+    assert run["pending_human_task"]["kind"] == "approval"
+    assert run["pending_human_task"]["status"] == "pending"
+
+    approved = client.post(
+        f"/api/runs/{run['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+    )
+    assert approved.status_code == 202, approved.text
+    completed = client.get(f"/api/runs/{run['run_id']}").json()
+    assert completed["status"] in {"completed", "completed_degraded"}
+    assert completed["pending_human_task"] is None
+    tasks = client.get(f"/api/runs/{run['run_id']}/human-tasks").json()
+    assert tasks[-1]["status"] == "approved"
 
 
 def test_all_persisted_events_expose_message_and_valid_stage(client: TestClient) -> None:

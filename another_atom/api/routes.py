@@ -44,6 +44,10 @@ from another_atom.contracts.schemas import (
     DeploymentView,
     EventView,
     HealthView,
+    HumanTaskKind,
+    HumanTaskResponse,
+    HumanTaskStatus,
+    HumanTaskView,
     LeadDecisionView,
     LeadMessageRequest,
     Mode,
@@ -51,6 +55,10 @@ from another_atom.contracts.schemas import (
     ModelsView,
     ProjectFileContent,
     ProjectFileEntry,
+    ProjectFileSaveRequest,
+    ProjectFileSaveResult,
+    ProjectMessageRequest,
+    ProjectMessageView,
     ProjectStatus,
     ProjectView,
     PublicationStrategy,
@@ -85,6 +93,9 @@ from another_atom.repository.service import (
     initialize_repository,
     list_repository_files,
     read_repository_file,
+    repository_content_hash,
+    repository_file_capabilities,
+    save_repository_text_file,
 )
 from another_atom.sandbox.client import SandboxClient, SandboxUnavailable, get_sandbox_client
 from another_atom.storage.database import SessionLocal, get_db
@@ -95,8 +106,11 @@ from another_atom.storage.models import (
     AuthSession,
     BuildJob,
     Deployment,
+    FileSaveOperation,
+    HumanTask,
     LeadMessage,
     Project,
+    ProjectMessage,
     ProjectSession,
     ProjectVersion,
     Run,
@@ -207,6 +221,15 @@ def _run_view(db: Session, run: Run) -> RunView:
             ArtifactType.VALIDATION_REPORT,
             ValidationReport,
         )
+    pending_human_task = db.scalar(
+        select(HumanTask)
+        .where(
+            HumanTask.run_id == run.id,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+        .order_by(HumanTask.created_at.desc(), HumanTask.id.desc())
+        .limit(1)
+    )
     return RunView(
         run_id=run.id,
         project_id=run.project_id,
@@ -214,6 +237,8 @@ def _run_view(db: Session, run: Run) -> RunView:
         prompt=run.prompt,
         mode=Mode(run.mode),
         model=run.model,
+        trigger=run.trigger,
+        base_version_id=run.base_version_id,
         status=RunStatus(run.status),
         current_stage=run.current_stage,
         blueprint=_artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint),
@@ -228,8 +253,27 @@ def _run_view(db: Session, run: Run) -> RunView:
         version_id=version.id if version else None,
         error_code=run.error_code,
         error_message=run.error_message,
+        pending_human_task=(
+            _human_task_view(pending_human_task) if pending_human_task else None
+        ),
         created_at=run.created_at,
         updated_at=run.updated_at,
+    )
+
+
+def _human_task_view(task: HumanTask) -> HumanTaskView:
+    return HumanTaskView(
+        id=task.id,
+        project_id=task.project_id,
+        run_id=task.run_id,
+        kind=HumanTaskKind(task.kind),
+        status=HumanTaskStatus(task.status),
+        stage=task.stage,
+        prompt=task.prompt,
+        payload=task.payload,
+        response=task.response,
+        created_at=task.created_at,
+        resolved_at=task.resolved_at,
     )
 
 
@@ -532,6 +576,18 @@ def create_run(
     )
     db.add(run)
     db.flush()
+    db.add(
+        ProjectMessage(
+            project_id=project.id,
+            session_id=project_session.id,
+            user_id=user.id,
+            run_id=run.id,
+            role="user",
+            message_type="request",
+            content=request.prompt,
+            payload={"request_type": "initial_build"},
+        )
+    )
     for attachment in request.attachments:
         db.add(
             Attachment(
@@ -598,6 +654,17 @@ def approve_blueprint(
         db.rollback()
         raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
     artifact = save_artifact(db, run.id, ArtifactType.BLUEPRINT, approval.blueprint)
+    pending_task = db.scalar(
+        select(HumanTask).where(
+            HumanTask.run_id == run.id,
+            HumanTask.kind == HumanTaskKind.APPROVAL.value,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+    )
+    if pending_task is not None:
+        pending_task.status = HumanTaskStatus.APPROVED.value
+        pending_task.response = {"decision": "approve"}
+        pending_task.resolved_at = now_utc()
     db.add(
         Approval(
             run_id=run.id,
@@ -1042,6 +1109,435 @@ def get_project(
     return _project_view(db, _owned_project(db, project_id, user.id))
 
 
+def _project_message_view(message: ProjectMessage) -> ProjectMessageView:
+    return ProjectMessageView(
+        id=message.id,
+        project_id=message.project_id,
+        run_id=message.run_id,
+        role=message.role,
+        message_type=message.message_type,
+        content=message.content,
+        payload=message.payload,
+        created_at=message.created_at,
+    )
+
+
+@router.get(
+    "/runs/{run_id}/human-tasks",
+    response_model=list[HumanTaskView],
+)
+def list_run_human_tasks(
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[HumanTaskView]:
+    run = _owned_run(db, run_id, user.id)
+    tasks = db.scalars(
+        select(HumanTask)
+        .where(HumanTask.run_id == run.id, HumanTask.user_id == user.id)
+        .order_by(HumanTask.created_at, HumanTask.id)
+    ).all()
+    return [_human_task_view(task) for task in tasks]
+
+
+@router.post(
+    "/human-tasks/{task_id}/respond",
+    response_model=RunView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def respond_to_human_task(
+    task_id: str,
+    response: HumanTaskResponse,
+    background_tasks: BackgroundTasks,
+    blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
+    job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    task = db.scalar(
+        select(HumanTask).where(HumanTask.id == task_id, HumanTask.user_id == user.id)
+    )
+    if task is None:
+        raise AppError("HUMAN_TASK_NOT_FOUND", "Human task was not found", 404)
+    run = _owned_run(db, task.run_id, user.id)
+    project = _owned_project(db, task.project_id, user.id)
+
+    if task.status != HumanTaskStatus.PENDING.value:
+        if (
+            task.kind == HumanTaskKind.INPUT_REQUEST.value
+            and task.status == HumanTaskStatus.ANSWERED.value
+            and response.response
+            and (task.response or {}).get("text") == response.response
+        ):
+            return _run_view(db, run)
+        raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
+
+    if task.kind == HumanTaskKind.INPUT_REQUEST.value:
+        if not response.response or response.decision is not None:
+            raise AppError(
+                "HUMAN_TASK_RESPONSE_REQUIRED",
+                "This task needs a text response",
+                422,
+            )
+        base_version_id = (task.payload or {}).get("base_version_id")
+        if base_version_id and project.latest_version_id != base_version_id:
+            task.status = HumanTaskStatus.STALE.value
+            task.resolved_at = now_utc()
+            db.commit()
+            raise AppError(
+                "BASE_VERSION_CHANGED",
+                "The Project changed while waiting for clarification",
+                409,
+            )
+        claimed = db.execute(
+            update(HumanTask)
+            .where(
+                HumanTask.id == task.id,
+                HumanTask.user_id == user.id,
+                HumanTask.status == HumanTaskStatus.PENDING.value,
+            )
+            .values(
+                status=HumanTaskStatus.ANSWERED.value,
+                response={"text": response.response},
+                resolved_at=now_utc(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            db.rollback()
+            raise AppError(
+                "HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409
+            )
+        db.add(
+            ProjectMessage(
+                project_id=project.id,
+                session_id=run.session_id,
+                user_id=user.id,
+                run_id=run.id,
+                role="user",
+                message_type="clarification_response",
+                content=response.response,
+                payload={"human_task_id": task.id},
+            )
+        )
+        run.status = RunStatus.PRODUCT_RUNNING.value
+        run.current_stage = "product_manager"
+        run.error_code = None
+        run.error_message = None
+        record_event(
+            db,
+            run.id,
+            "human_task.answered",
+            "User supplied the requested Product Manager clarification",
+            stage="product_manager_clarification",
+            payload={"human_task_id": task.id},
+        )
+
+        if run.trigger == "ai_edit":
+            acquired = db.execute(
+                update(Project)
+                .where(
+                    Project.id == project.id,
+                    Project.user_id == user.id,
+                    Project.latest_version_id == run.base_version_id,
+                    Project.active_write_run_id.is_(None),
+                )
+                .values(
+                    active_write_run_id=run.id,
+                    status=ProjectStatus.BUILDING.value,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if acquired.rowcount != 1:
+                db.rollback()
+                raise AppError(
+                    "PROJECT_WRITE_BUSY",
+                    "Another change is already writing this Project",
+                    409,
+                )
+            job = db.scalar(select(BuildJob).where(BuildJob.run_id == run.id))
+            if job is None:
+                job = BuildJob(
+                    run_id=run.id,
+                    project_id=run.project_id,
+                    status=BuildStatus.QUEUED.value,
+                )
+                db.add(job)
+                db.flush()
+            else:
+                job.status = BuildStatus.QUEUED.value
+                job.error_message = None
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.finished_at = None
+            db.commit()
+            job_dispatcher(job.id)
+        else:
+            db.commit()
+            background_tasks.add_task(blueprint_executor, run.id)
+        db.refresh(run)
+        return _run_view(db, run)
+
+    if response.decision not in {"reject", "cancel"}:
+        raise AppError(
+            "APPROVAL_DECISION_REQUIRED",
+            "Approve the Blueprint from its review card, or reject this task",
+            422,
+        )
+    target_status = (
+        HumanTaskStatus.REJECTED.value
+        if response.decision == "reject"
+        else HumanTaskStatus.CANCELLED.value
+    )
+    claimed = db.execute(
+        update(HumanTask)
+        .where(
+            HumanTask.id == task.id,
+            HumanTask.user_id == user.id,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+        .values(
+            status=target_status,
+            response={"decision": response.decision},
+            resolved_at=now_utc(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
+    run.status = RunStatus.CANCELLED.value
+    project.status = (
+        ProjectStatus.READY.value if project.latest_version_id else ProjectStatus.DRAFT.value
+    )
+    if project.active_write_run_id == run.id:
+        project.active_write_run_id = None
+    record_event(
+        db,
+        run.id,
+        "human_task.rejected",
+        "User declined the pending approval",
+        stage=task.stage,
+        payload={"human_task_id": task.id, "decision": response.decision},
+    )
+    db.commit()
+    return _run_view(db, run)
+
+
+@router.get(
+    "/projects/{project_id}/messages",
+    response_model=list[ProjectMessageView],
+)
+def list_project_messages(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[ProjectMessageView]:
+    project = _owned_project(db, project_id, user.id)
+    messages = db.scalars(
+        select(ProjectMessage)
+        .where(ProjectMessage.project_id == project.id)
+        .order_by(ProjectMessage.created_at, ProjectMessage.id)
+    ).all()
+    return [_project_message_view(message) for message in messages]
+
+
+@router.post(
+    "/projects/{project_id}/messages",
+    response_model=RunView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_project_change(
+    project_id: str,
+    request: ProjectMessageRequest,
+    background_tasks: BackgroundTasks,
+    blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
+    job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    project = _owned_project(db, project_id, user.id)
+    base_version = (
+        db.get(ProjectVersion, project.latest_version_id)
+        if project.latest_version_id
+        else None
+    )
+    model_config = models()
+    base_run = db.get(Run, base_version.run_id) if base_version else None
+    selected_model = request.model or (base_run.model if base_run else model_config.default_model)
+    if selected_model not in {option.id for option in model_config.models}:
+        raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
+
+    # A failed first build has no ProjectVersion yet. Keep the conversation in
+    # the existing Project and start a new build attempt from the user's
+    # corrected request instead of silently creating another Project.
+    if base_version is None:
+        project_session = ProjectSession(
+            project_id=project.id,
+            user_id=user.id,
+            title="Project recovery",
+        )
+        db.add(project_session)
+        db.flush()
+        run = Run(
+            project_id=project.id,
+            session_id=project_session.id,
+            user_id=user.id,
+            mode=Mode.TEAM.value,
+            model=selected_model,
+            trigger="build",
+            status=RunStatus.PRODUCT_RUNNING.value,
+            current_stage="product_manager",
+            prompt=request.message,
+        )
+        db.add(run)
+        db.flush()
+        claimed = db.execute(
+            update(Project)
+            .where(
+                Project.id == project.id,
+                Project.user_id == user.id,
+                Project.latest_version_id.is_(None),
+                Project.active_write_run_id.is_(None),
+            )
+            .values(
+                active_write_run_id=run.id,
+                status=ProjectStatus.BUILDING.value,
+                prompt=request.message,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            db.rollback()
+            raise AppError(
+                "PROJECT_WRITE_BUSY",
+                "Another recovery attempt is already writing this Project",
+                409,
+            )
+        previous_run = db.scalar(
+            select(Run)
+            .where(Run.project_id == project.id, Run.id != run.id)
+            .order_by(Run.created_at.desc())
+        )
+        db.add(
+            ProjectMessage(
+                project_id=project.id,
+                session_id=project_session.id,
+                user_id=user.id,
+                run_id=run.id,
+                role="user",
+                message_type="request",
+                content=request.message,
+                payload={
+                    "request_type": "failure_recovery",
+                    "retry_of_run_id": previous_run.id if previous_run else None,
+                },
+            )
+        )
+        record_event(
+            db,
+            run.id,
+            "project.recovery_started",
+            "A corrected request is continuing in the existing Project",
+            stage="product_manager",
+            payload={"retry_of_run_id": previous_run.id if previous_run else None},
+        )
+        db.commit()
+        background_tasks.add_task(blueprint_executor, run.id)
+        db.refresh(run)
+        return _run_view(db, run)
+
+    if not base_version.git_commit:
+        raise AppError(
+            "VERSION_NOT_FOUND",
+            "The current Project version does not have a Git commit",
+            409,
+        )
+
+    project_session = ProjectSession(
+        project_id=project.id,
+        user_id=user.id,
+        title="Project change",
+    )
+    db.add(project_session)
+    db.flush()
+    run = Run(
+        project_id=project.id,
+        session_id=project_session.id,
+        user_id=user.id,
+        mode=Mode.TEAM.value,
+        model=selected_model,
+        trigger="ai_edit",
+        base_version_id=base_version.id,
+        status=RunStatus.BUILD_QUEUED.value,
+        current_stage="team_leader",
+        prompt=request.message,
+    )
+    db.add(run)
+    db.flush()
+    claimed = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            Project.user_id == user.id,
+            Project.latest_version_id == base_version.id,
+            Project.active_write_run_id.is_(None),
+        )
+        .values(
+            active_write_run_id=run.id,
+            status=ProjectStatus.BUILDING.value,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        current_project = _owned_project(db, project.id, user.id)
+        if current_project.latest_version_id != base_version.id:
+            raise AppError(
+                "BASE_VERSION_CHANGED",
+                "The Project version changed before this modification could start",
+                409,
+            )
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Another change is already writing this Project",
+            409,
+        )
+    message = ProjectMessage(
+        project_id=project.id,
+        session_id=project_session.id,
+        user_id=user.id,
+        run_id=run.id,
+        role="user",
+        message_type="request",
+        content=request.message,
+        payload={"base_version_id": base_version.id},
+    )
+    job = BuildJob(
+        run_id=run.id,
+        project_id=project.id,
+        status=BuildStatus.QUEUED.value,
+    )
+    db.add_all([message, job])
+    db.flush()
+    record_event(
+        db,
+        run.id,
+        "project.change_queued",
+        "Project change queued from the current version",
+        stage="team_leader",
+        payload={
+            "base_version_id": base_version.id,
+            "base_git_commit": base_version.git_commit,
+            "build_job_id": job.id,
+        },
+    )
+    db.commit()
+    job_dispatcher(job.id)
+    db.refresh(run)
+    return _run_view(db, run)
+
+
 @router.get("/projects/{project_id}/runs/latest", response_model=RunView)
 def latest_project_run(
     project_id: str,
@@ -1074,6 +1570,10 @@ def _project_view(db: Session, project: Project) -> ProjectView:
 
 
 _ARTIFACT_FILE_PATHS = {
+    ArtifactType.CHANGE_BRIEF: ".another-atom/generated/change-brief.json",
+    ArtifactType.REQUIREMENT_DELTA: ".another-atom/generated/requirement-delta.json",
+    ArtifactType.BASE_SOURCE_SNAPSHOT: ".another-atom/generated/base-source-snapshot.json",
+    ArtifactType.SOURCE_DIFF: ".another-atom/generated/source-diff.json",
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
@@ -1106,10 +1606,19 @@ def list_project_files(
 ) -> list[ProjectFileEntry]:
     project = _owned_project(db, project_id, user.id)
     try:
-        files = [
-            ProjectFileEntry(path=path, source="repository", size=size)
-            for path, size in list_repository_files(project.id)
-        ]
+        files = []
+        for path, size in list_repository_files(project.id):
+            kind, editable, render_mode = repository_file_capabilities(path)
+            files.append(
+                ProjectFileEntry(
+                    path=path,
+                    source="repository",
+                    size=size,
+                    kind=kind,
+                    editable=editable,
+                    render_mode=render_mode,
+                )
+            )
     except RepositoryError as exc:
         raise AppError("REPOSITORY_NOT_READY", str(exc), 409) from exc
     run = _owned_project_run(db, project, run_id)
@@ -1129,6 +1638,8 @@ def list_project_files(
                         path=path,
                         source="artifact",
                         size=len(content.encode("utf-8")),
+                        kind="json",
+                        editable=False,
                     )
                 )
     return files
@@ -1149,7 +1660,16 @@ def get_project_file_content(
             content = read_repository_file(project.id, path)
         except RepositoryError as exc:
             raise AppError("REPOSITORY_FILE_NOT_READABLE", str(exc), 404) from exc
-        return ProjectFileContent(path=path, source="repository", content=content)
+        kind, editable, render_mode = repository_file_capabilities(path)
+        return ProjectFileContent(
+            path=path,
+            source="repository",
+            content=content,
+            content_hash=repository_content_hash(content),
+            editable=editable,
+            kind=kind,
+            render_mode=render_mode,
+        )
 
     run = _owned_project_run(db, project, run_id)
     if run is None:
@@ -1171,6 +1691,178 @@ def get_project_file_content(
         path=path,
         source="artifact",
         content=json.dumps(artifact.payload, ensure_ascii=False, indent=2) + "\n",
+        content_hash=repository_content_hash(
+            json.dumps(artifact.payload, ensure_ascii=False, indent=2) + "\n"
+        ),
+        editable=False,
+        kind="json",
+        render_mode="source",
+    )
+
+
+@router.put(
+    "/projects/{project_id}/files/content",
+    response_model=ProjectFileSaveResult,
+)
+def save_project_file_content(
+    project_id: str,
+    request: ProjectFileSaveRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProjectFileSaveResult:
+    project = _owned_project(db, project_id, user.id)
+    existing = db.get(FileSaveOperation, request.operation_id)
+    if existing is not None:
+        if (
+            existing.project_id != project.id
+            or existing.user_id != user.id
+            or existing.path != request.path
+            or existing.expected_hash != request.expected_content_hash
+        ):
+            raise AppError(
+                "FILE_SAVE_OPERATION_CONFLICT",
+                "The operation id is already bound to another save",
+                409,
+            )
+        if existing.status == "completed" and existing.git_commit and existing.target_hash:
+            return ProjectFileSaveResult(
+                path=existing.path,
+                content_hash=existing.target_hash,
+                size=len(request.content.encode("utf-8")),
+                git_commit=existing.git_commit,
+                saved_at=existing.updated_at,
+            )
+        if existing.status == "failed":
+            raise AppError(
+                existing.error_code or "REPOSITORY_FILE_SAVE_FAILED",
+                "The previous save operation failed; retry with a new operation id",
+                409,
+            )
+    else:
+        existing = FileSaveOperation(
+            id=request.operation_id,
+            project_id=project.id,
+            user_id=user.id,
+            path=request.path,
+            expected_hash=request.expected_content_hash,
+            status="pending",
+        )
+        db.add(existing)
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise AppError(
+                "FILE_SAVE_OPERATION_CONFLICT",
+                "The operation id is already in use",
+                409,
+            ) from exc
+
+    kind, editable, _ = repository_file_capabilities(request.path)
+    if not editable:
+        existing.status = "failed"
+        existing.error_code = "REPOSITORY_FILE_NOT_EDITABLE"
+        db.commit()
+        raise AppError(
+            "REPOSITORY_FILE_NOT_EDITABLE",
+            "Application source and Runtime files must use their validated edit flow",
+            409,
+        )
+    if kind == "json":
+        try:
+            json.loads(request.content)
+        except json.JSONDecodeError as exc:
+            existing.status = "failed"
+            existing.error_code = "REPOSITORY_FILE_VALIDATION_FAILED"
+            db.commit()
+            raise AppError(
+                "REPOSITORY_FILE_VALIDATION_FAILED",
+                f"JSON is invalid at line {exc.lineno}, column {exc.colno}",
+                422,
+            ) from exc
+
+    claimed = db.execute(
+        update(Project)
+        .where(Project.id == project.id, Project.active_write_run_id.is_(None))
+        .values(active_write_run_id=existing.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Another operation is currently writing this Project",
+            409,
+        )
+    existing.status = "writing"
+    db.commit()
+
+    try:
+        target_hash, git_commit, size = save_repository_text_file(
+            project.id,
+            request.path,
+            request.content,
+            request.expected_content_hash,
+            existing.id,
+        )
+    except RepositoryError as exc:
+        message = str(exc)
+        if "changed after it was opened" in message:
+            error_code, status_code = "REPOSITORY_FILE_CONFLICT", 409
+        elif "read-only" in message:
+            error_code, status_code = "REPOSITORY_FILE_NOT_EDITABLE", 409
+        elif "too large" in message:
+            error_code, status_code = "REPOSITORY_FILE_VALIDATION_FAILED", 422
+        else:
+            error_code, status_code = "REPOSITORY_FILE_SAVE_FAILED", 500
+        operation = db.get(FileSaveOperation, request.operation_id)
+        project = db.get(Project, project.id)
+        assert operation is not None and project is not None
+        operation.status = "failed"
+        operation.error_code = error_code
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.active_write_run_id == operation.id)
+            .values(active_write_run_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+        raise AppError(error_code, message, status_code) from exc
+
+    operation = db.get(FileSaveOperation, request.operation_id)
+    project = db.get(Project, project.id)
+    assert operation is not None and project is not None
+    operation.status = "completed"
+    operation.target_hash = target_hash
+    operation.git_commit = git_commit
+    db.execute(
+        update(Project)
+        .where(Project.id == project.id, Project.active_write_run_id == operation.id)
+        .values(active_write_run_id=None)
+        .execution_options(synchronize_session=False)
+    )
+    if target_hash != request.expected_content_hash:
+        _record_project_event(
+            db,
+            project.id,
+            "project.file.updated",
+            "A Project document was updated",
+            {
+                "path": request.path,
+                "old_hash": request.expected_content_hash,
+                "new_hash": target_hash,
+                "git_commit": git_commit,
+                "operation_id": operation.id,
+            },
+        )
+    db.commit()
+    db.refresh(operation)
+    return ProjectFileSaveResult(
+        path=request.path,
+        content_hash=target_hash,
+        size=size,
+        git_commit=git_commit,
+        saved_at=operation.updated_at,
     )
 
 
@@ -1229,78 +1921,116 @@ def revise_project(
     current = db.get(ProjectVersion, project.latest_version_id)
     if current is None:
         raise AppError("VERSION_NOT_FOUND", "Build a version before editing", 409)
-    app_spec = AppSpec.model_validate(current.app_spec)
-    updates = revision.model_dump(exclude_none=True)
-    if not updates:
-        raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
-    if app_spec.html:
-        html = app_spec.html
-        css = app_spec.css
-        if "hero_title" in updates:
-            html = html.replace(app_spec.hero_title, updates["hero_title"])
-        if "hero_body" in updates:
-            html = html.replace(app_spec.hero_body, updates["hero_body"])
-        if "primary_color" in updates:
-            css = re.sub(
-                re.escape(app_spec.primary_color),
-                updates["primary_color"],
-                css,
-                flags=re.IGNORECASE,
-            )
-        updates.update({"html": html, "css": css})
-    app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
-    blueprint, architecture_spec = _validation_contracts(db, current.run_id)
-    validation = validate_app_spec(
-        app_spec,
-        project.prompt,
-        blueprint=blueprint,
-        architecture_spec=architecture_spec,
-    )
-    if not validation.passed:
-        raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
-    review_report = _coerce_review_report(current.review_report)
-    assert review_report is not None
-    review_report = review_report.model_copy(
-        update={
-            "engineering_checks": [check.label for check in validation.checks],
-            "reviewer_mode": "deterministic_only",
-        }
-    )
-    latest_number = db.scalar(
-        select(func.max(ProjectVersion.version_number)).where(
-            ProjectVersion.project_id == project.id
+    operation_id = f"revision-{uuid4()}"
+    claimed = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            Project.user_id == user.id,
+            Project.latest_version_id == current.id,
+            Project.active_write_run_id.is_(None),
         )
+        .values(active_write_run_id=operation_id)
+        .execution_options(synchronize_session=False)
     )
-    version = ProjectVersion(
-        project_id=project.id,
-        run_id=current.run_id,
-        version_number=(latest_number or 0) + 1,
-        source=VersionSource.EDIT.value,
-        app_spec=app_spec.model_dump(mode="json"),
-        data_profile=current.data_profile,
-        validation_report=validation.model_dump(mode="json"),
-        review_report=review_report.model_dump(mode="json"),
-    )
-    db.add(version)
-    db.flush()
-    version.git_commit = commit_version(
-        project.id,
-        version.id,
-        version.version_number,
-        VersionSource.EDIT,
-        app_spec,
-    )
-    project.latest_version_id = version.id
-    _record_project_event(
-        db,
-        project.id,
-        "version.created",
-        "A validated edit version was created",
-        {"version_id": version.id, "source": VersionSource.EDIT.value},
-    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Wait for the active Project change before creating another version",
+            409,
+        )
     db.commit()
-    db.refresh(version)
-    return _version_view(version)
+    try:
+        project = _owned_project(db, project_id, user.id)
+        app_spec = AppSpec.model_validate(current.app_spec)
+        updates = revision.model_dump(exclude_none=True)
+        if not updates:
+            raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
+        if app_spec.html:
+            html = app_spec.html
+            css = app_spec.css
+            if "hero_title" in updates:
+                html = html.replace(app_spec.hero_title, updates["hero_title"])
+            if "hero_body" in updates:
+                html = html.replace(app_spec.hero_body, updates["hero_body"])
+            if "primary_color" in updates:
+                css = re.sub(
+                    re.escape(app_spec.primary_color),
+                    updates["primary_color"],
+                    css,
+                    flags=re.IGNORECASE,
+                )
+            updates.update({"html": html, "css": css})
+        app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
+        blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+        validation = validate_app_spec(
+            app_spec,
+            project.prompt,
+            blueprint=blueprint,
+            architecture_spec=architecture_spec,
+        )
+        if not validation.passed:
+            raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
+        review_report = _coerce_review_report(current.review_report)
+        assert review_report is not None
+        review_report = review_report.model_copy(
+            update={
+                "engineering_checks": [check.label for check in validation.checks],
+                "reviewer_mode": "deterministic_only",
+            }
+        )
+        latest_number = db.scalar(
+            select(func.max(ProjectVersion.version_number)).where(
+                ProjectVersion.project_id == project.id
+            )
+        )
+        version = ProjectVersion(
+            project_id=project.id,
+            run_id=current.run_id,
+            version_number=(latest_number or 0) + 1,
+            source=VersionSource.EDIT.value,
+            app_spec=app_spec.model_dump(mode="json"),
+            data_profile=current.data_profile,
+            validation_report=validation.model_dump(mode="json"),
+            review_report=review_report.model_dump(mode="json"),
+        )
+        db.add(version)
+        db.flush()
+        version.git_commit = commit_version(
+            project.id,
+            version.id,
+            version.version_number,
+            VersionSource.EDIT,
+            app_spec,
+        )
+        project.latest_version_id = version.id
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.active_write_run_id == operation_id)
+            .values(active_write_run_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        _record_project_event(
+            db,
+            project.id,
+            "version.created",
+            "A validated edit version was created",
+            {"version_id": version.id, "source": VersionSource.EDIT.value},
+        )
+        db.commit()
+        db.refresh(version)
+        return _version_view(version)
+    except Exception:
+        db.rollback()
+        db.execute(
+            update(Project)
+            .where(Project.id == project_id, Project.active_write_run_id == operation_id)
+            .values(active_write_run_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+        raise
 
 
 @router.post("/projects/{project_id}/restore/{version_id}", response_model=VersionView)
@@ -1311,6 +2041,12 @@ def restore_version(
     user: User = Depends(get_current_user),
 ) -> VersionView:
     project = _owned_project(db, project_id, user.id)
+    if project.active_write_run_id:
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Wait for the active Project change before restoring a version",
+            409,
+        )
     source_version = db.scalar(
         select(ProjectVersion).where(
             ProjectVersion.id == version_id, ProjectVersion.project_id == project.id
@@ -1648,8 +2384,42 @@ def save_project_sandbox(
     session = _owned_sandbox_session(db, session_id, user.id)
     if session.project_id != project.id:
         raise AppError("SANDBOX_SESSION_NOT_FOUND", "Sandbox session was not found", 404)
+    claimed_project = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            Project.user_id == user.id,
+            Project.active_write_run_id.is_(None),
+        )
+        .values(active_write_run_id=session.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed_project.rowcount != 1:
+        db.rollback()
+        current_project = _owned_project(db, project.id, user.id)
+        if current_project.active_write_run_id == session.id:
+            raise AppError(
+                "SANDBOX_SAVE_NOT_ALLOWED",
+                "Sandbox save is already in progress",
+                409,
+            )
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Wait for the active Project change before saving Vim changes",
+            409,
+        )
+    db.commit()
     sandbox = sandbox_factory()
-    _claim_sandbox_save(db, session)
+    try:
+        _claim_sandbox_save(db, session)
+    except Exception:
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.active_write_run_id == session.id)
+            .values(active_write_run_id=None)
+        )
+        db.commit()
+        raise
     try:
         app_spec = sandbox.read_app_spec(session.remote_session_id)
     except SandboxUnavailable as exc:
@@ -1696,6 +2466,12 @@ def save_project_sandbox(
             app_spec,
         )
         project.latest_version_id = version.id
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.active_write_run_id == session.id)
+            .values(active_write_run_id=None)
+            .execution_options(synchronize_session=False)
+        )
         session = db.get(SandboxSession, session.id)
         assert session is not None
         session.status = "closed"
@@ -1710,6 +2486,12 @@ def save_project_sandbox(
         db.commit()
     except Exception:
         _release_sandbox_save(db, session.id)
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.active_write_run_id == session.id)
+            .values(active_write_run_id=None)
+        )
+        db.commit()
         raise
     try:
         sandbox.close(session.remote_session_id)

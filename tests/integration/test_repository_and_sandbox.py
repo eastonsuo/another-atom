@@ -2,14 +2,22 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Event
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from another_atom.api.dependencies import get_sandbox
 from another_atom.contracts.schemas import AppSpec
+from another_atom.repository import service as repository_service
 from another_atom.sandbox.client import RemoteSandboxSession
 from another_atom.storage.database import init_database
-from another_atom.storage.models import Project, ProjectVersion, now_utc
+from another_atom.storage.models import (
+    FileSaveOperation,
+    Project,
+    ProjectVersion,
+    RunEvent,
+    now_utc,
+)
 
 
 def _built_run(client: TestClient, headers: dict | None = None) -> dict:
@@ -95,6 +103,207 @@ def test_project_file_browser_lists_repository_and_generated_artifacts(client) -
     )
     assert content.status_code == 200
     assert '"project_name"' in content.json()["content"]
+    readme = next(
+        item
+        for item in files
+        if item["source"] == "repository" and item["path"] == "README.md"
+    )
+    assert readme["kind"] == "markdown"
+    assert readme["editable"] is True
+    assert readme["render_mode"] == "markdown"
+    assert artifact_file["editable"] is False
+
+
+def test_project_document_save_uses_hash_git_and_idempotent_operation(client) -> None:
+    run = _built_run(client)
+    project_id = run["project_id"]
+    versions_before = client.get(f"/api/projects/{project_id}/versions").json()
+    opened = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    )
+    assert opened.status_code == 200, opened.text
+    baseline = opened.json()
+    assert baseline["editable"] is True
+    assert baseline["content_hash"].startswith("sha256:")
+    updated = baseline["content"] + "\n## Notes\n\nSaved from the file panel.\n"
+    operation_id = str(uuid4())
+    payload = {
+        "path": "README.md",
+        "content": updated,
+        "expected_content_hash": baseline["content_hash"],
+        "operation_id": operation_id,
+    }
+    saved = client.put(f"/api/projects/{project_id}/files/content", json=payload)
+    assert saved.status_code == 200, saved.text
+    result = saved.json()
+    assert result["git_commit"]
+    assert result["version"] is None
+    assert result["content_hash"] != baseline["content_hash"]
+
+    replay = client.put(f"/api/projects/{project_id}/files/content", json=payload)
+    assert replay.status_code == 200
+    assert replay.json()["git_commit"] == result["git_commit"]
+    assert client.get(f"/api/projects/{project_id}/versions").json() == versions_before
+    assert client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    ).json()["content"] == updated
+
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        operation = db.get(FileSaveOperation, operation_id)
+        event = db.query(RunEvent).filter_by(event_type="project.file.updated").one()
+        assert project is not None and project.active_write_run_id is None
+        assert operation is not None and operation.status == "completed"
+        assert event.payload["path"] == "README.md"
+        operation.status = "writing"
+        operation.target_hash = None
+        project.active_write_run_id = operation.id
+        db.commit()
+
+    init_database(client.app.state.testing_session.kw["bind"])
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        operation = db.get(FileSaveOperation, operation_id)
+        assert project is not None and project.active_write_run_id is None
+        assert operation is not None and operation.status == "completed"
+        assert operation.target_hash == result["content_hash"]
+
+
+def test_project_document_save_rejects_stale_hash_and_keeps_latest_content(client) -> None:
+    run = _built_run(client)
+    project_id = run["project_id"]
+    opened = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    ).json()
+    first_content = opened["content"] + "\nFirst save.\n"
+    first = client.put(
+        f"/api/projects/{project_id}/files/content",
+        json={
+            "path": "README.md",
+            "content": first_content,
+            "expected_content_hash": opened["content_hash"],
+            "operation_id": str(uuid4()),
+        },
+    )
+    assert first.status_code == 200
+    stale = client.put(
+        f"/api/projects/{project_id}/files/content",
+        json={
+            "path": "README.md",
+            "content": opened["content"] + "\nStale overwrite.\n",
+            "expected_content_hash": opened["content_hash"],
+            "operation_id": str(uuid4()),
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "REPOSITORY_FILE_CONFLICT"
+    current = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    ).json()
+    assert current["content"] == first_content
+
+
+def test_file_panel_keeps_application_source_and_artifacts_read_only(client) -> None:
+    run = _built_run(client)
+    project_id = run["project_id"]
+    source = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "app-spec.json", "source": "repository"},
+    ).json()
+    assert source["editable"] is False
+    blocked = client.put(
+        f"/api/projects/{project_id}/files/content",
+        json={
+            "path": "app-spec.json",
+            "content": source["content"] + "\n// bypass validator\n",
+            "expected_content_hash": source["content_hash"],
+            "operation_id": str(uuid4()),
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["code"] == "REPOSITORY_FILE_NOT_EDITABLE"
+
+
+def test_project_document_save_respects_project_writer_and_owner(client) -> None:
+    headers = {"X-User-ID": "document-owner"}
+    run = _built_run(client, headers=headers)
+    project_id = run["project_id"]
+    opened = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+        headers=headers,
+    ).json()
+    payload = {
+        "path": "README.md",
+        "content": opened["content"] + "\nOwner edit.\n",
+        "expected_content_hash": opened["content_hash"],
+        "operation_id": str(uuid4()),
+    }
+    assert client.put(
+        f"/api/projects/{project_id}/files/content",
+        json=payload,
+        headers={"X-User-ID": "other-user"},
+    ).status_code == 404
+
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        project.active_write_run_id = "active-agent-run"
+        db.commit()
+    busy = client.put(
+        f"/api/projects/{project_id}/files/content",
+        json={**payload, "operation_id": str(uuid4())},
+        headers=headers,
+    )
+    assert busy.status_code == 409
+    assert busy.json()["code"] == "PROJECT_WRITE_BUSY"
+    current = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+        headers=headers,
+    ).json()
+    assert current["content"] == opened["content"]
+
+
+def test_project_document_save_rolls_back_file_when_git_commit_fails(
+    client, monkeypatch
+) -> None:
+    run = _built_run(client)
+    project_id = run["project_id"]
+    opened = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    ).json()
+    original_git = repository_service._git
+
+    def fail_commit(path, *arguments):
+        if arguments and arguments[0] == "commit":
+            raise repository_service.RepositoryError("simulated commit failure")
+        return original_git(path, *arguments)
+
+    monkeypatch.setattr(repository_service, "_git", fail_commit)
+    failed = client.put(
+        f"/api/projects/{project_id}/files/content",
+        json={
+            "path": "README.md",
+            "content": opened["content"] + "\nThis must roll back.\n",
+            "expected_content_hash": opened["content_hash"],
+            "operation_id": str(uuid4()),
+        },
+    )
+    assert failed.status_code == 500
+    current = client.get(
+        f"/api/projects/{project_id}/files/content",
+        params={"path": "README.md", "source": "repository"},
+    ).json()
+    assert current["content"] == opened["content"]
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        assert project is not None and project.active_write_run_id is None
 
 
 def test_project_file_browser_blocks_cross_user_and_git_metadata(client) -> None:
