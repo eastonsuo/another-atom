@@ -19,7 +19,13 @@ def create_and_build(client: TestClient, prompt: str = PROMPT, mode: str = "team
     assert initial["blueprint"] is None
     run = client.get(f"/api/runs/{initial['run_id']}").json()
     assert run["blueprint"]["support_level"] == "supported"
-    return run
+    assert run["status"] == "awaiting_approval"
+    approved = client.post(
+        f"/api/runs/{run['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+    )
+    assert approved.status_code == 202, approved.text
+    return client.get(f"/api/runs/{run['run_id']}").json()
 
 
 def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
@@ -30,13 +36,13 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
     run = create_and_build(client)
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True
-    assert run["data_profile"]["warnings"] == []
-    assert run["review_report"]["verdict"] == "accept"
-    assert run["review_report"]["warnings"] == []
+    assert run["data_profile"] is None
+    assert run["review_report"] is None
+    assert run["execution_report"]["status"] == "passed"
     assert run["model"] == "mock"
     assert run["version_id"]
     quota = client.get("/api/quota").json()
-    assert quota["used"] == 5
+    assert quota["used"] == 3
     assert quota["reserved"] == 0
     with client.app.state.testing_session() as db:
         settles = db.scalars(
@@ -51,10 +57,8 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
         "product_manager",
         "architect",
         "engineer",
-        "data",
-        "reviewer",
     ]
-    assert [entry.request_count for entry in settles] == [1, 1, 1, 1, 1]
+    assert [entry.request_count for entry in settles] == [1, 1, 1]
 
     versions = client.get(f"/api/projects/{run['project_id']}/versions")
     assert versions.status_code == 200
@@ -108,10 +112,10 @@ def test_events_and_project_state_are_recoverable(client: TestClient) -> None:
     events = client.get(f"/api/runs/{run['run_id']}/events/history")
     assert events.status_code == 200
     event_types = [event["type"] for event in events.json()]
-    assert "build.auto_authorized" in event_types
-    assert "approval.required" not in event_types
+    assert "approval.required" in event_types
+    assert "approval.confirmed" in event_types
     assert "build.queued" in event_types
-    assert "validation.completed" in event_types
+    assert "executor.validation.completed" in event_types
     assert event_types[-1] == "run.completed"
 
     latest = client.get(f"/api/projects/{run['project_id']}/runs/latest")
@@ -148,6 +152,11 @@ def test_golden_path_completes_five_out_of_five(client: TestClient) -> None:
         initial_events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
         assert initial_events
         assert perf_counter() - started < 2.0
+        approved = client.post(
+            f"/api/runs/{run['run_id']}/approve",
+            json={"blueprint": run["blueprint"]},
+        )
+        assert approved.status_code == 202
         current = client.get(f"/api/runs/{run['run_id']}").json()
         completed += current["status"] == "completed"
     assert completed == 5

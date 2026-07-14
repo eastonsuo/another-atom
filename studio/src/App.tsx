@@ -104,8 +104,8 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
     product_manager: "产品经理正在整理需求",
     product_manager_clarification: "产品经理正在等待你补充需求",
     build_queue: "构建任务正在排队",
-    architect: "架构师正在设计方案",
-    engineer: "工程师正在生成应用规格",
+    architect: "架构师正在生成架构设计文档",
+    engineer: "工程师正在生成代码和单元测试",
     data: "数据分析师正在分析应用数据",
     build: "校验器正在检查源码与交付证据",
     reviewer: "审查员正在独立审查结果",
@@ -116,8 +116,8 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
     product_manager: "Product Manager is structuring the requirement",
     product_manager_clarification: "Product Manager is waiting for your clarification",
     build_queue: "The build job is waiting to start",
-    architect: "Architect is designing the solution",
-    engineer: "Engineer is generating the application specification",
+    architect: "Architect（架构师）正在生成架构设计文档",
+    engineer: "Engineer（工程师）正在生成代码和单元测试",
     data: "Data Analyst is analyzing application data",
     build: "Validator is checking source and delivery evidence",
     reviewer: "Reviewer is independently checking the result",
@@ -1226,13 +1226,9 @@ function Workspace({
 }
 
 function Timeline({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
-  const stages = run.mode === "team"
-    ? ["team_leader", "product_manager", "architect", "engineer", "data", "reviewer", "complete"]
-    : ["product_manager", "engineer", "complete"];
-  const flow = run.mode === "team"
-    ? ["team_leader", "product_manager", "product_manager_clarification", "scope_review", "blueprint_approval", "build_queue", "architect", "engineer", "data", "build", "reviewer", "complete"]
-    : ["product_manager", "product_manager_clarification", "scope_review", "blueprint_approval", "build_queue", "engineer", "build", "complete"];
-  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", architect: "architect", engineer: "engineer", data: "data", reviewer: "reviewer", complete: "reviewer" };
+  const stages = ["product_manager", "architect", "engineer", "build", "complete"];
+  const flow = ["product_manager", "product_manager_clarification", "scope_review", "blueprint_approval", "build_queue", "architect", "engineer", "build", "complete"];
+  const roles: Record<string, RoleKey> = { product_manager: "product", architect: "architect", engineer: "engineer", build: "engineer", complete: "engineer" };
   const currentIndex = flow.indexOf(run.current_stage);
   const runComplete = run.status === "completed" || run.status === "completed_degraded";
   return <div className="timeline">
@@ -1284,7 +1280,7 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
   if (run.status === "awaiting_approval") {
     return {
       title: ui(language, "Waiting for approval"),
-      detail: ui(language, "The Blueprint changes the requested scope, so the build is paused until you confirm it."),
+      detail: language === "zh" ? "产品规格已生成；确认后才会进入架构设计和代码实现。" : "ProductSpec（产品规格）已生成；确认后才会进入架构设计和代码实现。",
       tone: "warning",
     };
   }

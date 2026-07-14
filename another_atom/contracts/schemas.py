@@ -63,7 +63,10 @@ class HumanTaskStatus(StrEnum):
 class BuildStatus(StrEnum):
     QUEUED = "queued"
     WAITING_INPUT = "waiting_input"
+    DISPATCHING = "dispatching"
+    MATERIALIZING = "materializing"
     BUILDING = "building"
+    TESTING = "testing"
     VALIDATING = "validating"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -86,9 +89,13 @@ class ArtifactType(StrEnum):
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     PRODUCT_SPEC = "product_spec"
+    ARCHITECTURE_DESIGN = "architecture_design"
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
     APP_SPEC_REPAIR = "app_spec_repair"
+    SOURCE_BUNDLE = "source_bundle"
+    BUILD_ARTIFACT = "build_artifact"
+    EXECUTION_REPORT = "execution_report"
     DATA_PROFILE = "data_profile"
     VALIDATION_REPORT = "validation_report"
     REPAIR_VALIDATION_REPORT = "repair_validation_report"
@@ -181,6 +188,45 @@ class ArchitectureSpec(BaseModel):
     style: str = Field(min_length=1, max_length=120)
 
 
+class ArchitectureComponent(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    responsibility: str = Field(min_length=1, max_length=500)
+    files: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ArchitectureDesignDraft(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    summary: str = Field(min_length=1, max_length=600)
+    target_platform: str = Field(min_length=1, max_length=120)
+    runtime_adapter: str = Field(min_length=1, max_length=80)
+    capability_gaps: list[str] = Field(default_factory=list, max_length=12)
+    components: list[ArchitectureComponent] = Field(min_length=1, max_length=20)
+    state_and_data_flow: list[str] = Field(min_length=1, max_length=20)
+    interactions: list[str] = Field(min_length=1, max_length=20)
+    interfaces: list[str] = Field(default_factory=list, max_length=20)
+    directory_plan: list[str] = Field(min_length=1, max_length=30)
+    test_strategy: list[str] = Field(min_length=1, max_length=20)
+    acceptance_mapping: list[str] = Field(min_length=1, max_length=30)
+    visual_tokens: ArchitectureSpec
+    requires_product_reapproval: bool = False
+    reapproval_reason: str | None = Field(default=None, max_length=600)
+
+    @model_validator(mode="after")
+    def reapproval_reason_matches_flag(self) -> ArchitectureDesignDraft:
+        if self.requires_product_reapproval and not (self.reapproval_reason or "").strip():
+            raise ValueError("reapproval_reason is required when product reapproval is required")
+        if not self.requires_product_reapproval and self.reapproval_reason is not None:
+            self.reapproval_reason = None
+        return self
+
+
+class ArchitectureDesign(ArchitectureDesignDraft):
+    path: Literal["docs/architecture-design.md"] = "docs/architecture-design.md"
+    content: str = Field(min_length=1, max_length=60_000)
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    product_spec_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
 class ProductItem(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9-]+$")
     name: str = Field(min_length=1, max_length=100)
@@ -210,6 +256,69 @@ class AppSpec(BaseModel):
     html: str = Field(default="", max_length=40_000)
     css: str = Field(default="", max_length=40_000)
     javascript: str = Field(default="", max_length=40_000)
+
+
+class SourceFileDraft(BaseModel):
+    path: str = Field(min_length=1, max_length=240)
+    role: Literal["source", "test", "config"]
+    content: str = Field(max_length=120_000)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_relative_and_bounded(cls, value: str) -> str:
+        normalized = value.strip()
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or "\\" in normalized
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("Source file path must be a normalized relative POSIX path")
+        return normalized
+
+
+class SourceFile(SourceFileDraft):
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class EngineerOutput(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    app_spec: AppSpec
+    unit_tests: list[SourceFileDraft] = Field(min_length=1, max_length=8)
+
+    @field_validator("unit_tests")
+    @classmethod
+    def tests_use_test_paths(cls, value: list[SourceFileDraft]) -> list[SourceFileDraft]:
+        paths = set()
+        for item in value:
+            if item.role != "test" or not item.path.startswith("tests/"):
+                raise ValueError("Engineer unit tests must use role=test under tests/")
+            if not item.path.endswith(".test.js"):
+                raise ValueError("web-static-v1 tests must end with .test.js")
+            if item.path in paths:
+                raise ValueError("Engineer unit test paths must be unique")
+            paths.add(item.path)
+        return value
+
+
+class SourceBundle(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    adapter_id: Literal["web-static-v1"] = "web-static-v1"
+    project_type: str = Field(min_length=1, max_length=80)
+    entrypoint: Literal["index.html"] = "index.html"
+    files: list[SourceFile] = Field(min_length=5, max_length=24)
+    manifest_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("files")
+    @classmethod
+    def file_paths_are_unique(cls, value: list[SourceFile]) -> list[SourceFile]:
+        paths = [item.path for item in value]
+        if len(paths) != len(set(paths)):
+            raise ValueError("SourceBundle file paths must be unique")
+        if "index.html" not in paths or not any(item.role == "test" for item in value):
+            raise ValueError("SourceBundle requires index.html and at least one test")
+        return value
 
 
 class PreviousFailureContext(BaseModel):
@@ -287,6 +396,97 @@ class ValidationReport(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     passed: bool
     checks: list[ValidationCheck]
+
+
+class ExecutionRequest(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    execution_id: str = Field(min_length=1, max_length=80)
+    run_id: str = Field(min_length=1, max_length=80)
+    attempt: int = Field(ge=1)
+    adapter_id: Literal["web-static-v1"] = "web-static-v1"
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    product_spec_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    architecture_design_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    source_manifest_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    prompt: str = Field(min_length=1, max_length=4000)
+    blueprint: Blueprint
+    architecture_design: ArchitectureDesign
+    app_spec: AppSpec
+    source_bundle: SourceBundle
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=30)
+    deadline_ms: int = Field(ge=1_000, le=600_000)
+
+
+class ExecutionEvent(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    execution_id: str
+    sequence: int = Field(ge=1)
+    type: Literal[
+        "execution.accepted",
+        "source.materializing",
+        "source.materialized",
+        "build.started",
+        "build.completed",
+        "test.started",
+        "test.completed",
+        "validation.started",
+        "validation.completed",
+        "execution.completed",
+        "execution.failed",
+        "execution.cancelled",
+    ]
+    timestamp: datetime
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class CommandExecution(BaseModel):
+    status: Literal["passed", "failed", "cancelled", "timeout", "not_run"]
+    exit_code: int | None = None
+    duration_ms: int = Field(ge=0)
+    stdout: str = Field(default="", max_length=20_000)
+    stderr: str = Field(default="", max_length=20_000)
+
+
+class ExecutionReport(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    execution_id: str
+    adapter_id: str
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["passed", "failed", "cancelled"]
+    build: CommandExecution
+    test: CommandExecution
+    tests_collected: int = Field(ge=0)
+    tests_passed: int = Field(ge=0)
+    tests_failed: int = Field(ge=0)
+    started_at: datetime
+    finished_at: datetime
+    error_code: str | None = Field(default=None, max_length=80)
+    error_message: str | None = Field(default=None, max_length=1000)
+
+
+class BuildArtifactFile(BaseModel):
+    path: str = Field(min_length=1, max_length=240)
+    content: str = Field(max_length=120_000)
+    size_bytes: int = Field(ge=0)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class BuildArtifact(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    files: list[BuildArtifactFile] = Field(default_factory=list, max_length=20)
+    manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ExecutionResult(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    execution_id: str
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    adapter_id: str
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["passed", "failed", "cancelled"]
+    build_artifact: BuildArtifact | None = None
+    execution_report: ExecutionReport
+    validation_report: ValidationReport
 
 
 class DataCheck(BaseModel):
@@ -405,8 +605,11 @@ class RunView(BaseModel):
     current_stage: str
     blueprint: Blueprint | None = None
     product_spec: ProductSpec | None = None
+    architecture_design: ArchitectureDesign | None = None
     architecture_spec: ArchitectureSpec | None = None
     app_spec: AppSpec | None = None
+    source_bundle: SourceBundle | None = None
+    execution_report: ExecutionReport | None = None
     data_profile: DataProfile | None = None
     validation_report: ValidationReport | None = None
     review_report: ReviewReport | None = None

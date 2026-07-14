@@ -34,6 +34,13 @@ def test_initial_pm_clarification_is_persisted_and_resumes_same_run(
     assert resumed.status_code == 202, resumed.text
     completed = client.get(f"/api/runs/{paused['run_id']}").json()
     assert completed["run_id"] == paused["run_id"]
+    assert completed["status"] == "awaiting_approval"
+    approved = client.post(
+        f"/api/runs/{paused['run_id']}/approve",
+        json={"blueprint": completed["blueprint"]},
+    )
+    assert approved.status_code == 202
+    completed = client.get(f"/api/runs/{paused['run_id']}").json()
     assert completed["status"] == "completed"
     assert completed["version_id"]
     assert completed["pending_human_task"] is None
@@ -106,8 +113,8 @@ def test_same_response_retry_redispatches_lost_blueprint_execution(
     )
     assert retried.status_code == 202
     resumed = queued_client.get(f"/api/runs/{paused['run_id']}").json()
-    assert resumed["status"] == "build_queued"
-    assert resumed["pending_human_task"] is None
+    assert resumed["status"] == "awaiting_approval"
+    assert resumed["pending_human_task"]["kind"] == "approval"
 
 
 def test_input_response_cannot_revive_non_waiting_run(queued_client: TestClient) -> None:

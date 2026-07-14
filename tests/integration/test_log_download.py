@@ -6,6 +6,12 @@ def test_user_can_download_own_run_log(client: TestClient) -> None:
         "/api/runs",
         json={"prompt": "Build a product catalog for home objects", "mode": "team"},
     ).json()
+    pending = client.get(f"/api/runs/{created['run_id']}").json()
+    approved = client.post(
+        f"/api/runs/{created['run_id']}/approve",
+        json={"blueprint": pending["blueprint"]},
+    )
+    assert approved.status_code == 202
 
     response = client.get(f"/api/runs/{created['run_id']}/logs/download")
 

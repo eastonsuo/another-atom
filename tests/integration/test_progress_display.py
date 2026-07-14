@@ -52,7 +52,18 @@ FRONTEND_STATUSES = {
 
 def _create_team_run(client: TestClient, prompt: str) -> dict:
     created = client.post("/api/runs", json={"prompt": prompt, "mode": "team"}).json()
-    return client.get(f"/api/runs/{created['run_id']}").json()
+    run = client.get(f"/api/runs/{created['run_id']}").json()
+    if (
+        run["status"] == "awaiting_approval"
+        and run["blueprint"]["support_level"] == "supported"
+    ):
+        approved = client.post(
+            f"/api/runs/{run['run_id']}/approve",
+            json={"blueprint": run["blueprint"]},
+        )
+        assert approved.status_code == 202, approved.text
+        run = client.get(f"/api/runs/{run['run_id']}").json()
+    return run
 
 
 def test_supported_run_reaches_completed_with_frontend_mappable_stages(
@@ -90,9 +101,7 @@ def test_supported_run_reaches_completed_with_frontend_mappable_stages(
         "product_manager",
         "architect",
         "engineer",
-        "data",
         "build",
-        "reviewer",
         "complete",
     ):
         assert expected in stages, f"missing progress stage: {expected}"

@@ -77,6 +77,17 @@ def init_database(target_engine: Engine | None = None) -> None:
             )
         if "data_profile" not in version_columns:
             connection.execute(text("ALTER TABLE project_versions ADD COLUMN data_profile JSON"))
+        version_additions = {
+            "architecture_design": "JSON",
+            "source_bundle": "JSON",
+            "execution_report": "JSON",
+            "build_artifact": "JSON",
+        }
+        for name, column_type in version_additions.items():
+            if name not in version_columns:
+                connection.execute(
+                    text(f"ALTER TABLE project_versions ADD COLUMN {name} {column_type}")
+                )
         if "status" not in sandbox_columns:
             connection.execute(
                 text("ALTER TABLE sandbox_sessions ADD COLUMN status VARCHAR(20) DEFAULT 'open'")

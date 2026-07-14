@@ -1,4 +1,5 @@
 import hashlib
+import json
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -16,13 +17,20 @@ from another_atom.build.renderer import normalize_architecture_visual_tokens, va
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    ArchitectureDesign,
+    ArchitectureDesignDraft,
     ArchitectureSpec,
     ArtifactType,
     BaseSourceSnapshot,
     Blueprint,
+    BuildArtifact,
     BuildStatus,
     ChangeBrief,
     DataProfile,
+    EngineerOutput,
+    ExecutionReport,
+    ExecutionRequest,
+    ExecutionResult,
     HumanTaskKind,
     HumanTaskStatus,
     Mode,
@@ -33,8 +41,10 @@ from another_atom.contracts.schemas import (
     RequirementDelta,
     ReviewReport,
     RunStatus,
+    SourceBundle,
     SourceContext,
     SourceDiff,
+    SourceFileDraft,
     SupportLevel,
     ValidationReport,
     VersionSource,
@@ -50,8 +60,11 @@ from another_atom.repository.service import (
     build_source_snapshot,
     calculate_source_diff,
     commit_version,
+    write_architecture_design,
     write_product_spec,
 )
+from another_atom.runtime.artifacts import create_architecture_design, create_source_bundle
+from another_atom.runtime.client import RuntimeExecutorError, execute_request
 from another_atom.storage.models import (
     Artifact,
     BuildJob,
@@ -133,7 +146,7 @@ def _enforce_network_capability_policy(prompt: str, blueprint: Blueprint) -> Blu
     )
 
 
-def _render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
+def render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
     chinese = _contains_chinese(prompt)
     compact_goal = " ".join(prompt.split())
     if len(compact_goal) > 90:
@@ -358,7 +371,7 @@ class Orchestrator:
                     }
                 )
                 artifact.payload = blueprint.model_dump(mode="json")
-            product_spec = _render_product_spec(effective_prompt, blueprint)
+            product_spec = render_product_spec(effective_prompt, blueprint)
             write_product_spec(run.project_id, product_spec.content)
             product_spec_artifact = save_artifact(
                 self.db, run.id, ArtifactType.PRODUCT_SPEC, product_spec
@@ -389,7 +402,7 @@ class Orchestrator:
                     "scope_review",
                     {"rewrite_suggestion": blueprint.rewrite_suggestion},
                 )
-            elif blueprint.support_level == SupportLevel.ADAPTED:
+            else:
                 run.status = RunStatus.AWAITING_APPROVAL.value
                 run.current_stage = "blueprint_approval"
                 self._create_human_task(
@@ -411,32 +424,6 @@ class Orchestrator:
                     "approval.required",
                     "Review and confirm the product specification before building",
                     "blueprint_approval",
-                )
-            else:
-                run.status = RunStatus.BUILD_QUEUED.value
-                run.current_stage = "build_queue"
-                build_job = self.db.scalar(select(BuildJob).where(BuildJob.run_id == run.id))
-                if build_job is None:
-                    build_job = BuildJob(
-                        run_id=run.id,
-                        project_id=run.project_id,
-                        status=BuildStatus.QUEUED.value,
-                    )
-                    self.db.add(build_job)
-                    self.db.flush()
-                self._record_event_once(
-                    run,
-                    "build.auto_authorized",
-                    "Supported Blueprint is within the requested scope and base budget",
-                    "blueprint_approval",
-                    {"authorization_source": "explicit_build_request"},
-                )
-                self._record_event_once(
-                    run,
-                    "build.queued",
-                    "Build is queued",
-                    "build_queue",
-                    {"build_job_id": build_job.id},
                 )
             self.db.commit()
             logger.info(
@@ -508,48 +495,76 @@ class Orchestrator:
             return
         project = self.db.get(Project, run.project_id)
         blueprint_artifact = get_artifact(self.db, run.id, ArtifactType.BLUEPRINT)
-        if project is None or blueprint_artifact is None:
-            self._fail_run(run, "MISSING_INPUT", "Approved Blueprint could not be loaded")
+        product_spec_artifact = get_artifact(self.db, run.id, ArtifactType.PRODUCT_SPEC)
+        if project is None or blueprint_artifact is None or product_spec_artifact is None:
+            self._fail_run(run, "MISSING_INPUT", "Approved ProductSpec could not be loaded")
             return
 
         blueprint = Blueprint.model_validate(blueprint_artifact.payload)
+        product_spec = ProductSpec.model_validate(product_spec_artifact.payload)
         try:
             logger.info(
                 "build_pipeline_started",
                 extra={"run_id": run.id, "project_id": run.project_id},
             )
             project.status = ProjectStatus.BUILDING.value
-            if run.mode == Mode.TEAM.value:
-                architecture_spec = self._run_architect(run, blueprint)
-            else:
-                architecture_spec, _, _ = self._run_agent_stage(
-                    run,
-                    "architect",
-                    ArtifactType.ARCHITECTURE_SPEC,
-                    ArchitectureSpec,
-                    lambda: normalize_architecture_visual_tokens(
-                        self._provider(run).create_architecture_spec(blueprint)
-                    ),
-                )
-            app_spec = self._run_engineer(run, blueprint, architecture_spec)
-            data_profile = self._run_data(run, blueprint, architecture_spec, app_spec)
-            validation_report, build_job = self._run_build(
-                run, project, blueprint, architecture_spec, app_spec
+            architecture_design = self._run_architect(run, blueprint, product_spec)
+            if architecture_design is None:
+                return
+            app_spec, source_bundle = self._run_engineer(
+                run, blueprint, product_spec, architecture_design
             )
+            execution_result, build_job = self._run_build(
+                run,
+                project,
+                blueprint,
+                product_spec,
+                architecture_design,
+                app_spec,
+                source_bundle,
+                attempt=1,
+            )
+            validation_report = execution_result.validation_report
             if not validation_report.passed and self._can_auto_repair(validation_report):
                 app_spec = self._run_engineer_repair(
                     run,
                     blueprint,
-                    architecture_spec,
+                    architecture_design.visual_tokens,
                     app_spec,
                     validation_report,
                 )
-                validation_report = self._run_repair_validation(
+                prior_tests = [
+                    item.model_dump(mode="python", exclude={"content_hash"})
+                    for item in source_bundle.files
+                    if item.role == "test"
+                ]
+                source_bundle = create_source_bundle(
+                    EngineerOutput(app_spec=app_spec, unit_tests=prior_tests),
+                    blueprint.product_type,
+                )
+                execution_result, build_job = self._run_build(
                     run,
-                    build_job,
+                    project,
                     blueprint,
-                    architecture_spec,
+                    product_spec,
+                    architecture_design,
                     app_spec,
+                    source_bundle,
+                    attempt=2,
+                )
+                validation_report = execution_result.validation_report
+                save_artifact(
+                    self.db,
+                    run.id,
+                    ArtifactType.REPAIR_VALIDATION_REPORT,
+                    validation_report,
+                )
+                self._record_event_once(
+                    run,
+                    "repair.validation_completed",
+                    "The revised SourceBundle completed build, unit tests, and validation",
+                    "build",
+                    {"passed": validation_report.passed, "repair_attempt": 1},
                 )
             if not validation_report.passed:
                 build_job.status = BuildStatus.FAILED.value
@@ -561,40 +576,31 @@ class Orchestrator:
                 )
                 return
 
-            review_report = self._run_reviewer(
-                run,
-                blueprint,
-                architecture_spec,
-                app_spec,
-                data_profile,
-                validation_report,
+            compatibility_review = ReviewReport(
+                summary=(
+                    "兼容字段：V1 当前由独立 Runtime（运行时）的构建、单元测试和确定性验证"
+                    "作为发布前证据，不再调用 Reviewer（评审员）Agent。"
+                ),
+                requirement_checks=["ProductSpec 与 ArchitectureDesign 已进入执行请求。"],
+                engineering_checks=["node --check、node --test 和确定性校验均已通过。"],
+                suggested_actions=["accept"],
+                reviewer_mode="deterministic_only",
             )
-            if review_report.verdict != "accept" or any(
-                issue.severity == "blocker" for issue in review_report.issues
-            ):
-                build_job.status = BuildStatus.FAILED.value
-                build_job.error_message = "Reviewer requested rework or user input"
-                self._fail_run(
-                    run,
-                    "REVIEW_REJECTED",
-                    "The independent Reviewer found unresolved issues",
-                )
-                return
             version = self._create_version(
                 run,
                 project,
                 app_spec,
-                data_profile.model_dump(mode="json"),
+                None,
                 validation_report.model_dump(mode="json"),
-                review_report.model_dump(mode="json"),
+                compatibility_review.model_dump(mode="json"),
                 VersionSource.BUILD,
+                architecture_design=architecture_design,
+                source_bundle=source_bundle,
+                execution_report=execution_result.execution_report,
+                build_artifact=execution_result.build_artifact,
             )
             build_job.status = BuildStatus.SUCCEEDED.value
-            run.status = (
-                RunStatus.COMPLETED_DEGRADED.value
-                if data_profile.warnings or review_report.warnings
-                else RunStatus.COMPLETED.value
-            )
+            run.status = RunStatus.COMPLETED.value
             run.current_stage = "complete"
             project.status = ProjectStatus.READY.value
             if project.active_write_run_id == run.id:
@@ -627,6 +633,12 @@ class Orchestrator:
                 extra={"run_id": run.id, "stage": run.current_stage},
             )
             self._fail_run(run, exc.code, exc.message)
+        except RuntimeExecutorError as exc:
+            logger.warning(
+                "runtime_executor_failed",
+                extra={"run_id": run.id, "stage": run.current_stage},
+            )
+            self._fail_run(run, "RUNTIME_EXECUTOR_UNAVAILABLE", str(exc))
 
     def _execute_change_run(self, run: Run) -> None:
         project = self.db.get(Project, run.project_id)
@@ -696,6 +708,14 @@ class Orchestrator:
             self._fail_run(run, "MISSING_INPUT", "The current ArchitectureSpec could not be loaded")
             return
         base_architecture = ArchitectureSpec.model_validate(source_architecture.payload)
+        source_architecture_design = get_artifact(
+            self.db, base_version.run_id, ArtifactType.ARCHITECTURE_DESIGN
+        )
+        base_architecture_design = (
+            ArchitectureDesign.model_validate(source_architecture_design.payload)
+            if source_architecture_design is not None
+            else None
+        )
         product_spec = self._product_spec_for_version(base_version)
         if product_spec is None:
             self._fail_run(run, "MISSING_INPUT", "The current ProductSpec could not be loaded")
@@ -816,6 +836,31 @@ class Orchestrator:
                 "architect",
                 {"artifact_id": architecture_artifact.id},
             )
+            if base_architecture_design is not None:
+                architecture_draft = ArchitectureDesignDraft.model_validate(
+                    base_architecture_design.model_dump(mode="python")
+                )
+            else:
+                architecture_draft = self._run_unpersisted_agent_stage(
+                    run,
+                    "architect_design_migration",
+                    lambda: self._provider(run).create_architecture_design(
+                        product_spec, blueprint
+                    ),
+                )
+            architecture_draft = architecture_draft.model_copy(
+                update={"visual_tokens": architecture_spec}
+            )
+            architecture_design = create_architecture_design(
+                architecture_draft, product_spec.content_hash
+            )
+            write_architecture_design(run.project_id, architecture_design.content)
+            save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.ARCHITECTURE_DESIGN,
+                architecture_design,
+            )
             self.db.commit()
 
             source_context_artifact = get_artifact(
@@ -916,16 +961,77 @@ class Orchestrator:
             )
             self.db.commit()
 
-            data_profile = self._run_data(run, blueprint, architecture_spec, app_spec)
-            validation_report, build_job = self._run_build(
-                run, project, blueprint, architecture_spec, app_spec
+            if base_version.source_bundle:
+                base_source_bundle = SourceBundle.model_validate(base_version.source_bundle)
+                unit_tests = [
+                    SourceFileDraft.model_validate(
+                        item.model_dump(mode="python", exclude={"content_hash"})
+                    )
+                    for item in base_source_bundle.files
+                    if item.role == "test"
+                ]
+            else:
+                unit_tests = [
+                    SourceFileDraft(
+                        path="tests/app.test.js",
+                        role="test",
+                        content=(
+                            "import test from 'node:test';\n"
+                            "import assert from 'node:assert/strict';\n"
+                            "import { readFile } from 'node:fs/promises';\n"
+                            "test('源码入口存在', async () => {\n"
+                            "  assert.ok((await readFile('index.html', 'utf8')).length > 0);\n"
+                            "});\n"
+                        ),
+                    )
+                ]
+            source_bundle = create_source_bundle(
+                EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
+                blueprint.product_type,
             )
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
+            execution_result, build_job = self._run_build(
+                run,
+                project,
+                blueprint,
+                product_spec,
+                architecture_design,
+                app_spec,
+                source_bundle,
+                attempt=1,
+            )
+            validation_report = execution_result.validation_report
             if not validation_report.passed and self._can_auto_repair(validation_report):
                 app_spec = self._run_engineer_repair(
                     run, blueprint, architecture_spec, app_spec, validation_report
                 )
-                validation_report = self._run_repair_validation(
-                    run, build_job, blueprint, architecture_spec, app_spec
+                source_bundle = create_source_bundle(
+                    EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
+                    blueprint.product_type,
+                )
+                execution_result, build_job = self._run_build(
+                    run,
+                    project,
+                    blueprint,
+                    product_spec,
+                    architecture_design,
+                    app_spec,
+                    source_bundle,
+                    attempt=2,
+                )
+                validation_report = execution_result.validation_report
+                save_artifact(
+                    self.db,
+                    run.id,
+                    ArtifactType.REPAIR_VALIDATION_REPORT,
+                    validation_report,
+                )
+                self._record_event_once(
+                    run,
+                    "repair.validation_completed",
+                    "The revised SourceBundle completed build, unit tests, and validation",
+                    "build",
+                    {"passed": validation_report.passed, "repair_attempt": 1},
                 )
                 source_diff = calculate_source_diff(source_snapshot, app_spec)
                 save_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF, source_diff)
@@ -938,24 +1044,15 @@ class Orchestrator:
                     "The Web source validator rejected the modified AppSpec",
                 )
                 return
-            review_report = self._run_reviewer(
-                run,
-                blueprint,
-                architecture_spec,
-                app_spec,
-                data_profile,
-                validation_report,
+            compatibility_review = ReviewReport(
+                summary=(
+                    "兼容字段：本次修改由独立 Runtime（运行时）的构建、单元测试和确定性验证"
+                    "提供发布前证据，未调用 Data Analyst（数据分析师）或 Reviewer（评审员）Agent。"
+                ),
+                engineering_checks=["node --check、node --test 和确定性校验均已通过。"],
+                suggested_actions=["accept"],
+                reviewer_mode="deterministic_only",
             )
-            if review_report.verdict != "accept" or any(
-                issue.severity == "blocker" for issue in review_report.issues
-            ):
-                build_job.status = BuildStatus.FAILED.value
-                self._fail_run(
-                    run,
-                    "REVIEW_REJECTED",
-                    "The independent Reviewer found unresolved issues",
-                )
-                return
             self.db.refresh(project)
             if (
                 project.active_write_run_id != run.id
@@ -970,17 +1067,17 @@ class Orchestrator:
                 run,
                 project,
                 app_spec,
-                data_profile.model_dump(mode="json"),
+                None,
                 validation_report.model_dump(mode="json"),
-                review_report.model_dump(mode="json"),
+                compatibility_review.model_dump(mode="json"),
                 VersionSource.AI_EDIT,
+                architecture_design=architecture_design,
+                source_bundle=source_bundle,
+                execution_report=execution_result.execution_report,
+                build_artifact=execution_result.build_artifact,
             )
             build_job.status = BuildStatus.SUCCEEDED.value
-            run.status = (
-                RunStatus.COMPLETED_DEGRADED.value
-                if data_profile.warnings or review_report.warnings
-                else RunStatus.COMPLETED.value
-            )
+            run.status = RunStatus.COMPLETED.value
             run.current_stage = "complete"
             project.status = ProjectStatus.READY.value
             project.active_write_run_id = None
@@ -1013,71 +1110,149 @@ class Orchestrator:
             if current:
                 self._fail_run(current, "CHANGE_PIPELINE_FAILED", str(exc))
 
-    def _run_architect(self, run: Run, blueprint: Blueprint) -> ArchitectureSpec:
+    def _run_architect(
+        self,
+        run: Run,
+        blueprint: Blueprint,
+        product_spec: ProductSpec,
+    ) -> ArchitectureDesign | None:
         run.status = RunStatus.ARCHITECT_RUNNING.value
         run.current_stage = "architect"
         self._record_event_once(
             run,
             "stage.started",
-            "Architect is defining structure, data boundaries, and visual tokens",
+            "Architect is producing the ArchitectureDesign document",
             "architect",
         )
-        architecture_spec, artifact, _ = self._run_agent_stage(
-            run,
-            "architect",
-            ArtifactType.ARCHITECTURE_SPEC,
-            ArchitectureSpec,
-            lambda: normalize_architecture_visual_tokens(
-                self._provider(run).create_architecture_spec(blueprint)
-            ),
-        )
+        existing = get_artifact(self.db, run.id, ArtifactType.ARCHITECTURE_DESIGN)
+        if existing is not None:
+            architecture_design = ArchitectureDesign.model_validate(existing.payload)
+            artifact = existing
+        else:
+            draft = self._run_unpersisted_agent_stage(
+                run,
+                "architect",
+                lambda: self._provider(run).create_architecture_design(
+                    product_spec, blueprint
+                ),
+            )
+            draft = ArchitectureDesignDraft.model_validate(draft).model_copy(
+                update={
+                    "visual_tokens": normalize_architecture_visual_tokens(
+                        draft.visual_tokens
+                    )
+                }
+            )
+            architecture_design = create_architecture_design(
+                draft, product_spec.content_hash
+            )
+            write_architecture_design(run.project_id, architecture_design.content)
+            artifact = save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.ARCHITECTURE_DESIGN,
+                architecture_design,
+            )
+            save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.ARCHITECTURE_SPEC,
+                architecture_design.visual_tokens,
+            )
         self._record_event_once(
             run,
             "stage.completed",
-            "ArchitectureSpec passed schema validation",
+            "ArchitectureDesign was written and passed contract validation",
             "architect",
-            {"artifact_id": artifact.id},
+            {
+                "artifact_id": artifact.id,
+                "path": architecture_design.path,
+                "requires_product_reapproval": (
+                    architecture_design.requires_product_reapproval
+                ),
+            },
         )
         self.db.commit()
-        return architecture_spec
+        if architecture_design.requires_product_reapproval:
+            reason = architecture_design.reapproval_reason or "架构设计改变了产品边界。"
+            self._pause_for_input(
+                run,
+                PMRequirementAssessment(
+                    outcome="needs_input",
+                    summary=reason,
+                    question=(
+                        f"架构设计发现必须调整已确认的产品规格：{reason}。"
+                        "请确认新的产品边界或补充替代要求。"
+                    ),
+                    missing_fields=["product_boundary_reapproval"],
+                ),
+                self._effective_prompt(run),
+            )
+            return None
+        return architecture_design
 
     def _run_engineer(
-        self, run: Run, blueprint: Blueprint, architecture_spec: ArchitectureSpec
-    ) -> AppSpec:
+        self,
+        run: Run,
+        blueprint: Blueprint,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
+    ) -> tuple[AppSpec, SourceBundle]:
         run.status = RunStatus.ENGINEER_RUNNING.value
         run.current_stage = "engineer"
         self._record_event_once(
             run,
             "stage.started",
-            "Engineer is generating the Web source contract",
+            "Engineer is generating source code and unit tests",
             "engineer",
         )
         self._record_event_once(
             run,
             "engineer.context.prepared",
-            "Engineer context is ready from the approved Blueprint and ArchitectureSpec",
+            "Engineer context is ready from ProductSpec and ArchitectureDesign",
             "engineer",
-            {"inputs": ["blueprint", "architecture_spec", "request"]},
+            {"inputs": ["product_spec", "architecture_design", "blueprint", "request"]},
         )
-        app_spec, artifact, _ = self._run_agent_stage(
-            run,
-            "engineer",
-            ArtifactType.APP_SPEC,
-            AppSpec,
-            lambda: self._align_app_spec_visual_tokens(
-                self._provider(run).create_app_spec(blueprint, architecture_spec, run.prompt),
-                architecture_spec,
-            ),
-        )
+        app_artifact = get_artifact(self.db, run.id, ArtifactType.APP_SPEC)
+        source_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE)
+        if app_artifact is not None and source_artifact is not None:
+            app_spec = AppSpec.model_validate(app_artifact.payload)
+            source_bundle = SourceBundle.model_validate(source_artifact.payload)
+            artifact = app_artifact
+        else:
+            output = self._run_unpersisted_agent_stage(
+                run,
+                "engineer",
+                lambda: self._provider(run).create_engineer_output(
+                    product_spec,
+                    architecture_design,
+                    blueprint,
+                    run.prompt,
+                ),
+            )
+            output = EngineerOutput.model_validate(output)
+            app_spec = self._align_app_spec_visual_tokens(
+                output.app_spec, architecture_design.visual_tokens
+            )
+            output = output.model_copy(update={"app_spec": app_spec})
+            source_bundle = create_source_bundle(output, blueprint.product_type)
+            artifact = save_artifact(self.db, run.id, ArtifactType.APP_SPEC, app_spec)
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
         self._record_event_once(
             run,
             "stage.completed",
-            "AppSpec passed schema validation",
+            "SourceBundle and Engineer unit tests passed contract validation",
             "engineer",
-            {"artifact_id": artifact.id},
+            {
+                "artifact_id": artifact.id,
+                "source_manifest_hash": source_bundle.manifest_hash,
+                "test_files": [
+                    item.path for item in source_bundle.files if item.role == "test"
+                ],
+            },
         )
         self.db.commit()
-        return app_spec
+        return app_spec, source_bundle
 
     def _run_engineer_repair(
         self,
@@ -1153,9 +1328,13 @@ class Orchestrator:
         run: Run,
         project: Project,
         blueprint: Blueprint,
-        architecture_spec: ArchitectureSpec,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
         app_spec: AppSpec,
-    ):
+        source_bundle: SourceBundle,
+        *,
+        attempt: int,
+    ) -> tuple[ExecutionResult, BuildJob]:
         run.status = RunStatus.BUILDING.value
         run.current_stage = "build"
         build_job = self.db.scalar(
@@ -1168,35 +1347,82 @@ class Orchestrator:
             build_job = BuildJob(run_id=run.id, project_id=project.id)
             self.db.add(build_job)
             self.db.flush()
-        build_job.status = BuildStatus.BUILDING.value
+        build_job.status = BuildStatus.DISPATCHING.value
         self._record_event_once(
             run,
             "build.started",
-            "Web source packaging and sandbox validation started",
+            "SourceBundle was dispatched to the independent Runtime Executor",
             "build",
-            {"build_job_id": build_job.id},
+            {"build_job_id": build_job.id, "attempt": attempt},
         )
-        validation_artifact = get_artifact(self.db, run.id, ArtifactType.VALIDATION_REPORT)
-        if validation_artifact:
-            validation_report = ValidationReport.model_validate(validation_artifact.payload)
-        else:
-            validation_report = validate_app_spec(
-                app_spec,
-                run.prompt,
-                blueprint=blueprint,
-                architecture_spec=architecture_spec,
+        request_payload = {
+            "execution_id": f"{run.id}-{attempt}",
+            "run_id": run.id,
+            "attempt": attempt,
+            "adapter_id": source_bundle.adapter_id,
+            "product_spec_hash": product_spec.content_hash,
+            "architecture_design_hash": architecture_design.content_hash,
+            "source_manifest_hash": source_bundle.manifest_hash,
+            "prompt": run.prompt,
+            "blueprint": blueprint.model_dump(mode="json"),
+            "architecture_design": architecture_design.model_dump(mode="json"),
+            "app_spec": app_spec.model_dump(mode="json"),
+            "source_bundle": source_bundle.model_dump(mode="json"),
+            "acceptance_criteria": architecture_design.acceptance_mapping,
+            "deadline_ms": int(get_settings().runtime_executor_timeout_seconds * 1000),
+        }
+        request_hash = hashlib.sha256(
+            json.dumps(
+                request_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        execution_request = ExecutionRequest(
+            **request_payload,
+            request_hash=request_hash,
+        )
+        events, execution_result = execute_request(execution_request)
+        for execution_event in events:
+            status_map = {
+                "source.materializing": BuildStatus.MATERIALIZING.value,
+                "build.started": BuildStatus.BUILDING.value,
+                "test.started": BuildStatus.TESTING.value,
+                "validation.started": BuildStatus.VALIDATING.value,
+            }
+            if execution_event.type in status_map:
+                build_job.status = status_map[execution_event.type]
+            record_event(
+                self.db,
+                run.id,
+                f"executor.{execution_event.type}",
+                f"Runtime Executor: {execution_event.type}",
+                stage="build",
+                payload=execution_event.payload,
             )
-            save_artifact(self.db, run.id, ArtifactType.VALIDATION_REPORT, validation_report)
-        build_job.status = BuildStatus.VALIDATING.value
-        self._record_event_once(
-            run,
-            "validation.completed",
-            "Deterministic source, capability, handoff, and visual checks completed",
-            "build",
-            {"passed": validation_report.passed},
+        save_artifact(
+            self.db,
+            run.id,
+            ArtifactType.EXECUTION_REPORT,
+            execution_result.execution_report,
         )
+        save_artifact(
+            self.db,
+            run.id,
+            ArtifactType.VALIDATION_REPORT,
+            execution_result.validation_report,
+        )
+        if execution_result.build_artifact is not None:
+            save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.BUILD_ARTIFACT,
+                execution_result.build_artifact,
+            )
+        save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
         self.db.commit()
-        return validation_report, build_job
+        return execution_result, build_job
 
     def _run_repair_validation(
         self,
@@ -1333,10 +1559,15 @@ class Orchestrator:
         run: Run,
         project: Project,
         app_spec: AppSpec,
-        data_profile: dict,
+        data_profile: dict | None,
         validation_report: dict,
         review_report: dict,
         source: VersionSource,
+        *,
+        architecture_design: ArchitectureDesign | None = None,
+        source_bundle: SourceBundle | None = None,
+        execution_report: ExecutionReport | None = None,
+        build_artifact: BuildArtifact | None = None,
     ) -> ProjectVersion:
         if source in {VersionSource.BUILD, VersionSource.AI_EDIT}:
             existing = self.db.scalar(
@@ -1359,6 +1590,26 @@ class Orchestrator:
             version_number=(latest_number or 0) + 1,
             source=source.value,
             app_spec=app_spec.model_dump(mode="json"),
+            architecture_design=(
+                architecture_design.model_dump(mode="json")
+                if architecture_design is not None
+                else None
+            ),
+            source_bundle=(
+                source_bundle.model_dump(mode="json")
+                if source_bundle is not None
+                else None
+            ),
+            execution_report=(
+                execution_report.model_dump(mode="json")
+                if execution_report is not None
+                else None
+            ),
+            build_artifact=(
+                build_artifact.model_dump(mode="json")
+                if build_artifact is not None
+                else None
+            ),
             data_profile=data_profile,
             validation_report=validation_report,
             review_report=review_report,
@@ -1371,6 +1622,7 @@ class Orchestrator:
             version.version_number,
             source,
             app_spec,
+            source_bundle,
         )
         project.latest_version_id = version.id
         return version
@@ -1637,6 +1889,14 @@ class Orchestrator:
         for attempt in range(1, max_attempts + 1):
             reserved_units = provider.reservation_units
             reserve_quota(self.db, run.user_id, run, stage, reserved_units)
+            record_event(
+                self.db,
+                run.id,
+                "agent.attempt.started",
+                "Agent model attempt started",
+                stage=stage,
+                payload={"attempt": attempt, "max_attempts": max_attempts},
+            )
             self.db.commit()
             try:
                 result = operation()
@@ -1650,6 +1910,14 @@ class Orchestrator:
                         stage=stage,
                         payload={"provider": usage.fallback_provider},
                     )
+                record_event(
+                    self.db,
+                    run.id,
+                    "agent.output.validated",
+                    "Agent output passed Contract validation",
+                    stage=stage,
+                    payload={"attempt": attempt, "max_attempts": max_attempts},
+                )
                 settle_quota(self.db, run, stage, reserved_units, usage)
                 self.db.commit()
                 return result

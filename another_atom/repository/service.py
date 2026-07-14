@@ -11,6 +11,7 @@ from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
     BaseSourceSnapshot,
+    SourceBundle,
     SourceContext,
     SourceDiff,
     SourceSnapshotFile,
@@ -96,6 +97,7 @@ def commit_version(
     version_number: int,
     source: VersionSource,
     app_spec: AppSpec,
+    source_bundle: SourceBundle | None = None,
 ) -> str:
     path = initialize_repository(project_id)
     marker_dir = path / ".another-atom"
@@ -105,21 +107,17 @@ def commit_version(
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
         if marker.get("version_id") == version_id:
             return _git(path, "rev-parse", "HEAD")
-    (path / "app-spec.json").write_text(
-        json.dumps(app_spec.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+    version_files = (
+        {item.path: item.content for item in source_bundle.files}
+        if source_bundle is not None
+        else render_version_files(app_spec)
     )
-    generated_files = ["app-spec.json", ".another-atom/version.json"]
-    if app_spec.html:
-        (path / "index.html").write_text(
-            _web_document(app_spec),
-            encoding="utf-8",
-        )
-        (path / "styles.css").write_text(app_spec.css + "\n", encoding="utf-8")
-        (path / "app.js").write_text(
-            guarded_browser_javascript(app_spec.javascript), encoding="utf-8"
-        )
-        generated_files.extend(["index.html", "styles.css", "app.js"])
+    generated_files = [".another-atom/version.json"]
+    for relative_path, content in version_files.items():
+        candidate = _repository_text_path(project_id, relative_path)
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text(content, encoding="utf-8")
+        generated_files.append(relative_path)
     marker_path.write_text(
         json.dumps(
             {
@@ -290,6 +288,41 @@ def render_version_files(app_spec: AppSpec) -> dict[str, str]:
                 "app.js": guarded_browser_javascript(app_spec.javascript),
             }
         )
+    else:
+        product_cards = "\n".join(
+            '<article class="product-card">'
+            f"<h2>{item.name}</h2><p>{item.description}</p>"
+            f"<strong>{item.price}</strong></article>"
+            for item in app_spec.products
+        )
+        fallback = app_spec.model_copy(
+            update={
+                "html": (
+                    f'<main><header><h1>{app_spec.hero_title}</h1>'
+                    f"<p>{app_spec.hero_body}</p></header>"
+                    f'<section class="product-grid">{product_cards}</section></main>'
+                ),
+                "css": (
+                    f":root{{--primary:{app_spec.primary_color};--accent:{app_spec.accent_color};"
+                    f"--background:{app_spec.background_color}}}"
+                    "*{box-sizing:border-box}body{margin:0;background:var(--background);"
+                    "color:var(--primary);font-family:system-ui,sans-serif}main{max-width:72rem;"
+                    "margin:auto;padding:3rem 1.5rem}.product-grid{display:grid;"
+                    "grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem}"
+                    ".product-card{padding:1.25rem;border:1px solid currentColor;"
+                    "border-radius:1rem}"
+                    ".product-card strong{color:var(--accent)}"
+                ),
+                "javascript": "document.documentElement.dataset.appReady = 'true';",
+            }
+        )
+        files.update(
+            {
+                "index.html": _web_document(fallback),
+                "styles.css": fallback.css + "\n",
+                "app.js": guarded_browser_javascript(fallback.javascript),
+            }
+        )
     return files
 
 
@@ -421,6 +454,35 @@ def write_product_spec(project_id: str, content: str) -> tuple[str, str]:
         _atomic_write(candidate, encoded)
         _git(root, "add", "--", relative_path)
         _git(root, "commit", "-m", "docs: add product specification")
+        commit = _git(root, "rev-parse", "HEAD")
+    except RepositoryError:
+        if previous is None:
+            candidate.unlink(missing_ok=True)
+        else:
+            _atomic_write(candidate, previous)
+        try:
+            _git(root, "restore", "--staged", "--", relative_path)
+        except RepositoryError:
+            pass
+        raise
+    return repository_content_hash(content), commit
+
+
+def write_architecture_design(project_id: str, content: str) -> tuple[str, str]:
+    relative_path = "docs/architecture-design.md"
+    root = initialize_repository(project_id)
+    candidate = _repository_text_path(project_id, relative_path)
+    encoded = content.encode("utf-8")
+    if len(encoded) > MAX_BROWSER_FILE_BYTES:
+        raise RepositoryError("Architecture design is too large to save")
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    previous = candidate.read_bytes() if candidate.exists() else None
+    if previous == encoded:
+        return repository_content_hash(content), _git(root, "rev-parse", "HEAD")
+    try:
+        _atomic_write(candidate, encoded)
+        _git(root, "add", "--", relative_path)
+        _git(root, "commit", "-m", "docs: add architecture design")
         commit = _git(root, "rev-parse", "HEAD")
     except RepositoryError:
         if previous is None:

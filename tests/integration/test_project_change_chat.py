@@ -24,6 +24,13 @@ def _build_project(client: TestClient) -> dict:
     run_id = created.json()["run_id"]
     run = client.get(f"/api/runs/{run_id}")
     assert run.status_code == 200
+    if run.json()["status"] == "awaiting_approval":
+        approved = client.post(
+            f"/api/runs/{run_id}/approve",
+            json={"blueprint": run.json()["blueprint"]},
+        )
+        assert approved.status_code == 202, approved.text
+        run = client.get(f"/api/runs/{run_id}")
     if run.json()["status"] == "build_queued":
         assert process_next_job(client.app.state.testing_session, worker_id="initial-worker")
         run = client.get(f"/api/runs/{run_id}")
@@ -145,11 +152,13 @@ def test_project_chat_proposes_then_modifies_existing_code(
         "base_source_snapshot",
         "source_context",
         "source_diff",
+        "architecture_design",
         "architecture_spec",
         "app_spec",
-        "data_profile",
+        "source_bundle",
+        "execution_report",
+        "build_artifact",
         "validation_report",
-        "review_report",
     } <= artifacts
     assert source_context is not None
     assert source_context.payload["trimming_applied"] is False
@@ -158,6 +167,7 @@ def test_project_chat_proposes_then_modifies_existing_code(
         "index.html",
         "styles.css",
         "app.js",
+        "tests/app.test.js",
     }
 
 
@@ -235,6 +245,7 @@ def test_project_chat_answer_uses_context_without_creating_a_run(
         "index.html",
         "styles.css",
         "app.js",
+        "tests/app.test.js",
     }
     versions = client.get(f"/api/projects/{project_id}/versions").json()
     assert [version["id"] for version in versions] == [initial["version_id"]]
@@ -257,6 +268,12 @@ def test_failed_first_build_requires_proposal_approval_to_continue(
     )
     assert created.status_code == 201, created.text
     failed = client.get(f"/api/runs/{created.json()['run_id']}").json()
+    approved = client.post(
+        f"/api/runs/{failed['run_id']}/approve",
+        json={"blueprint": failed["blueprint"]},
+    )
+    assert approved.status_code == 202
+    failed = client.get(f"/api/runs/{failed['run_id']}").json()
     assert failed["status"] == "failed"
     assert failed["version_id"] is None
     before = _project_write_counts(client, failed["project_id"])
@@ -271,6 +288,13 @@ def test_failed_first_build_requires_proposal_approval_to_continue(
     resumed = _approve_change(client, failed["project_id"], proposal["proposal_id"])
     assert resumed["project_id"] == failed["project_id"]
     assert resumed["run_id"] != failed["run_id"]
+    resumed = client.get(f"/api/runs/{resumed['run_id']}").json()
+    assert resumed["status"] == "awaiting_approval"
+    approved = client.post(
+        f"/api/runs/{resumed['run_id']}/approve",
+        json={"blueprint": resumed["blueprint"]},
+    )
+    assert approved.status_code == 202
     resumed = client.get(f"/api/runs/{resumed['run_id']}").json()
     assert resumed["status"] == "completed"
     assert resumed["version_id"]
@@ -392,6 +416,7 @@ def test_failed_change_preserves_base_version_and_releases_project_lock(
     }
     assert set(previous_failure["artifact_types"]) == {
         "architecture_spec",
+        "architecture_design",
         "base_source_snapshot",
         "blueprint",
         "change_brief",

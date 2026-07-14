@@ -70,7 +70,31 @@ export interface RunView {
   current_stage: string;
   blueprint: Blueprint | null;
   product_spec: ProductSpec | null;
+  architecture_design: {
+    path: "docs/architecture-design.md";
+    summary: string;
+    target_platform: string;
+    runtime_adapter: string;
+    capability_gaps: string[];
+    content: string;
+    content_hash: string;
+    requires_product_reapproval: boolean;
+    reapproval_reason: string | null;
+  } | null;
   app_spec: AppSpec | null;
+  source_bundle: {
+    adapter_id: string;
+    manifest_hash: string;
+    files: { path: string; role: "source" | "test" | "config"; content_hash: string }[];
+  } | null;
+  execution_report: {
+    status: "passed" | "failed" | "cancelled";
+    build: { status: string; exit_code: number | null; duration_ms: number };
+    test: { status: string; exit_code: number | null; duration_ms: number };
+    tests_collected: number;
+    tests_passed: number;
+    tests_failed: number;
+  } | null;
   validation_report: { passed: boolean; checks: { check_id: string; label: string; status: string; detail?: string | null }[] } | null;
   architecture_spec: {
     architecture_summary: string;

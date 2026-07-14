@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     sandbox_image: str = "another-atom-vim-sandbox:latest"
     sandbox_worktree_root: Path = Path("data/sandbox-worktrees")
     sandbox_session_minutes: int = 30
+    runtime_executor_url: str = "http://127.0.0.1:8001"
+    runtime_executor_shared_token: str = "development-executor-token"
+    runtime_executor_timeout_seconds: float = 180
+    runtime_executor_request_max_bytes: int = 1_000_000
+    runtime_executor_clock_skew_seconds: int = 60
+    runtime_executor_max_concurrency: int = 1
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

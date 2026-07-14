@@ -20,12 +20,23 @@ from another_atom.storage.models import (
 )
 
 
-def _built_run(client: TestClient, headers: dict | None = None) -> dict:
+def _built_run(
+    client: TestClient,
+    headers: dict | None = None,
+    prompt: str = "Build a product catalog",
+) -> dict:
     initial = client.post(
         "/api/runs",
-        json={"prompt": "Build a product catalog", "mode": "team"},
+        json={"prompt": prompt, "mode": "team"},
         headers=headers,
     ).json()
+    run = client.get(f"/api/runs/{initial['run_id']}", headers=headers).json()
+    approved = client.post(
+        f"/api/runs/{run['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+        headers=headers,
+    )
+    assert approved.status_code == 202, approved.text
     return client.get(f"/api/runs/{initial['run_id']}", headers=headers).json()
 
 
@@ -54,11 +65,7 @@ def test_project_versions_map_to_git_commits(client: TestClient) -> None:
 
 
 def test_generated_app_javascript_contains_the_loopback_guard(client: TestClient) -> None:
-    created = client.post(
-        "/api/runs",
-        json={"prompt": "给我一个网页版扫雷游戏", "mode": "team", "model": "mock"},
-    ).json()
-    run = client.get(f"/api/runs/{created['run_id']}").json()
+    run = _built_run(client, prompt="给我一个网页版扫雷游戏")
     source = client.get(
         f"/api/projects/{run['project_id']}/files/content",
         params={"path": "app.js", "source": "repository"},
@@ -92,11 +99,7 @@ def test_database_startup_backfills_repository_for_existing_project(
 
 
 def test_project_file_browser_lists_repository_and_generated_artifacts(client) -> None:
-    created = client.post(
-        "/api/runs",
-        json={"prompt": "Build a lighting product catalog", "mode": "team"},
-    ).json()
-    run = client.get(f"/api/runs/{created['run_id']}").json()
+    run = _built_run(client, prompt="Build a lighting product catalog")
     response = client.get(
         f"/api/projects/{run['project_id']}/files",
         params={"run_id": run["run_id"]},

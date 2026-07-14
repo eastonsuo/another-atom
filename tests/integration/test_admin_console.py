@@ -233,6 +233,12 @@ def test_admin_can_list_users_projects_and_latest_run(client: TestClient) -> Non
         "/api/runs",
         json={"prompt": "Build a home objects catalog", "mode": "team"},
     ).json()
+    pending_run = client.get(f"/api/runs/{created_run['run_id']}").json()
+    approved = client.post(
+        f"/api/runs/{created_run['run_id']}/approve",
+        json={"blueprint": pending_run["blueprint"]},
+    )
+    assert approved.status_code == 202
     client.post("/api/auth/logout")
     _create_admin(client)
 

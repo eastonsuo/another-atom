@@ -19,11 +19,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from websockets.asyncio.client import connect as websocket_connect
 
+from another_atom.agent.orchestrator import render_product_spec
 from another_atom.agent.provider import LLMProviderError, get_llm_provider
 from another_atom.api.dependencies import (
     get_blueprint_executor,
@@ -35,6 +36,7 @@ from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    ArchitectureDesign,
     ArchitectureSpec,
     ArtifactType,
     AuthCredentials,
@@ -43,7 +45,11 @@ from another_atom.contracts.schemas import (
     BuildStatus,
     DataProfile,
     DeploymentView,
+    EngineerOutput,
     EventView,
+    ExecutionReport,
+    ExecutionRequest,
+    ExecutionResult,
     HealthView,
     HumanTaskKind,
     HumanTaskResponse,
@@ -76,6 +82,8 @@ from another_atom.contracts.schemas import (
     RunStatus,
     RunView,
     SandboxSessionView,
+    SourceBundle,
+    SourceFileDraft,
     SupportLevel,
     UserView,
     ValidationReport,
@@ -103,7 +111,10 @@ from another_atom.repository.service import (
     repository_content_hash,
     repository_file_capabilities,
     save_repository_text_file,
+    write_product_spec,
 )
+from another_atom.runtime.artifacts import create_source_bundle
+from another_atom.runtime.client import RuntimeExecutorError, execute_request
 from another_atom.sandbox.client import SandboxClient, SandboxUnavailable, get_sandbox_client
 from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
@@ -250,10 +261,19 @@ def _run_view(db: Session, run: Run) -> RunView:
         current_stage=run.current_stage,
         blueprint=_artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint),
         product_spec=_artifact_model(db, run.id, ArtifactType.PRODUCT_SPEC, ProductSpec),
+        architecture_design=_artifact_model(
+            db, run.id, ArtifactType.ARCHITECTURE_DESIGN, ArchitectureDesign
+        ),
         architecture_spec=_artifact_model(
             db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
         ),
         app_spec=app_spec,
+        source_bundle=_artifact_model(
+            db, run.id, ArtifactType.SOURCE_BUNDLE, SourceBundle
+        ),
+        execution_report=_artifact_model(
+            db, run.id, ArtifactType.EXECUTION_REPORT, ExecutionReport
+        ),
         data_profile=_artifact_model(db, run.id, ArtifactType.DATA_PROFILE, DataProfile),
         validation_report=validation_report,
         review_report=_run_review_report(db, run.id),
@@ -770,21 +790,46 @@ def approve_blueprint(
     artifact = save_artifact(db, run.id, ArtifactType.BLUEPRINT, approval.blueprint)
     product_spec_artifact = get_artifact(db, run.id, ArtifactType.PRODUCT_SPEC)
     approved_artifact = product_spec_artifact or artifact
-    db.add(
-        Approval(
-            run_id=run.id,
-            user_id=user.id,
-            artifact_id=approved_artifact.id,
-            approved=True,
-            payload=(
-                product_spec_artifact.payload
-                if product_spec_artifact
-                else approval.blueprint.model_dump(mode="json")
-            ),
-        )
+    approved_payload = (
+        product_spec_artifact.payload
+        if product_spec_artifact
+        else approval.blueprint.model_dump(mode="json")
     )
-    job = BuildJob(run_id=run.id, project_id=run.project_id, status=BuildStatus.QUEUED.value)
-    db.add(job)
+    approval_record = db.scalar(select(Approval).where(Approval.run_id == run.id))
+    if approval_record is None:
+        db.add(
+            Approval(
+                run_id=run.id,
+                user_id=user.id,
+                artifact_id=approved_artifact.id,
+                approved=True,
+                payload=approved_payload,
+            )
+        )
+    else:
+        previous_payload = dict(approval_record.payload or {})
+        previous_history = previous_payload.pop("_previous_approvals", [])
+        approval_record.artifact_id = approved_artifact.id
+        approval_record.approved = True
+        approval_record.payload = {
+            **approved_payload,
+            "_previous_approvals": [*previous_history, previous_payload],
+        }
+    job = db.scalar(select(BuildJob).where(BuildJob.run_id == run.id))
+    if job is None:
+        job = BuildJob(
+            run_id=run.id,
+            project_id=run.project_id,
+            status=BuildStatus.QUEUED.value,
+        )
+        db.add(job)
+    else:
+        job.status = BuildStatus.QUEUED.value
+        job.error_message = None
+        job.lease_owner = None
+        job.lease_expires_at = None
+        job.started_at = None
+        job.finished_at = None
     db.flush()
     record_event(
         db,
@@ -875,6 +920,11 @@ def confirm_alternative_blueprint(
     db.add(next_run)
     db.flush()
     artifact = save_artifact(db, next_run.id, ArtifactType.BLUEPRINT, confirmed_blueprint)
+    product_spec = render_product_spec(confirmation.prompt, confirmed_blueprint)
+    write_product_spec(next_run.project_id, product_spec.content)
+    product_spec_artifact = save_artifact(
+        db, next_run.id, ArtifactType.PRODUCT_SPEC, product_spec
+    )
     job = BuildJob(
         run_id=next_run.id,
         project_id=next_run.project_id,
@@ -900,7 +950,11 @@ def confirm_alternative_blueprint(
         "artifact.created",
         "Confirmed Blueprint copied without another Product Manager pass",
         stage="product_manager",
-        payload={"artifact_id": artifact.id, "source_run_id": source_run.id},
+        payload={
+            "artifact_id": artifact.id,
+            "product_spec_artifact_id": product_spec_artifact.id,
+            "source_run_id": source_run.id,
+        },
     )
     record_event(
         db,
@@ -1409,6 +1463,28 @@ def respond_to_human_task(
                 payload={"human_task_id": task.id},
             )
         )
+        missing_fields = (task.payload or {}).get("missing_fields", [])
+        if "product_boundary_reapproval" in missing_fields:
+            db.execute(
+                delete(Artifact).where(
+                    Artifact.run_id == run.id,
+                    Artifact.artifact_type.in_(
+                        [
+                            ArtifactType.BLUEPRINT.value,
+                            ArtifactType.ARCHITECTURE_SPEC.value,
+                            ArtifactType.ARCHITECTURE_DESIGN.value,
+                        ]
+                    ),
+                )
+            )
+            record_event(
+                db,
+                run.id,
+                "architecture.product_reapproval_answered",
+                "Architecture boundary feedback will be folded into a new ProductSpec",
+                stage="product_manager_clarification",
+                payload={"human_task_id": task.id},
+            )
         run.status = RunStatus.PRODUCT_RUNNING.value
         run.current_stage = "product_manager"
         run.error_code = None
@@ -2049,9 +2125,13 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.BASE_SOURCE_SNAPSHOT: ".another-atom/generated/base-source-snapshot.json",
     ArtifactType.SOURCE_DIFF: ".another-atom/generated/source-diff.json",
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
+    ArtifactType.ARCHITECTURE_DESIGN: ".another-atom/generated/architecture-design.json",
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
     ArtifactType.APP_SPEC_REPAIR: ".another-atom/generated/app-spec-repair.json",
+    ArtifactType.SOURCE_BUNDLE: ".another-atom/generated/source-bundle.json",
+    ArtifactType.BUILD_ARTIFACT: ".another-atom/generated/build-artifact.json",
+    ArtifactType.EXECUTION_REPORT: ".another-atom/generated/execution-report.json",
     ArtifactType.DATA_PROFILE: ".another-atom/generated/data-profile.json",
     ArtifactType.VALIDATION_REPORT: ".another-atom/generated/validation-report.json",
     ArtifactType.REPAIR_VALIDATION_REPORT: (
@@ -2438,13 +2518,34 @@ def revise_project(
                 )
             updates.update({"html": html, "css": css})
         app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
-        blueprint, architecture_spec = _validation_contracts(db, current.run_id)
-        validation = validate_app_spec(
+        executed = _execute_version_candidate(
+            db,
+            current,
             app_spec,
             project.prompt,
-            blueprint=blueprint,
-            architecture_spec=architecture_spec,
+            f"revision-{uuid4()}",
         )
+        if executed is None:
+            blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+            validation = validate_app_spec(
+                app_spec,
+                project.prompt,
+                blueprint=blueprint,
+                architecture_spec=architecture_spec,
+            )
+            execution_report = current.execution_report
+            build_artifact = current.build_artifact
+            source_bundle_payload = current.source_bundle
+        else:
+            execution_result, source_bundle = executed
+            validation = execution_result.validation_report
+            execution_report = execution_result.execution_report.model_dump(mode="json")
+            build_artifact = (
+                execution_result.build_artifact.model_dump(mode="json")
+                if execution_result.build_artifact
+                else None
+            )
+            source_bundle_payload = source_bundle.model_dump(mode="json")
         if not validation.passed:
             raise AppError("REVISION_VALIDATION_FAILED", "The revision failed validation", 422)
         review_report = _coerce_review_report(current.review_report)
@@ -2466,6 +2567,10 @@ def revise_project(
             version_number=(latest_number or 0) + 1,
             source=VersionSource.EDIT.value,
             app_spec=app_spec.model_dump(mode="json"),
+            architecture_design=current.architecture_design,
+            source_bundle=source_bundle_payload,
+            execution_report=execution_report,
+            build_artifact=build_artifact,
             data_profile=current.data_profile,
             validation_report=validation.model_dump(mode="json"),
             review_report=review_report.model_dump(mode="json"),
@@ -2478,6 +2583,9 @@ def revise_project(
             version.version_number,
             VersionSource.EDIT,
             app_spec,
+            SourceBundle.model_validate(source_bundle_payload)
+            if source_bundle_payload
+            else None,
         )
         project.latest_version_id = version.id
         db.execute(
@@ -2530,13 +2638,34 @@ def restore_version(
     if source_version is None:
         raise AppError("VERSION_NOT_FOUND", "Restore version was not found", 404)
     restored_app_spec = AppSpec.model_validate(source_version.app_spec)
-    blueprint, architecture_spec = _validation_contracts(db, source_version.run_id)
-    validation = validate_app_spec(
+    executed = _execute_version_candidate(
+        db,
+        source_version,
         restored_app_spec,
         project.prompt,
-        blueprint=blueprint,
-        architecture_spec=architecture_spec,
+        f"restore-{uuid4()}",
     )
+    if executed is None:
+        blueprint, architecture_spec = _validation_contracts(db, source_version.run_id)
+        validation = validate_app_spec(
+            restored_app_spec,
+            project.prompt,
+            blueprint=blueprint,
+            architecture_spec=architecture_spec,
+        )
+        execution_report = source_version.execution_report
+        build_artifact = source_version.build_artifact
+        source_bundle_payload = source_version.source_bundle
+    else:
+        execution_result, source_bundle = executed
+        validation = execution_result.validation_report
+        execution_report = execution_result.execution_report.model_dump(mode="json")
+        build_artifact = (
+            execution_result.build_artifact.model_dump(mode="json")
+            if execution_result.build_artifact
+            else None
+        )
+        source_bundle_payload = source_bundle.model_dump(mode="json")
     if not validation.passed:
         raise AppError("RESTORE_VALIDATION_FAILED", "The selected version failed validation", 422)
     latest_number = db.scalar(
@@ -2550,6 +2679,10 @@ def restore_version(
         version_number=(latest_number or 0) + 1,
         source=VersionSource.RESTORE.value,
         app_spec=source_version.app_spec,
+        architecture_design=source_version.architecture_design,
+        source_bundle=source_bundle_payload,
+        execution_report=execution_report,
+        build_artifact=build_artifact,
         data_profile=source_version.data_profile,
         validation_report=validation.model_dump(mode="json"),
         review_report=source_version.review_report,
@@ -2562,6 +2695,9 @@ def restore_version(
         restored.version_number,
         VersionSource.RESTORE,
         restored_app_spec,
+        SourceBundle.model_validate(source_bundle_payload)
+        if source_bundle_payload
+        else None,
     )
     project.latest_version_id = restored.id
     _record_project_event(
@@ -2583,6 +2719,80 @@ def _validation_contracts(
         _artifact_model(db, run_id, ArtifactType.BLUEPRINT, Blueprint),
         _artifact_model(db, run_id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec),
     )
+
+
+def _execute_version_candidate(
+    db: Session,
+    version: ProjectVersion,
+    app_spec: AppSpec,
+    prompt: str,
+    execution_id: str,
+) -> tuple[ExecutionResult, SourceBundle] | None:
+    blueprint = _artifact_model(db, version.run_id, ArtifactType.BLUEPRINT, Blueprint)
+    product_spec = _artifact_model(
+        db, version.run_id, ArtifactType.PRODUCT_SPEC, ProductSpec
+    )
+    architecture_design = (
+        ArchitectureDesign.model_validate(version.architecture_design)
+        if version.architecture_design
+        else _artifact_model(
+            db,
+            version.run_id,
+            ArtifactType.ARCHITECTURE_DESIGN,
+            ArchitectureDesign,
+        )
+    )
+    if blueprint is None or product_spec is None or architecture_design is None:
+        return None
+    existing_bundle = (
+        SourceBundle.model_validate(version.source_bundle)
+        if version.source_bundle
+        else _artifact_model(db, version.run_id, ArtifactType.SOURCE_BUNDLE, SourceBundle)
+    )
+    if existing_bundle is None:
+        return None
+    unit_tests = [
+        SourceFileDraft.model_validate(
+            item.model_dump(mode="python", exclude={"content_hash"})
+        )
+        for item in existing_bundle.files
+        if item.role == "test"
+    ]
+    source_bundle = create_source_bundle(
+        EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
+        blueprint.product_type,
+    )
+    request_payload = {
+        "execution_id": execution_id,
+        "run_id": version.run_id,
+        "attempt": 1,
+        "adapter_id": source_bundle.adapter_id,
+        "product_spec_hash": product_spec.content_hash,
+        "architecture_design_hash": architecture_design.content_hash,
+        "source_manifest_hash": source_bundle.manifest_hash,
+        "prompt": prompt,
+        "blueprint": blueprint.model_dump(mode="json"),
+        "architecture_design": architecture_design.model_dump(mode="json"),
+        "app_spec": app_spec.model_dump(mode="json"),
+        "source_bundle": source_bundle.model_dump(mode="json"),
+        "acceptance_criteria": architecture_design.acceptance_mapping,
+        "deadline_ms": int(get_settings().runtime_executor_timeout_seconds * 1000),
+    }
+    request_hash = hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    try:
+        _, result = execute_request(
+            ExecutionRequest(**request_payload, request_hash=request_hash)
+        )
+    except RuntimeExecutorError as exc:
+        raise AppError("RUNTIME_EXECUTOR_UNAVAILABLE", str(exc), 503) from exc
+    return result, source_bundle
 
 
 def _record_project_event(
@@ -2907,13 +3117,34 @@ def save_project_sandbox(
         current = db.get(ProjectVersion, project.latest_version_id)
         if current is None:
             raise AppError("VERSION_NOT_FOUND", "Build a version before saving Vim changes", 409)
-        blueprint, architecture_spec = _validation_contracts(db, current.run_id)
-        validation = validate_app_spec(
+        executed = _execute_version_candidate(
+            db,
+            current,
             app_spec,
             project.prompt,
-            blueprint=blueprint,
-            architecture_spec=architecture_spec,
+            f"sandbox-save-{uuid4()}",
         )
+        if executed is None:
+            blueprint, architecture_spec = _validation_contracts(db, current.run_id)
+            validation = validate_app_spec(
+                app_spec,
+                project.prompt,
+                blueprint=blueprint,
+                architecture_spec=architecture_spec,
+            )
+            execution_report = current.execution_report
+            build_artifact = current.build_artifact
+            source_bundle_payload = current.source_bundle
+        else:
+            execution_result, source_bundle = executed
+            validation = execution_result.validation_report
+            execution_report = execution_result.execution_report.model_dump(mode="json")
+            build_artifact = (
+                execution_result.build_artifact.model_dump(mode="json")
+                if execution_result.build_artifact
+                else None
+            )
+            source_bundle_payload = source_bundle.model_dump(mode="json")
         if not validation.passed:
             raise AppError("SANDBOX_VALIDATION_FAILED", "The edited AppSpec failed validation", 422)
         latest_number = db.scalar(
@@ -2927,6 +3158,10 @@ def save_project_sandbox(
             version_number=(latest_number or 0) + 1,
             source=VersionSource.EDIT.value,
             app_spec=app_spec.model_dump(mode="json"),
+            architecture_design=current.architecture_design,
+            source_bundle=source_bundle_payload,
+            execution_report=execution_report,
+            build_artifact=build_artifact,
             data_profile=current.data_profile,
             validation_report=validation.model_dump(mode="json"),
             review_report=current.review_report,
@@ -2939,6 +3174,9 @@ def save_project_sandbox(
             version.version_number,
             VersionSource.EDIT,
             app_spec,
+            SourceBundle.model_validate(source_bundle_payload)
+            if source_bundle_payload
+            else None,
         )
         project.latest_version_id = version.id
         db.execute(

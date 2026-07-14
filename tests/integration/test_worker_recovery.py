@@ -19,6 +19,7 @@ from another_atom.contracts.schemas import (
     Blueprint,
     BlueprintApproval,
     HumanTaskResponse,
+    ProductSpec,
 )
 from another_atom.domain.artifacts import get_artifact
 from another_atom.domain.errors import AppError
@@ -42,7 +43,18 @@ def _create_run(client: TestClient, prompt: str = "Build a product catalog") -> 
         "/api/runs",
         json={"prompt": prompt, "mode": "team"},
     ).json()
-    return client.get(f"/api/runs/{initial['run_id']}").json()
+    run = client.get(f"/api/runs/{initial['run_id']}").json()
+    if (
+        run["status"] == "awaiting_approval"
+        and run["blueprint"]["support_level"] == "supported"
+    ):
+        approved = client.post(
+            f"/api/runs/{run['run_id']}/approve",
+            json={"blueprint": run["blueprint"]},
+        )
+        assert approved.status_code == 202, approved.text
+        run = client.get(f"/api/runs/{initial['run_id']}").json()
+    return run
 
 
 def test_expired_worker_lease_can_be_reclaimed(queued_client: TestClient) -> None:
@@ -145,14 +157,14 @@ def test_interrupted_blueprint_background_task_is_recovered(
         run = db.get(Run, run_id)
         user = db.get(User, "demo-user")
         assert run is not None and user is not None
-        assert run.status == "build_queued"
+        assert run.status == "awaiting_approval"
         assert run.quota_reserved == 0
         assert run.quota_spent == 1
         assert user.quota_reserved == 0
         assert get_artifact(db, run.id, ArtifactType.BLUEPRINT) is not None
         assert (
             db.scalar(select(func.count()).select_from(BuildJob).where(BuildJob.run_id == run.id))
-            == 1
+            == 0
         )
 
 
@@ -358,10 +370,19 @@ def test_mid_pipeline_recovery_reuses_completed_stage_artifacts(
         run = db.get(Run, created["run_id"])
         job = db.get(BuildJob, claimed)
         blueprint_artifact = get_artifact(db, created["run_id"], ArtifactType.BLUEPRINT)
-        assert run is not None and job is not None and blueprint_artifact is not None
+        product_spec_artifact = get_artifact(
+            db, created["run_id"], ArtifactType.PRODUCT_SPEC
+        )
+        assert (
+            run is not None
+            and job is not None
+            and blueprint_artifact is not None
+            and product_spec_artifact is not None
+        )
         Orchestrator(db)._run_architect(
             run,
             Blueprint.model_validate(blueprint_artifact.payload),
+            ProductSpec.model_validate(product_spec_artifact.payload),
         )
         job.status = "building"
         job.lease_owner = "dead-mid-stage"
@@ -386,7 +407,7 @@ def test_mid_pipeline_recovery_reuses_completed_stage_artifacts(
             )
         )
         assert run.status == "completed"
-        assert run.quota_spent == 5
+        assert run.quota_spent == 3
         assert job.attempt == 2
         assert architect_settles == 1
         assert (

@@ -52,9 +52,9 @@ See the [overall product goal and positioning](./docs/design/整体/01-[产品]-
 ### Multi-agent Collaboration
 
 - **Single entry point:** Users primarily talk to Lead and do not need to understand internal roles, modes, or workflows first.
-- **Specialized responsibilities:** Product Manager, Architect, Engineer, Data Analyst, and Reviewer handle requirements, structure, implementation, data, and independent review. The deterministic Validator supplies engineering evidence Agents cannot rewrite.
-- **Task-based evolution:** Simple tasks should take a short path, while complex work may involve more roles, tools, and rework. The purpose of multiple Agents is to reduce different uncertainties, not maximize Agent count.
-- **User involvement:** Users can inspect, edit, and confirm key plans. The system pauses only for real changes in scope, budget, destructive operations, or publishing.
+- **Specialized responsibilities:** Product Manager delivers ProductSpec, Architect delivers ArchitectureDesign, and Engineer delivers a SourceBundle with unit tests. Runtime performs deterministic Build, Test, and Validation. Data Analyst and Reviewer are disabled for new V1 Runs.
+- **Fixed handoff:** V1 uses a sequential Product Manager, Architect, and Engineer pipeline. Inspectable artifacts and explicit handoffs—not role count—provide the collaboration value.
+- **User involvement:** Users must confirm ProductSpec before engineering execution. ArchitectureDesign is inspectable but does not add a second mandatory approval unless it changes the confirmed product scope, target platform, or external capability boundary.
 
 ### Vibe Coding Workspace
 
@@ -123,11 +123,11 @@ These principles answer four questions: how a project keeps moving, how Agents c
 
 ### 2. How Agents divide and hand off work
 
-- **[Roles collaborate through inspectable artifacts]** Lead receives user requests. Product Manager, Architect, Engineer, Data Analyst, and Reviewer own product, architecture, code, data, and independent review. Each role must deliver a Blueprint, ArchitectureSpec, source, DataProfile, ValidationReport, or ReviewReport rather than simulate collaboration through avatar count or conversation length.
+- **[Roles collaborate through inspectable artifacts]** Lead receives user requests. Product Manager, Architect, and Engineer sequentially deliver ProductSpec, ArchitectureDesign, and a SourceBundle with unit tests. The independent Runtime—not an Agent—produces BuildArtifact, ExecutionReport, and ValidationReport evidence.
 
 - **[Each role receives only the information required by its task]** Agents do not share an endlessly growing transcript. The platform prepares the Context required by the current role and passes versioned Artifacts, Evidence, and Handoffs so inputs, outputs, and failure causes remain inspectable, recoverable, and traceable.
 
-- **[Routine work continues; risk changes require confirmation]** Once a user explicitly requests a build, work inside the accepted scope and base budget continues automatically. If scope, budget, source safety, or public deployment state changes, the platform must ask for confirmation.
+- **[One product approval; changed risk requires reapproval]** Every ProductSpec requires user confirmation before Architect and Engineer continue automatically. A changed product boundary, additional budget, destructive source change, or publishing-state change requires a new confirmation bound to that object.
 
 ### 3. How the platform controls authority and execution
 

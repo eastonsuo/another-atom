@@ -5,11 +5,30 @@ from another_atom.config import get_settings
 from another_atom.storage.models import Approval, Artifact, User
 
 
-def _create_run(client: TestClient, payload: dict, headers: dict | None = None) -> dict:
+def _create_run(
+    client: TestClient,
+    payload: dict,
+    headers: dict | None = None,
+    *,
+    auto_approve: bool = True,
+) -> dict:
     created = client.post("/api/runs", json=payload, headers=headers)
     assert created.status_code == 201, created.text
     run_id = created.json()["run_id"]
-    return client.get(f"/api/runs/{run_id}", headers=headers).json()
+    run = client.get(f"/api/runs/{run_id}", headers=headers).json()
+    if (
+        auto_approve
+        and run["status"] == "awaiting_approval"
+        and run["blueprint"]["support_level"] == "supported"
+    ):
+        approved = client.post(
+            f"/api/runs/{run_id}/approve",
+            json={"blueprint": run["blueprint"]},
+            headers=headers,
+        )
+        assert approved.status_code == 202, approved.text
+        run = client.get(f"/api/runs/{run_id}", headers=headers).json()
+    return run
 
 
 def test_unsupported_request_stops_before_approval(client: TestClient) -> None:
@@ -70,7 +89,7 @@ def test_build_usage_is_recorded_without_enforcing_the_configured_limit(
     assert run["status"] == "completed"
     quota = client.get("/api/quota").json()
     assert quota["limit"] == 0
-    assert quota["used"] == 5
+    assert quota["used"] == 3
     assert quota["reserved"] == 0
 
 
@@ -112,7 +131,7 @@ def test_repairable_validation_failure_is_repaired_once(client: TestClient) -> N
     assert ".another-atom/generated/repair-validation-report.json" in paths
 
     quota = client.get("/api/quota").json()
-    assert quota["used"] == 6
+    assert quota["used"] == 4
     assert quota["reserved"] == 0
 
 
@@ -135,7 +154,7 @@ def test_failed_repair_stops_after_one_round(client: TestClient) -> None:
     assert "run.completed" not in event_types
 
     quota = client.get("/api/quota").json()
-    assert quota["used"] == 5
+    assert quota["used"] == 4
     assert quota["reserved"] == 0
 
 
@@ -183,19 +202,25 @@ def test_cross_user_preview_access_is_denied(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_supported_request_auto_authorizes_build(client: TestClient) -> None:
+def test_supported_request_waits_for_product_spec_approval(client: TestClient) -> None:
     run = _create_run(
         client,
         {"prompt": "Build a product catalog", "mode": "team"},
+        auto_approve=False,
     )
-    assert run["status"] == "completed"
+    assert run["status"] == "awaiting_approval"
     events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
     event_types = [event["type"] for event in events]
-    assert "build.auto_authorized" in event_types
-    assert "approval.required" not in event_types
+    assert "approval.required" in event_types
+    approved = client.post(
+        f"/api/runs/{run['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+    )
+    assert approved.status_code == 202
+    assert client.get(f"/api/runs/{run['run_id']}").json()["status"] == "completed"
 
 
-def test_reviewer_rework_blocks_version_and_preserves_report(client: TestClient) -> None:
+def test_reviewer_marker_does_not_reenable_skipped_role(client: TestClient) -> None:
     run = _create_run(
         client,
         {
@@ -204,11 +229,9 @@ def test_reviewer_rework_blocks_version_and_preserves_report(client: TestClient)
         },
     )
 
-    assert run["status"] == "failed"
-    assert run["error_code"] == "REVIEW_REJECTED"
-    assert run["review_report"]["verdict"] == "rework"
-    assert run["review_report"]["issues"][0]["severity"] == "blocker"
-    assert run["version_id"] is None
+    assert run["status"] == "completed"
+    assert run["review_report"] is None
+    assert run["version_id"] is not None
 
 
 def test_adapted_request_waits_for_approval(queued_client: TestClient) -> None:

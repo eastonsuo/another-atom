@@ -2,7 +2,7 @@
 
 [toc]
 
-- **文档状态：** V1 技术设计基线；持久化 HumanTask、PM 补充输入和 Blueprint adapted 审批已实现，通用 Risk Policy 适配器待扩展
+- **文档状态：** V1 技术设计基线；持久化人工任务（HumanTask）、产品经理补充输入和产品规格（ProductSpec）确认已实现，通用风险策略（Risk Policy）适配器待扩展
 - **技术范围：** 通用 Approval Contract、业务适配器、Risk Policy 接入、状态机、API、持久化、并发、恢复、事件与验收
 - **合并流程基线：** [统一 Chat 与 Human-in-the-loop](../产品设计/06-统一Chat与Human-in-the-loop.md)；本文重点展开 `approval`，`input_request` 以合并流程为准
 - **产品设计：** [V1 Human-in-the-loop 用户审批](../产品设计/04-[TODO]-Human-in-the-loop用户审批.md)
@@ -14,7 +14,7 @@
 
 ## 背景
 
-当前 V1 已在首次 Build 中实现一条最小审批纵切：supported Blueprint 自动继续，adapted Blueprint 持久化为 `awaiting_approval`，所属用户确认后通过 CAS 创建唯一 BuildJob。但现有 `Approval` 仍是“一次 Run 对应一个 Blueprint 布尔确认”，不能统一表达范围变化、额外预算、破坏性 Diff、dirty worktree、Restore 和 Deployment 等风险对象。
+当前 V1 已在首次构建（Build）中实现一条最小审批纵切：产品经理生成产品规格（ProductSpec）后，不论支持级别是 `supported` 还是 `adapted`，都持久化为 `awaiting_approval`；所属用户确认后通过比较并交换（CAS）创建唯一构建任务（BuildJob）。架构设计（ArchitectureDesign）默认不增加第二次强制人工确认（Human-in-the-loop，HITL），只有架构结论要求改变已确认的产品范围、目标平台或外部能力边界时，才停止当前流水线并退回产品规格重新确认。现有 `Approval` 仍是“一次运行（Run）对应一个产品规格布尔确认”，不能统一表达范围变化、额外预算、破坏性差异（Diff）、脏工作区（dirty worktree）、恢复（Restore）和部署（Deployment）等风险对象。
 
 本文在保留当前纵切兼容性的前提下，定义可由固定工作流、Risk Policy 和显式操作共同复用的 Approval 控制面。核心问题不是增加更多弹窗，而是让不同业务共用精确对象绑定、状态 CAS、用户归属、审计和恢复机制，同时把 ProductSpec 生成、预算计算、Git 操作和 Deployment 执行留在各自业务层。
 

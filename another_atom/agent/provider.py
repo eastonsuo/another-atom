@@ -12,11 +12,15 @@ from pydantic import BaseModel, ValidationError
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    ArchitectureComponent,
+    ArchitectureDesign,
+    ArchitectureDesignDraft,
     ArchitectureSpec,
     Blueprint,
     ChangeBrief,
     DataCheck,
     DataProfile,
+    EngineerOutput,
     LeadDecision,
     LeadRoute,
     Mode,
@@ -31,6 +35,7 @@ from another_atom.contracts.schemas import (
     ReviewIssue,
     ReviewReport,
     SourceContext,
+    SourceFileDraft,
     SupportLevel,
     ValidationReport,
 )
@@ -201,9 +206,21 @@ class LLMProvider(Protocol):
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
 
+    def create_architecture_design(
+        self, product_spec: ProductSpec, blueprint: Blueprint
+    ) -> ArchitectureDesignDraft: ...
+
     def create_app_spec(
         self, blueprint: Blueprint, architecture_spec: ArchitectureSpec, prompt: str
     ) -> AppSpec: ...
+
+    def create_engineer_output(
+        self,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
+        blueprint: Blueprint,
+        prompt: str,
+    ) -> EngineerOutput: ...
 
     def repair_app_spec(
         self,
@@ -663,6 +680,101 @@ class MockLLMProvider:
             typography="sans",
             density="comfortable",
             style=f"{blueprint.visual_direction}; high-contrast editorial product photography",
+        )
+
+    def create_architecture_design(
+        self, product_spec: ProductSpec, blueprint: Blueprint
+    ) -> ArchitectureDesignDraft:
+        visual_tokens = self.create_architecture_spec(blueprint)
+        requires_reapproval = "[architecture:scope-change]" in product_spec.content.casefold()
+        components = [
+            ArchitectureComponent(
+                name=page,
+                responsibility=f"承载“{page}”页面的内容、交互状态和失败反馈。",
+                files=["index.html", "styles.css", "app.js"],
+            )
+            for page in blueprint.pages
+        ]
+        acceptance = [
+            f"产品规格“{requirement}”映射到 app.js 行为和 tests/app.test.js。"
+            for requirement in (blueprint.mapped_requirements or blueprint.modules)[:12]
+        ]
+        return ArchitectureDesignDraft(
+            summary=(
+                f"{blueprint.project_name}采用无后端依赖的静态 Web 架构，"
+                "由浏览器状态驱动，并交给独立 Runtime（运行时）执行构建和单元测试。"
+            ),
+            target_platform="现代桌面与移动浏览器（Modern desktop and mobile browsers）",
+            runtime_adapter="web-static-v1",
+            capability_gaps=list(blueprint.omitted_requirements),
+            components=components,
+            state_and_data_flow=[
+                "用户操作进入 app.js 事件处理器，再更新浏览器本地状态和页面反馈。",
+                "刷新后仅保留明确写入浏览器存储（Browser storage）的状态。",
+            ],
+            interactions=[
+                f"{module}：触发后必须产生可见成功结果或可见失败反馈。"
+                for module in blueprint.modules
+            ],
+            interfaces=[
+                "不生成服务端接口；外部网络能力仅限产品规格明确允许的公网 HTTPS API。",
+                "禁止访问 localhost、回环地址和用户设备本地服务。",
+            ],
+            directory_plan=[
+                "docs/product-spec.md：已确认的产品规格（ProductSpec）",
+                "docs/architecture-design.md：架构设计（Architecture Design）",
+                "index.html：页面语义结构",
+                "styles.css：视觉与响应式样式",
+                "app.js：交互和状态逻辑",
+                "tests/app.test.js：工程师单元测试（Unit tests）",
+            ],
+            test_strategy=[
+                "使用 Node.js 内置测试运行器（node:test），不安装第三方依赖。",
+                "至少校验入口文件、核心页面内容、脚本语法和运行就绪标记。",
+            ],
+            acceptance_mapping=acceptance or [
+                "产品规格摘要映射到页面源码和 tests/app.test.js。"
+            ],
+            visual_tokens=visual_tokens,
+            requires_product_reapproval=requires_reapproval,
+            reapproval_reason=(
+                "当前 Runtime（运行时）无法在不改变已确认产品边界的情况下实现该要求。"
+                if requires_reapproval
+                else None
+            ),
+        )
+
+    def create_engineer_output(
+        self,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
+        blueprint: Blueprint,
+        prompt: str,
+    ) -> EngineerOutput:
+        app_spec = self.create_app_spec(
+            blueprint,
+            architecture_design.visual_tokens,
+            prompt,
+        )
+        if "[fail:build]" in prompt.casefold():
+            app_spec = app_spec.model_copy(update={"javascript": "const = ;"})
+        test_source = (
+            "import test from 'node:test';\n"
+            "import assert from 'node:assert/strict';\n"
+            "import { readFile } from 'node:fs/promises';\n\n"
+            "test('生成源码包含入口和核心标题', async () => {\n"
+            "  const html = await readFile('index.html', 'utf8');\n"
+            "  const script = await readFile('app.js', 'utf8');\n"
+            "  assert.match(html, /<(main|section|div)[\\s>]/);\n"
+            "  assert.match(html, /app\\.js/);\n"
+            "  assert.ok(script.trim().length > 0);\n"
+            "});\n"
+        )
+        return EngineerOutput(
+            app_spec=app_spec,
+            unit_tests=[
+                SourceFileDraft(path="tests/app.test.js", role="test", content=test_source)
+            ],
         )
 
     def create_app_spec(
@@ -1305,6 +1417,57 @@ class OllamaCloudProvider:
                 "background at least 3:1."
             ),
             {"blueprint": blueprint.model_dump(mode="json")},
+        )
+
+    def create_architecture_design(
+        self, product_spec: ProductSpec, blueprint: Blueprint
+    ) -> ArchitectureDesignDraft:
+        return self._structured_chat(
+            ArchitectureDesignDraft,
+            "Architect（架构师）",
+            (
+                "基于已经确认的 ProductSpec（产品规格）产出可直接约束工程实现的架构设计。"
+                "必须回答目标平台、Runtime Adapter（运行适配器）、能力缺口、页面与组件职责、"
+                "状态生命周期和数据流、关键交互的成功与失败反馈、接口和网络边界、目录规划、"
+                "单元测试策略，以及每条验收条件到模块和测试的映射。"
+                "当前适配器固定为 web-static-v1，不允许包安装、后端、Shell、动态 import 或 eval。"
+                "公共 HTTPS API 只有在已确认需求明确要求时才允许；禁止 localhost 和回环地址。"
+                "用户可见说明默认使用中文；出现纯英文技术术语时同时补充中文。"
+                "架构设计本身默认不需要用户确认。只有当设计必须改变已确认的产品范围、目标平台、"
+                "外部能力或高风险权限时，requires_product_reapproval 才能为 true，并给出原因。"
+            ),
+            {
+                "product_spec": product_spec.model_dump(mode="json"),
+                "blueprint": blueprint.model_dump(mode="json"),
+            },
+        )
+
+    def create_engineer_output(
+        self,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
+        blueprint: Blueprint,
+        prompt: str,
+    ) -> EngineerOutput:
+        return self._structured_chat(
+            EngineerOutput,
+            "Engineer（工程师）",
+            (
+                "严格依据 ProductSpec（产品规格）和 ArchitectureDesign（架构设计）产出完整 AppSpec，"
+                "并同时产出至少一个真正可由 Node.js 内置 node:test 运行的单元测试文件。"
+                "html、css、javascript 必须完整且可独立运行；测试文件必须位于 tests/ 且以 "
+                ".test.js 结尾。测试只可使用 Node.js 内置模块，并验证实际生成源码的核心行为或"
+                "验收条件，不能写恒真断言。不要返回 Markdown 代码围栏。"
+                "禁止第三方依赖、包安装、后端调用、Shell、动态 import、eval、远程可执行资源、"
+                "localhost 或回环地址。视觉颜色必须与架构设计中的 visual_tokens 完全一致。"
+            ),
+            {
+                "request": prompt,
+                "product_spec": product_spec.model_dump(mode="json"),
+                "architecture_design": architecture_design.model_dump(mode="json"),
+                "blueprint": blueprint.model_dump(mode="json"),
+            },
+            stream=True,
         )
 
     def create_app_spec(
