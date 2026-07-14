@@ -26,7 +26,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { PreviewLoader } from "./components/PreviewApp";
 import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
@@ -1141,8 +1141,28 @@ function Workspace({
 }) {
   const [approving, setApproving] = useState(false);
   const [requestedFilePath, setRequestedFilePath] = useState<string | null>(null);
+  const architectureDocumentState = useRef({
+    runId: run.run_id,
+    contentHash: run.architecture_design?.content_hash ?? null,
+  });
   const effectiveBlueprint = run.blueprint;
   const ready = run.status === "completed" || run.status === "completed_degraded";
+
+  useEffect(() => {
+    const currentHash = run.architecture_design?.content_hash ?? null;
+    if (architectureDocumentState.current.runId !== run.run_id) {
+      architectureDocumentState.current = { runId: run.run_id, contentHash: currentHash };
+      return;
+    }
+    let requestedPath: string | null = null;
+    if (currentHash && currentHash !== architectureDocumentState.current.contentHash) {
+      requestedPath = run.architecture_design?.path ?? "docs/architecture-design.md";
+    }
+    architectureDocumentState.current.contentHash = currentHash;
+    if (!requestedPath) return;
+    const timer = window.setTimeout(() => setRequestedFilePath(requestedPath), 0);
+    return () => window.clearTimeout(timer);
+  }, [run.architecture_design?.content_hash, run.architecture_design?.path, run.run_id]);
 
   const approve = async () => {
     if (!effectiveBlueprint) return;
