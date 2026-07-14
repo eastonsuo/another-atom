@@ -479,12 +479,8 @@ body.resizing-tool-panel { cursor: ew-resize; user-select: none; }
   .studio-main.active { height: 100vh; min-height: 0; overflow: hidden; }
   .workspace-grid { height: calc(100vh - 66px); min-height: 0; overflow: hidden; }
   .workspace-process { min-height: 0; overflow-y: auto; }
-  .workspace-content { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .project-chat-history { max-height: min(360px, 28vh); }
-  .workspace-stage { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-  .workspace-stage .center-state { min-height: 100%; }
-  .workspace-stage .result-view { height: 100%; min-height: 100%; }
-  .workspace-tools { height: 100%; max-height: none; }
+  .workspace-content { min-height: 0; overflow-y: auto; }
+  .workspace-tools { height: 100%; max-height: none; z-index: 2; }
 }
 
 @media (max-width: 900px) {

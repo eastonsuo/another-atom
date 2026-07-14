@@ -1289,44 +1289,42 @@ function Workspace({
             }
           }}
         />
-        <div className="workspace-stage">
-          {run.status === "awaiting_approval" && effectiveBlueprint ? (
-            <ProductSpecApproval key={`${run.product_spec?.content_hash}:${run.product_spec?.summary}`} productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} onOpenDocument={() => setRequestedFilePath(run.product_spec?.path ?? "docs/product-spec.md")} onUpdate={updateProductSpec} />
-          ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
-            <div className="failed-project-view">
-              <ClarificationState run={run} language={language} />
-            </div>
-          ) : run.status === "needs_input" ? (
-            <ScopeStop blueprint={effectiveBlueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
-          ) : run.status === "failed" ? (
-            <div className="failed-project-view">
-              <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
-            </div>
-          ) : run.status === "cancelled" && run.error_code === "BASE_VERSION_CHANGED" ? (
-            <div className="failed-project-view">
-              <StaleClarificationState language={language} />
-            </div>
-          ) : ready && (run.version_id || versions.length > 0) ? (
-            <ResultWorkspace
-              key={run.version_id}
-              run={run}
-              versions={versions}
-              setVersions={setVersions}
-              device={device}
-              setDevice={setDevice}
-              tab={tab}
-              setTab={setTab}
-              refreshShell={refreshShell}
-              refreshRun={refreshRun}
-              setError={setError}
-              language={language}
-            />
-          ) : (
-            <div className="failed-project-view">
-              <BuildingState run={run} events={events} language={language} />
-            </div>
-          )}
-        </div>
+        {run.status === "awaiting_approval" && effectiveBlueprint ? (
+          <ProductSpecApproval key={`${run.product_spec?.content_hash}:${run.product_spec?.summary}`} productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} onOpenDocument={() => setRequestedFilePath(run.product_spec?.path ?? "docs/product-spec.md")} onUpdate={updateProductSpec} />
+        ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
+          <div className="failed-project-view">
+            <ClarificationState run={run} language={language} />
+          </div>
+        ) : run.status === "needs_input" ? (
+          <ScopeStop blueprint={effectiveBlueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
+        ) : run.status === "failed" ? (
+          <div className="failed-project-view">
+            <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
+          </div>
+        ) : run.status === "cancelled" && run.error_code === "BASE_VERSION_CHANGED" ? (
+          <div className="failed-project-view">
+            <StaleClarificationState language={language} />
+          </div>
+        ) : ready && (run.version_id || versions.length > 0) ? (
+          <ResultWorkspace
+            key={run.version_id}
+            run={run}
+            versions={versions}
+            setVersions={setVersions}
+            device={device}
+            setDevice={setDevice}
+            tab={tab}
+            setTab={setTab}
+            refreshShell={refreshShell}
+            refreshRun={refreshRun}
+            setError={setError}
+            language={language}
+          />
+        ) : (
+          <div className="failed-project-view">
+            <BuildingState run={run} events={events} language={language} />
+          </div>
+        )}
       </section>
       <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} requestedFilePath={requestedFilePath} onRequestedFileOpened={() => setRequestedFilePath(null)} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
     </div>
