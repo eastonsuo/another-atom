@@ -70,3 +70,17 @@ Before closing a task or milestone, verify:
 3. What persisted state, error path, and user-visible behavior changed?
 4. What automated or deployed verification proves it works?
 5. Do README, PRD, architecture, and actual behavior still agree?
+
+## Agent skills
+
+### Issue tracker
+
+本仓库使用 GitHub Issues 跟踪议题。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+本仓库使用五个默认分流角色标签。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+本仓库采用单上下文（single-context）领域文档布局。详见 `docs/agents/domain.md`。
