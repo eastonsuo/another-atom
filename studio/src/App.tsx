@@ -1548,9 +1548,7 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
     setRetrying(true);
     setError("");
     try {
-      const routed = await api.sendProjectMessage(run.project_id, run.prompt, run.model);
-      if (!routed.proposal_id) throw new Error(ui(language, "The retry request did not produce a code change proposal."));
-      const created = await api.approveProjectChange(run.project_id, routed.proposal_id);
+      const created = await api.retryRun(run.run_id);
       setRun(created);
       await refreshShell();
     } catch (reason) {

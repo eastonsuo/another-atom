@@ -640,6 +640,158 @@ def get_run(
     return _run_view(db, _owned_run(db, run_id, user.id))
 
 
+@router.post(
+    "/runs/{run_id}/retry",
+    response_model=RunView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_failed_run(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
+    job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RunView:
+    failed_run = _owned_run(db, run_id, user.id)
+    if failed_run.status != RunStatus.FAILED.value:
+        raise AppError("RUN_RETRY_NOT_ALLOWED", "Only a failed Run can be retried", 409)
+
+    project = _owned_project(db, failed_run.project_id, user.id)
+    is_change_retry = failed_run.trigger == "ai_edit"
+    base_version = (
+        db.get(ProjectVersion, failed_run.base_version_id)
+        if failed_run.base_version_id
+        else None
+    )
+    if is_change_retry:
+        if (
+            base_version is None
+            or base_version.project_id != project.id
+            or not base_version.git_commit
+            or project.latest_version_id != base_version.id
+        ):
+            raise AppError(
+                "RUN_RETRY_BASE_CHANGED",
+                "The Project version changed after this Run failed",
+                409,
+            )
+    elif project.latest_version_id is not None:
+        raise AppError(
+            "RUN_RETRY_BASE_CHANGED",
+            "The Project already has a newer ready version",
+            409,
+        )
+
+    previous_request = db.scalar(
+        select(ProjectMessage)
+        .where(
+            ProjectMessage.run_id == failed_run.id,
+            ProjectMessage.role == "user",
+            ProjectMessage.message_type == "request",
+        )
+        .order_by(ProjectMessage.created_at.asc(), ProjectMessage.id.asc())
+        .limit(1)
+    )
+    previous_payload = dict(previous_request.payload or {}) if previous_request else {}
+    selected_files = [
+        path for path in previous_payload.get("selected_files", []) if isinstance(path, str)
+    ]
+
+    retry_run = Run(
+        project_id=project.id,
+        session_id=failed_run.session_id,
+        user_id=user.id,
+        mode=failed_run.mode,
+        model=failed_run.model,
+        trigger=failed_run.trigger,
+        base_version_id=base_version.id if base_version else None,
+        status=(
+            RunStatus.BUILD_QUEUED.value
+            if is_change_retry
+            else RunStatus.PRODUCT_RUNNING.value
+        ),
+        current_stage="team_leader" if is_change_retry else "product_manager",
+        prompt=failed_run.prompt,
+    )
+    db.add(retry_run)
+    db.flush()
+
+    claim_filters = [
+        Project.id == project.id,
+        Project.user_id == user.id,
+        Project.active_write_run_id.is_(None),
+    ]
+    claim_filters.append(
+        Project.latest_version_id == base_version.id
+        if base_version
+        else Project.latest_version_id.is_(None)
+    )
+    claimed = db.execute(
+        update(Project)
+        .where(*claim_filters)
+        .values(
+            active_write_run_id=retry_run.id,
+            status=ProjectStatus.BUILDING.value,
+            **({"prompt": failed_run.prompt} if not is_change_retry else {}),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise AppError(
+            "PROJECT_WRITE_BUSY",
+            "Another operation is writing this Project",
+            409,
+        )
+
+    db.add(
+        ProjectMessage(
+            project_id=project.id,
+            session_id=failed_run.session_id,
+            user_id=user.id,
+            run_id=retry_run.id,
+            role="user",
+            message_type="request",
+            content=failed_run.prompt,
+            payload={
+                "request_type": "retry_change" if is_change_retry else "retry_build",
+                "retry_of_run_id": failed_run.id,
+                "selected_files": selected_files,
+            },
+        )
+    )
+    job = None
+    if is_change_retry:
+        job = BuildJob(
+            run_id=retry_run.id,
+            project_id=project.id,
+            status=BuildStatus.QUEUED.value,
+        )
+        db.add(job)
+        db.flush()
+    record_event(
+        db,
+        retry_run.id,
+        "project.recovery_started",
+        "A failed Run is restarting in the existing Project",
+        stage=retry_run.current_stage,
+        payload={
+            "retry_of_run_id": failed_run.id,
+            "base_version_id": retry_run.base_version_id,
+            "build_job_id": job.id if job else None,
+        },
+    )
+    db.commit()
+
+    if job is not None:
+        job_dispatcher(job.id)
+    else:
+        background_tasks.add_task(blueprint_executor, retry_run.id)
+    db.refresh(retry_run)
+    return _run_view(db, retry_run)
+
+
 @router.post("/runs/{run_id}/product-spec", response_model=RunView)
 def update_product_spec(
     run_id: str,

@@ -355,7 +355,7 @@ def test_project_chat_stream_updates_the_same_persisted_lead_message(
     ]
 
 
-def test_failed_first_build_requires_proposal_approval_to_continue(
+def test_failed_first_build_can_continue_with_a_new_approved_request(
     client: TestClient,
 ) -> None:
     created = client.post(
@@ -410,6 +410,81 @@ def test_failed_first_build_requires_proposal_approval_to_continue(
         )
     assert recovery_event is not None
     assert recovery_event.payload["retry_of_run_id"] == failed["run_id"]
+
+
+def test_failed_run_retry_creates_new_run_without_change_proposal(
+    client: TestClient,
+) -> None:
+    original = client.post(
+        "/api/runs",
+        json={
+            "prompt": "创建一个带计时和历史记录的翻译工具",
+            "mode": "team",
+            "model": "mock",
+        },
+    ).json()
+    with client.app.state.testing_session() as db:
+        failed_run = db.get(Run, original["run_id"])
+        project = db.get(Project, original["project_id"])
+        assert failed_run is not None
+        assert project is not None
+        failed_run.status = "failed"
+        failed_run.current_stage = "engineer"
+        failed_run.error_code = "BUILD_VALIDATION_FAILED"
+        failed_run.error_message = "Generated tests failed"
+        project.status = "draft"
+        project.active_write_run_id = None
+        db.commit()
+
+    before = _project_write_counts(client, original["project_id"])
+    response = client.post(f"/api/runs/{original['run_id']}/retry")
+
+    assert response.status_code == 202, response.text
+    retried = response.json()
+    assert retried["project_id"] == original["project_id"]
+    assert retried["run_id"] != original["run_id"]
+    assert retried["prompt"] == original["prompt"]
+    assert retried["status"] == "product_running"
+    retried = client.get(f"/api/runs/{retried['run_id']}").json()
+    assert retried["status"] == "awaiting_approval"
+    preserved_failure = client.get(f"/api/runs/{original['run_id']}").json()
+    assert preserved_failure["status"] == "failed"
+    assert preserved_failure["error_code"] == "BUILD_VALIDATION_FAILED"
+    after = _project_write_counts(client, original["project_id"])
+    assert after == (before[0] + 1, before[1], before[2])
+
+    messages = client.get(
+        f"/api/projects/{original['project_id']}/messages"
+    ).json()
+    retry_request = next(
+        message for message in messages if message["run_id"] == retried["run_id"]
+    )
+    assert retry_request["message_type"] == "request"
+    assert retry_request["payload"]["request_type"] == "retry_build"
+    assert retry_request["payload"]["retry_of_run_id"] == original["run_id"]
+    assert all(message["message_type"] != "change_proposal" for message in messages)
+
+    with client.app.state.testing_session() as db:
+        recovery_event = db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == retried["run_id"],
+                RunEvent.event_type == "project.recovery_started",
+            )
+        )
+    assert recovery_event is not None
+    assert recovery_event.payload["retry_of_run_id"] == original["run_id"]
+
+
+def test_retry_rejects_a_run_that_has_not_failed(client: TestClient) -> None:
+    run = client.post(
+        "/api/runs",
+        json={"prompt": "创建一个翻译工具", "mode": "team", "model": "mock"},
+    ).json()
+
+    response = client.post(f"/api/runs/{run['run_id']}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "RUN_RETRY_NOT_ALLOWED"
 
 
 def test_pending_proposal_becomes_stale_when_base_version_changes(

@@ -87,6 +87,8 @@ export const api = {
       body: JSON.stringify({ prompt, mode, model, attachments }),
     }),
   getRun: (runId: string) => request<RunView>(`/api/runs/${runId}`),
+  retryRun: (runId: string) =>
+    request<RunView>(`/api/runs/${runId}/retry`, { method: "POST" }),
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
   projectMessages: (projectId: string) =>
     request<ProjectMessageView[]>(`/api/projects/${projectId}/messages`),
