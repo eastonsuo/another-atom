@@ -9,8 +9,12 @@ import {
   History,
   Layers3,
   LoaderCircle,
+  LogOut,
+  MessageCircle,
   Monitor,
   Paperclip,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Rocket,
   RotateCcw,
@@ -31,6 +35,7 @@ import type {
   LeadDecisionView,
   Mode,
   ProjectView,
+  ProjectMessageView,
   QuotaView,
   ModelsView,
   RunEvent,
@@ -45,6 +50,7 @@ const TERMINAL = new Set(["completed", "completed_degraded", "failed", "cancelle
 type Language = "zh" | "en";
 
 const LANGUAGE_KEY = "another-atom-language";
+const SIDEBAR_COLLAPSED_KEY = "another-atom-sidebar-collapsed";
 
 const EXAMPLE_PROMPTS: Record<Language, string[]> = {
   zh: [
@@ -61,6 +67,7 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
   zh: {
     team_leader: "Lead 分派",
     product_manager: "产品经理",
+    product_manager_clarification: "产品经理澄清",
     blueprint_approval: "用户确认",
     architect: "架构师",
     engineer: "工程师",
@@ -74,6 +81,7 @@ const STAGE_LABELS: Record<Language, Record<string, string>> = {
   en: {
     team_leader: "Team Leader",
     product_manager: "Product Manager",
+    product_manager_clarification: "PM clarification",
     blueprint_approval: "Your approval",
     architect: "Architect",
     engineer: "Engineer",
@@ -90,6 +98,7 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
   zh: {
     team_leader: "Lead 正在分派请求",
     product_manager: "产品经理正在整理需求",
+    product_manager_clarification: "产品经理正在等待你补充需求",
     build_queue: "构建任务正在排队",
     architect: "架构师正在设计方案",
     engineer: "工程师正在生成应用规格",
@@ -101,6 +110,7 @@ const BUILDING_STAGE_TITLES: Record<Language, Record<string, string>> = {
   en: {
     team_leader: "Lead is routing the request",
     product_manager: "Product Manager is structuring the requirement",
+    product_manager_clarification: "Product Manager is waiting for your clarification",
     build_queue: "The build job is waiting to start",
     architect: "Architect is designing the solution",
     engineer: "Engineer is generating the application specification",
@@ -158,6 +168,8 @@ const ZH: Record<string, string> = {
   "Project workspace": "项目工作区",
   "Application studio": "应用工作台",
   "New project": "新建项目",
+  "Collapse project sidebar": "收起项目栏",
+  "Expand project sidebar": "展开项目栏",
   "Projects": "项目",
   "Your generated projects will appear here.": "生成的项目会显示在这里。",
   "Demo usage": "演示配额",
@@ -255,6 +267,12 @@ const ZH: Record<string, string> = {
   "Publish failed": "发布失败",
   "Preview": "预览",
   "Edit": "编辑",
+  "Continue with Lead": "继续和 Lead 对话",
+  "Describe what should change in the current version.": "描述你希望基于当前版本修改什么。",
+  "Lead will inspect the current Project code automatically.": "Lead 会自动读取当前 Project 代码，不需要手动选择文件。",
+  "Send change": "发送修改",
+  "Could not load Project messages": "无法读取 Project 对话",
+  "Could not start Project change": "无法开始 Project 修改",
   "Vim": "Vim",
   "Versions": "版本",
   "Desktop preview": "桌面预览",
@@ -328,6 +346,9 @@ const ZH: Record<string, string> = {
   "event.run.completed": "任务已完成",
   "event.run.failed": "任务失败",
   "event.provider.fallback": "服务商已切换",
+  "event.alternative.regeneration_requested": "PM 草案重新生成",
+  "A new requirement draft is queued for Product Manager": "已请求产品经理重新生成需求草案",
+  "User asked Product Manager to regenerate the requirement draft": "用户已要求产品经理重新生成需求草案",
   "Ollama timed out; switched to DeepSeek official API": "Ollama 超时，已切换到 DeepSeek 官方 API",
 };
 
@@ -498,10 +519,19 @@ function Studio() {
   const [leadElapsed, setLeadElapsed] = useState(0);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [tab, setTab] = useState<WorkspaceTab>("preview");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
 
   const setLanguage = (nextLanguage: Language) => {
     setLanguageState(nextLanguage);
     window.localStorage.setItem(LANGUAGE_KEY, nextLanguage);
+  };
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -656,13 +686,15 @@ function Studio() {
   if (!user) return <AuthView onAuthenticated={setUser} language={language} setLanguage={setLanguage} />;
 
   return (
-    <div className="studio-shell">
+    <div className={sidebarCollapsed ? "studio-shell sidebar-collapsed" : "studio-shell"}>
       <Sidebar
         projects={projects}
         quota={quota}
         activeProjectId={run?.project_id}
         user={user}
         language={language}
+        collapsed={sidebarCollapsed}
+        onToggle={toggleSidebar}
         onNew={resetComposer}
         onOpen={openProject}
         onLogout={async () => {
@@ -731,6 +763,8 @@ function Sidebar({
   activeProjectId,
   user,
   language,
+  collapsed,
+  onToggle,
   onNew,
   onOpen,
   onLogout,
@@ -740,14 +774,21 @@ function Sidebar({
   activeProjectId?: string;
   user: UserView;
   language: Language;
+  collapsed: boolean;
+  onToggle: () => void;
   onNew: () => void;
   onOpen: (project: ProjectView) => void;
   onLogout: () => void;
 }) {
   return (
-    <aside className="studio-sidebar">
-      <div className="brand"><AtomLogo /><strong>Another Atom</strong></div>
-      <button className="new-project" onClick={onNew}><Plus size={17} /> {ui(language, "New project")}</button>
+    <aside className={collapsed ? "studio-sidebar collapsed" : "studio-sidebar"}>
+      <div className="sidebar-header">
+        {!collapsed && <div className="brand"><AtomLogo /><strong>Another Atom</strong></div>}
+        <button className="sidebar-toggle" onClick={onToggle} aria-label={ui(language, collapsed ? "Expand project sidebar" : "Collapse project sidebar")} title={ui(language, collapsed ? "Expand project sidebar" : "Collapse project sidebar")} aria-expanded={!collapsed}>
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
+      </div>
+      <button className="new-project" onClick={onNew} title={ui(language, "New project")}><Plus size={17} /> <span>{ui(language, "New project")}</span></button>
       <div className="sidebar-section">
         <span className="sidebar-label">{ui(language, "Projects")}</span>
         <div className="project-list">
@@ -757,6 +798,7 @@ function Sidebar({
               key={project.id}
               className={project.id === activeProjectId ? "project-link active" : "project-link"}
               onClick={() => onOpen(project)}
+              title={project.name}
             >
               <span className="project-icon"><Layers3 size={15} /></span>
               <span><strong>{project.name}</strong><small>{statusLabel(language, project.status)}</small></span>
@@ -771,7 +813,7 @@ function Sidebar({
         <small>{ui(language, "LLM usage is isolated to this account.")}</small>
       </div>
       {user.role === "admin" && <a className="admin-console-link" href="/admin"><ShieldCheck size={16} /><span>{ui(language, "Admin console")}</span><ChevronRight size={15} /></a>}
-      <button className="account-button" onClick={onLogout}><span>{user.display_name}</span><small>{ui(language, "Sign out")}</small></button>
+      <button className="account-button" onClick={onLogout} title={ui(language, "Sign out")}><LogOut size={16} /><span><b>{user.display_name}</b><small>{ui(language, "Sign out")}</small></span></button>
     </aside>
   );
 }
@@ -960,11 +1002,19 @@ function Workspace({
       <section className="workspace-content">
         {run.status === "awaiting_approval" && blueprint ? (
           <BlueprintEditor blueprint={blueprint} setBlueprint={setBlueprint} approve={approve} approving={approving} language={language} />
+        ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
+          <div className="failed-project-view">
+            <ClarificationState run={run} language={language} />
+            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
+          </div>
         ) : run.status === "needs_input" ? (
           <ScopeStop blueprint={blueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : run.status === "failed" ? (
-          <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
-        ) : ready && run.version_id ? (
+          <div className="failed-project-view">
+            <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
+            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
+          </div>
+        ) : ready && (run.version_id || versions.length > 0) ? (
           <ResultWorkspace
             key={run.version_id}
             run={run}
@@ -980,7 +1030,10 @@ function Workspace({
             language={language}
           />
         ) : (
-          <BuildingState run={run} language={language} />
+          <div className="failed-project-view">
+            <BuildingState run={run} language={language} />
+            {versions.length > 0 && <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />}
+          </div>
         )}
       </section>
       <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
@@ -991,10 +1044,12 @@ function Workspace({
 function Timeline({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const requiresApproval = run.status === "awaiting_approval" || run.blueprint?.support_level === "adapted";
   const needsInput = run.status === "needs_input";
+  const needsClarification = run.pending_human_task?.kind === "input_request";
+  const waitingStage = needsClarification ? "product_manager_clarification" : "scope_review";
   const stages = run.mode === "team"
-    ? ["team_leader", "product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "data", "build", "reviewer", "complete"]
-    : ["product_manager", ...(needsInput ? ["scope_review"] : requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
-  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", data: "data", build: "validator", reviewer: "reviewer", complete: "reviewer" };
+    ? ["team_leader", "product_manager", ...(needsInput ? [waitingStage] : requiresApproval ? ["blueprint_approval"] : []), "architect", "engineer", "data", "build", "reviewer", "complete"]
+    : ["product_manager", ...(needsInput ? [waitingStage] : requiresApproval ? ["blueprint_approval"] : []), "engineer", "build", "complete"];
+  const roles: Record<string, RoleKey> = { team_leader: "leader", product_manager: "product", product_manager_clarification: "product", scope_review: "user", blueprint_approval: "user", architect: "architect", engineer: "engineer", data: "data", build: "validator", reviewer: "reviewer", complete: "reviewer" };
   const displayStage = run.current_stage === "build_queue" ? "engineer" : run.current_stage;
   const currentIndex = stages.indexOf(displayStage);
   return <div className="timeline">
@@ -1021,30 +1076,24 @@ function ProjectLog({ run, events, language }: { run: RunView; events: RunEvent[
     </div>
     <strong>{summary.title}</strong>
     <p>{summary.detail}</p>
-    <div className="project-log-facts">
-      {summary.facts.map((fact) => <span key={fact}>{fact}</span>)}
-    </div>
-    <div className="event-log">
-      <span>{ui(language, "Recent events")}</span>
-      {events.length === 0 ? <p>{ui(language, "No persisted events yet.")}</p> : events.slice(-5).reverse().map((event) => <div key={event.event_id}><i /> <p><strong>{eventTitle(language, event)}</strong><span>{eventMessage(language, event)}</span></p></div>)}
-      {latest && <small>{ui(language, "Latest")}: {new Date(latest.timestamp).toLocaleTimeString()}</small>}
+    <div className="project-log-current">
+      <span>{stageLabel(language, run.current_stage)}</span>
+      <span>{latest ? eventTitle(language, latest) : ui(language, "No persisted events yet.")}</span>
+      {latest && <time>{new Date(latest.timestamp).toLocaleTimeString()}</time>}
     </div>
   </div>;
 }
 
-function summarizeProjectLog(run: RunView, events: RunEvent[], language: Language): { title: string; detail: string; facts: string[]; tone: "running" | "success" | "warning" | "error" } {
+function summarizeProjectLog(run: RunView, events: RunEvent[], language: Language): { title: string; detail: string; tone: "running" | "success" | "warning" | "error" } {
   const latest = events.at(-1);
-  const facts = [
-    `${events.length} ${ui(language, events.length === 1 ? "persisted event" : "persisted events")}`,
-    stageLabel(language, run.current_stage),
-  ];
   if (run.status === "needs_input") {
-    const reason = conversationalText(language, run.blueprint?.support_reasons[0] ?? latest?.payload.message, "The team stopped before build because the request needs to be narrowed.");
-    const rewrite = rewriteSuggestion(language, run.blueprint, events);
+    const clarification = run.pending_human_task?.kind === "input_request";
+    const reason = clarification
+      ? run.pending_human_task?.prompt ?? "Product Manager needs more information."
+      : conversationalText(language, run.blueprint?.support_reasons[0] ?? latest?.payload.message, "The team stopped before build because the request needs to be narrowed.");
     return {
-      title: ui(language, "Scope needs revision"),
+      title: clarification ? (language === "zh" ? "等待你补充需求" : "Waiting for your clarification") : ui(language, "Scope needs revision"),
       detail: reason,
-      facts: [...facts, rewrite ? `${ui(language, "Rewrite")}: ${rewrite}` : ui(language, "No build job was created")],
       tone: "warning",
     };
   }
@@ -1052,7 +1101,6 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
     return {
       title: ui(language, "Waiting for approval"),
       detail: ui(language, "The Blueprint changes the requested scope, so the build is paused until you confirm it."),
-      facts: [...facts, run.blueprint?.support_level ? `${ui(language, "Blueprint")}: ${ui(language, run.blueprint.support_level)}` : ui(language, "Blueprint ready")],
       tone: "warning",
     };
   }
@@ -1060,7 +1108,6 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
     return {
       title: ui(language, "Preview version is ready"),
       detail: ui(language, "The run created a ProjectVersion. Publishing still requires an explicit user action."),
-      facts: [...facts, run.version_id ? `${ui(language, "Versions")} ${run.version_id.slice(0, 8)}` : ui(language, "Version created")],
       tone: "success",
     };
   }
@@ -1068,14 +1115,12 @@ function summarizeProjectLog(run: RunView, events: RunEvent[], language: Languag
     return {
       title: ui(language, "Run stopped with an error"),
       detail: conversationalText(language, run.error_message ?? latest?.payload.message, "The run failed before producing a ready preview."),
-      facts: [...facts, run.error_code ?? ui(language, "Failure recorded")],
       tone: "error",
     };
   }
   return {
     title: ui(language, "Build is moving"),
     detail: latest ? eventMessage(language, latest) : ui(language, "The run has started and is waiting for the next persisted event."),
-    facts,
     tone: "running",
   };
 }
@@ -1166,6 +1211,21 @@ function ScopeStop({ blueprint, events, run, setRun, refreshShell, setError, lan
   </div>;
 }
 
+function ClarificationState({ run, language }: { run: RunView; language: Language }) {
+  const task = run.pending_human_task;
+  return <div className="center-state scope-stop clarification-state">
+    <div className="pm-feedback-card">
+      <RoleAvatar role="product" size="large" />
+      <div>
+        <span>{ui(language, "Product Manager feedback")}</span>
+        <h1>{language === "zh" ? "产品经理需要你补充一项信息" : "Product Manager needs one clarification"}</h1>
+        <p>{task?.prompt}</p>
+        <small><CircleAlert size={14} /> {language === "zh" ? "回复后会恢复当前任务，不会重新创建 Project。" : "Your reply resumes this Run instead of creating another Project."}</small>
+      </div>
+    </div>
+  </div>;
+}
+
 function FailedState({ run, setRun, refreshShell, setError, language }: { run: RunView; setRun: (run: RunView) => void; refreshShell: () => Promise<void>; setError: (error: string) => void; language: Language }) {
   const [retrying, setRetrying] = useState(false);
   const failedChecks = run.validation_report?.checks.filter((check) => check.status === "fail") ?? [];
@@ -1174,7 +1234,7 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
     setRetrying(true);
     setError("");
     try {
-      const created = await api.createRun(run.prompt, run.mode, run.model, []);
+      const created = await api.createProjectChange(run.project_id, run.prompt, run.model);
       setRun(created);
       await refreshShell();
     } catch (reason) {
@@ -1268,11 +1328,50 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
         <button className="publish-button" onClick={publish} disabled={publishing}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
       </div>
     </div>
+    <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
     {deploymentUrl && <div className="published-banner"><Check size={16} /><span>{ui(language, "Published successfully")}</span><a href={deploymentUrl} target="_blank" rel="noreferrer">{ui(language, "Open public app")} <ExternalLink size={14} /></a></div>}
     {tab === "preview" && current && <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div>}
     {tab === "edit" && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
     {tab === "versions" && <div className="versions-panel"><div className="content-heading"><div><span>{ui(language, "Project history")}</span><h1>{ui(language, "Versions")}</h1><p>{ui(language, "Restore always creates a new version; history is never overwritten.")}</p></div></div>{versions.map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.number}</span><div><strong>{version.summary}</strong><small>{new Date(version.created_at).toLocaleString()}</small></div>{version.id === run.version_id ? <b>{ui(language, "Current")}</b> : <button onClick={async () => { const restored = await api.restore(run.project_id, version.id); setVersions([restored, ...versions]); await refreshRun(run.run_id); }}>{ui(language, "Restore")}</button>}</div>)}</div>}
   </div>;
+}
+
+function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }: { run: RunView; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (value: string) => void; language: Language }) {
+  const [changeMessage, setChangeMessage] = useState("");
+  const [changeSubmitting, setChangeSubmitting] = useState(false);
+  const [projectMessages, setProjectMessages] = useState<ProjectMessageView[]>([]);
+  const [messagesError, setMessagesError] = useState("");
+  useEffect(() => {
+    let active = true;
+    api.projectMessages(run.project_id)
+      .then((messages) => { if (active) { setProjectMessages(messages); setMessagesError(""); } })
+      .catch((reason) => { if (active) setMessagesError(reason instanceof Error ? reason.message : ui(language, "Could not load Project messages")); });
+    return () => { active = false; };
+  }, [language, run.project_id, run.run_id]);
+  const submitChange = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!changeMessage.trim() || changeSubmitting) return;
+    setChangeSubmitting(true);
+    setError("");
+    try {
+      const created = run.pending_human_task?.kind === "input_request"
+        ? await api.respondHumanTask(run.pending_human_task.id, changeMessage.trim())
+        : await api.createProjectChange(run.project_id, changeMessage.trim(), run.model);
+      setChangeMessage("");
+      await refreshRun(created.run_id);
+      await refreshShell();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not start Project change"));
+    } finally {
+      setChangeSubmitting(false);
+    }
+  };
+  return <section className="project-chat-panel">
+    <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Continue with Lead")}</strong><small>{ui(language, "Lead will inspect the current Project code automatically.")}</small></div></div>
+    {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
+    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? (message.message_type === "clarification" ? (language === "zh" ? "产品经理" : "Product Manager") : "Lead") : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span></div>)}</div>}
+    <form onSubmit={submitChange}><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={run.pending_human_task?.kind === "input_request" ? run.pending_human_task.prompt : ui(language, "Describe what should change in the current version.")} /><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={16} />} {run.pending_human_task?.kind === "input_request" ? (language === "zh" ? "提交补充" : "Send clarification") : ui(language, "Send change")}</button></form>
+  </section>;
 }
 
 function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {

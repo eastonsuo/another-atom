@@ -56,6 +56,8 @@ export interface RunView {
   prompt: string;
   mode: Mode;
   model: string;
+  trigger: "build" | "ai_edit";
+  base_version_id: string | null;
   status: string;
   current_stage: string;
   blueprint: Blueprint | null;
@@ -72,6 +74,32 @@ export interface RunView {
   version_id: string | null;
   error_code: string | null;
   error_message: string | null;
+  pending_human_task: HumanTaskView | null;
+}
+
+export interface HumanTaskView {
+  id: string;
+  project_id: string;
+  run_id: string;
+  kind: "input_request" | "approval";
+  status: "pending" | "answered" | "approved" | "rejected" | "cancelled" | "stale";
+  stage: string;
+  prompt: string;
+  payload: Record<string, unknown>;
+  response: Record<string, unknown> | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface ProjectMessageView {
+  id: string;
+  project_id: string;
+  run_id: string | null;
+  role: "user" | "lead" | "system";
+  message_type: "request" | "answer" | "clarification" | "clarification_response" | "change_brief" | "result" | "error";
+  content: string;
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface RunEvent {
@@ -120,12 +148,29 @@ export interface ProjectFileEntry {
   path: string;
   source: "repository" | "artifact";
   size: number;
+  kind: "markdown" | "json" | "code" | "text";
+  text: boolean;
+  editable: boolean;
+  render_mode: "markdown" | "source";
 }
 
 export interface ProjectFileContent {
   path: string;
   source: "repository" | "artifact";
   content: string;
+  content_hash: string;
+  editable: boolean;
+  kind: "markdown" | "json" | "code" | "text";
+  render_mode: "markdown" | "source";
+}
+
+export interface ProjectFileSaveResult {
+  path: string;
+  content_hash: string;
+  size: number;
+  git_commit: string;
+  version: VersionView | null;
+  saved_at: string;
 }
 
 export interface QuotaView {
@@ -209,6 +254,13 @@ export interface AdminProjectSummary {
   updated_at: string;
   support_level: string | null;
   latest_run: AdminRunSummary | null;
+}
+
+export interface AdminProjectList {
+  items: AdminProjectSummary[];
+  page: number;
+  page_size: number;
+  total: number;
 }
 
 export interface AdminProjectDetail {

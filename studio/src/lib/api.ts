@@ -1,7 +1,7 @@
 import type {
   AppSpec,
   AdminProjectDetail,
-  AdminProjectSummary,
+  AdminProjectList,
   AdminUserList,
   AdminUserView,
   AttachmentMeta,
@@ -11,6 +11,9 @@ import type {
   ModelsView,
   ProjectFileContent,
   ProjectFileEntry,
+  ProjectFileSaveResult,
+  ProjectMessageView,
+  HumanTaskView,
   ProjectView,
   QuotaView,
   RunEvent,
@@ -43,8 +46,8 @@ export const api = {
   adminMe: () => request<AdminUserView>("/api/admin/me"),
   adminUsers: (query = "", page = 1, pageSize = 20) =>
     request<AdminUserList>(`/api/admin/users?${new URLSearchParams({ query, page: String(page), page_size: String(pageSize) })}`),
-  adminUserProjects: (userId: string) =>
-    request<AdminProjectSummary[]>(`/api/admin/users/${userId}/projects`),
+  adminUserProjects: (userId: string, page = 1, pageSize = 20) =>
+    request<AdminProjectList>(`/api/admin/users/${userId}/projects?${new URLSearchParams({ page: String(page), page_size: String(pageSize) })}`),
   adminProject: (projectId: string) =>
     request<AdminProjectDetail>(`/api/admin/projects/${projectId}`),
   adminRunLog: (runId: string) => `/api/admin/runs/${runId}/logs/download`,
@@ -72,6 +75,20 @@ export const api = {
     }),
   getRun: (runId: string) => request<RunView>(`/api/runs/${runId}`),
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
+  projectMessages: (projectId: string) =>
+    request<ProjectMessageView[]>(`/api/projects/${projectId}/messages`),
+  createProjectChange: (projectId: string, message: string, model: string) =>
+    request<RunView>(`/api/projects/${projectId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ message, model }),
+    }),
+  humanTasks: (runId: string) =>
+    request<HumanTaskView[]>(`/api/runs/${runId}/human-tasks`),
+  respondHumanTask: (taskId: string, response: string) =>
+    request<RunView>(`/api/human-tasks/${taskId}/respond`, {
+      method: "POST",
+      body: JSON.stringify({ response }),
+    }),
   approve: (runId: string, blueprint: Blueprint) =>
     request<RunView>(`/api/runs/${runId}/approve`, {
       method: "POST",
@@ -99,6 +116,11 @@ export const api = {
     request<ProjectFileEntry[]>(`/api/projects/${projectId}/files?${new URLSearchParams({ run_id: runId })}`),
   projectFile: (projectId: string, runId: string, path: string, source: ProjectFileEntry["source"]) =>
     request<ProjectFileContent>(`/api/projects/${projectId}/files/content?${new URLSearchParams({ run_id: runId, path, source })}`),
+  saveProjectFile: (projectId: string, path: string, content: string, expectedContentHash: string, operationId: string) =>
+    request<ProjectFileSaveResult>(`/api/projects/${projectId}/files/content`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content, expected_content_hash: expectedContentHash, operation_id: operationId }),
+    }),
   preview: (versionId: string) => request<AppSpec>(`/api/previews/${versionId}`),
   publicApp: (publicId: string) => request<AppSpec>(`/api/public/${publicId}`),
   revise: (projectId: string, revision: Partial<AppSpec>) =>
