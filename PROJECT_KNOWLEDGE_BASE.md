@@ -3,7 +3,7 @@
 [toc]
 
 - 文档用途：单文件项目知识库，可独立提供给大模型作为 Another Atom 的产品、Agent 与工程背景
-- 更新日期：2026-07-13
+- 更新日期：2026-07-14
 - 代码分支：`main`
 - 适用范围：整体产品、V1 当前实现与验收、V2 已确认设计方向
 - 原则：区分愿景、交付基线、代码现状和后续规划；没有实现证据的内容不写成已完成
@@ -357,7 +357,7 @@ css
 javascript
 ```
 
-当前 Engineer 无 Shell、Git、依赖安装、网络和发布权限。代码不得使用外部 URL、fetch/XHR/WebSocket、动态 import、eval 或后端调用。
+当前 Engineer 无 Shell、Git、依赖安装、Agent Tool 网络和发布权限。生成的浏览器代码可以按 Blueprint 访问公网 HTTP(S)/WS(S) API，但禁止 localhost、loopback 和用户设备本地服务；Preview 与物化 `app.js` 安装 loopback Guard。dynamic import、eval、远程可执行资源和后端调用仍禁止。
 
 ### 7.6 Runtime Validator
 

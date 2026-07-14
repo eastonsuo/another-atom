@@ -97,7 +97,7 @@ def test_architecture_visual_tokens_are_normalized_before_engineering() -> None:
     assert report.passed is True
 
 
-def test_generic_web_code_passes_offline_sandbox_validation() -> None:
+def test_generic_web_code_passes_browser_boundary_validation() -> None:
     provider = MockLLMProvider()
     prompt = "给我一个网页版扫雷游戏"
     blueprint = provider.create_blueprint(prompt, Mode.TEAM)
@@ -140,7 +140,7 @@ def test_single_screen_label_does_not_create_a_false_missing_page() -> None:
     assert report.passed is True
 
 
-def test_generic_web_code_rejects_network_calls() -> None:
+def test_generic_web_code_allows_public_network_calls() -> None:
     provider = MockLLMProvider()
     prompt = "给我一个网页版扫雷游戏"
     blueprint = provider.create_blueprint(prompt, Mode.TEAM)
@@ -151,5 +151,30 @@ def test_generic_web_code_rejects_network_calls() -> None:
 
     report = validate_app_spec(app_spec, blueprint=blueprint, architecture_spec=architecture)
     boundary = next(check for check in report.checks if check.check_id == "sandbox-boundary")
-    assert report.passed is False
-    assert boundary.status == "fail"
+    assert report.passed is True
+    assert boundary.status == "pass"
+
+
+def test_generic_web_code_rejects_localhost_and_loopback_addresses() -> None:
+    provider = MockLLMProvider()
+    prompt = "给我一个网页版扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    architecture = provider.create_architecture_spec(blueprint)
+    base = provider.create_app_spec(blueprint, architecture, prompt)
+
+    for endpoint in (
+        "http://localhost:11434/api/generate",
+        "http://127.0.0.1:11434/api/generate",
+        "http://[::1]:11434/api/generate",
+        "http://0.0.0.0:11434/api/generate",
+    ):
+        app_spec = base.model_copy(update={"javascript": f"fetch('{endpoint}')"})
+        report = validate_app_spec(
+            app_spec, blueprint=blueprint, architecture_spec=architecture
+        )
+        boundary = next(
+            check for check in report.checks if check.check_id == "sandbox-boundary"
+        )
+        assert report.passed is False, endpoint
+        assert boundary.status == "fail"
+        assert "localhost/loopback" in (boundary.detail or "")

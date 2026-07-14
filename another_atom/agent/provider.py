@@ -238,6 +238,10 @@ class MockLLMProvider:
         "即时通讯",
         "工作流平台",
         "数据分析后台",
+        "本地大模型",
+        "本地模型",
+        "local model",
+        "localhost",
     }
 
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision:
@@ -311,6 +315,12 @@ class MockLLMProvider:
             if support_level == SupportLevel.ADAPTED
             else []
         )
+        local_service_requested = any(
+            term in normalized
+            for term in ("本地大模型", "本地模型", "local model", "localhost")
+        )
+        if local_service_requested:
+            omitted = ["Calling localhost or an on-device model service is not supported"]
         if is_game:
             mapped = [
                 "Interactive browser game",
@@ -362,6 +372,8 @@ class MockLLMProvider:
                 if support_level == SupportLevel.ADAPTED
                 else []
             )
+            if local_service_requested:
+                omitted = ["不支持访问 localhost 或用户设备上的本地模型服务"]
         return Blueprint(
             project_name=project_name,
             product_type=product_type,
@@ -983,9 +995,13 @@ class OllamaCloudProvider:
                 "product goal. product_type is a concise free-form label such as web_game, tool, "
                 "dashboard, or product_catalog; never convert a game or tool into a catalog. "
                 "Use supported for self-contained browser behavior using HTML, CSS, and JavaScript. "
-                "Use adapted when the visible Web experience can be built but server-side auth, "
-                "payments, persistent database writes, or external services must be omitted or "
-                "represented with local demo state. Use unsupported only when the primary goal "
+                "Public Internet APIs are allowed when the browser can call them directly; prefer "
+                "HTTPS and surface CORS or service failures. localhost, loopback addresses, and "
+                "services running on the user's device are not accessible. When a request depends "
+                "on a local model service, use adapted, put that call in omitted_requirements, and "
+                "never map or simulate it as completed. Use adapted when the visible Web experience "
+                "can be built but server-side auth, payments, persistent database writes, or local "
+                "device services must be omitted. Use unsupported only when the primary goal "
                 "cannot be represented as a Web application. Preserve the user's language and "
                 "expand concrete pages, interactions, states, error feedback, and visual direction. "
                 "Every user-facing string field MUST use the same language as the request. If the "
@@ -1053,8 +1069,9 @@ class OllamaCloudProvider:
             (
                 "Return the complete revised ArchitectureSpec for this bounded change. Preserve "
                 "the current architecture and visual tokens unless the requirement explicitly "
-                "changes them. Do not introduce backend, network, package, or native runtime "
-                "capabilities."
+                "changes them. Public Internet API calls are allowed only when required by the "
+                "accepted Blueprint. Never introduce localhost, loopback, generated backend, "
+                "package, or native runtime capabilities."
             ),
             {
                 "blueprint": blueprint.model_dump(mode="json"),
@@ -1081,8 +1098,10 @@ class OllamaCloudProvider:
                 "Modify the supplied existing AppSpec rather than regenerating from a starter. "
                 "Return the complete revised AppSpec. Change only what the ChangeBrief and "
                 "RequirementDelta require, preserve all other pages, interactions, data and "
-                "source, and copy visual tokens from ArchitectureSpec. Do not add external URLs, "
-                "network calls, dynamic imports, eval, packages, backend calls, or Shell steps."
+                "source, and copy visual tokens from ArchitectureSpec. Public Internet API calls "
+                "are allowed when required by the accepted Blueprint; expose network and CORS "
+                "failures to the user. Never call localhost or loopback addresses. Do not add "
+                "dynamic imports, eval, packages, backend calls, or Shell steps."
             ),
             {
                 "blueprint": blueprint.model_dump(mode="json"),
@@ -1100,9 +1119,11 @@ class OllamaCloudProvider:
             ArchitectureSpec,
             "Architect",
             (
-                "Define a self-contained browser architecture for the Blueprint. Use local client "
-                "state and no generated backend, package installation, remote assets, or network "
-                "calls. Describe the requested pages, components, state, and interactions. Primary "
+                "Define a browser architecture for the Blueprint. Use local client state and no "
+                "generated backend, package installation, or remote executable assets. Public "
+                "Internet API calls are allowed when required by mapped requirements; localhost, "
+                "loopback addresses, and user-device services are forbidden. Describe the requested "
+                "pages, components, state, and interactions. Primary "
                 "text against background must meet at least 4.5:1 contrast and accent against "
                 "background at least 3:1."
             ),
@@ -1118,9 +1139,11 @@ class OllamaCloudProvider:
             (
                 "Produce a complete self-contained Web AppSpec. html is the semantic body fragment, "
                 "css is all styling, and javascript implements the requested interactions using "
-                "browser APIs. Do not use markdown fences, external URLs, remote assets, fetch, "
-                "WebSocket, dynamic imports, eval, package dependencies, or backend calls. Use only "
-                "inline/local content. The code must work when combined into one sandboxed HTML "
+                "browser APIs. Public Internet API calls are allowed when required by mapped "
+                "requirements; handle loading, HTTP, CORS, and unavailable-service errors visibly. "
+                "Never call localhost, loopback addresses, or services on the user's device. Do not "
+                "use markdown fences, remote executable assets, dynamic imports, eval, package "
+                "dependencies, or backend calls. The code must work in one sandboxed HTML "
                 "document. Populate pages with route/name/sections metadata matching the experience. "
                 "products is optional and should only be used for an actual catalog. Copy all three "
                 "colors exactly from ArchitectureSpec."
@@ -1149,7 +1172,8 @@ class OllamaCloudProvider:
                 "whose root_cause is app_spec, including exact Blueprint screen names. Preserve "
                 "the accepted product goal, Blueprint pages and modules, existing behavior, data, "
                 "content, visual direction, and source unless a failed check requires a change. "
-                "Do not add external URLs, remote assets, network calls, dynamic imports, eval, "
+                "Preserve approved public Internet API calls and their visible failure handling, "
+                "but never add localhost, loopback, remote executable assets, dynamic imports, eval, "
                 "package dependencies, backend calls, or capabilities outside the accepted scope. "
                 "Copy all three colors exactly from ArchitectureSpec."
             ),

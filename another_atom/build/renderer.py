@@ -1,3 +1,5 @@
+import re
+
 from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
@@ -141,11 +143,6 @@ def _validate_web_code_app(
     forbidden = [
         token
         for token in (
-            "http://",
-            "https://",
-            "fetch(",
-            "xmlhttprequest",
-            "websocket(",
             "eval(",
             "new function(",
             "import(",
@@ -157,6 +154,8 @@ def _validate_web_code_app(
         for token in ("<script", "<iframe", "<object", "<embed")
         if token in app_spec.html.casefold()
     )
+    if _contains_loopback_address(combined):
+        forbidden.append("localhost/loopback address")
     checks = [
         ValidationCheck(
             check_id="web-source",
@@ -168,7 +167,7 @@ def _validate_web_code_app(
         ),
         ValidationCheck(
             check_id="sandbox-boundary",
-            label="Generated code stays inside the offline browser Sandbox",
+            label="Generated code respects browser execution and network boundaries",
             status="fail" if forbidden else "pass",
             root_cause="app_spec",
             resolvable=True,
@@ -230,6 +229,18 @@ def _validate_web_code_app(
             )
         )
     return ValidationReport(passed=all(check.status == "pass" for check in checks), checks=checks)
+
+
+def _contains_loopback_address(source: str) -> bool:
+    return bool(
+        re.search(
+            r"(?<![a-z0-9.-])(?:localhost|[a-z0-9-]+\.localhost)(?=[:/\s'\"\])}]|$)"
+            r"|(?<![0-9])127(?:\.[0-9]{1,3}){0,3}(?![0-9])"
+            r"|\[?::1\]?"
+            r"|(?<![0-9])0\.0\.0\.0(?![0-9])",
+            source,
+        )
+    )
 
 
 def _mapped_requirement_is_satisfied(

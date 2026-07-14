@@ -233,6 +233,31 @@ def test_chinese_adapted_request_creates_chinese_product_spec_for_review(
     assert run["blueprint"]["modules"][0] in run["product_spec"]["summary"]
     assert "## 用户目标" in run["product_spec"]["content"]
     assert "创建一个带登录和数据库保存记录的翻译软件" in run["product_spec"]["content"]
+
+
+def test_local_model_request_exposes_localhost_as_an_approval_gap(
+    queued_client: TestClient,
+) -> None:
+    run = _create_run(
+        queued_client,
+        {
+            "prompt": "创建一个可以调用本地大模型的翻译软件",
+            "mode": "team",
+            "model": "mock",
+        },
+    )
+
+    assert run["status"] == "awaiting_approval"
+    assert run["blueprint"]["support_level"] == "adapted"
+    assert any(
+        "localhost" in requirement
+        for requirement in run["blueprint"]["omitted_requirements"]
+    )
+    assert all(
+        "本地大模型" not in requirement
+        for requirement in run["blueprint"]["mapped_requirements"]
+    )
+    assert "localhost" in run["product_spec"]["content"]
     assert "视觉方向" not in run["product_spec"]["content"]
     assert any("\u3400" <= character <= "\u9fff" for character in run["blueprint"]["modules"][0])
     assert run["pending_human_task"]["payload"]["artifact_type"] == "product_spec"

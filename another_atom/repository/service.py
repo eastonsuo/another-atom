@@ -25,6 +25,39 @@ class RepositoryError(RuntimeError):
 MAX_BROWSER_FILE_BYTES = 256_000
 VERSION_SOURCE_FILES = ("app-spec.json", "index.html", "styles.css", "app.js")
 CODE_SUFFIXES = {".css", ".html", ".js", ".jsx", ".py", ".ts", ".tsx", ".yaml", ".yml"}
+NETWORK_GUARD_JAVASCRIPT = """(() => {
+  const blocked = (value) => {
+    try {
+      const raw = typeof value === 'string' ? value : value && value.url;
+      const host = new URL(raw, window.location.href).hostname.toLowerCase();
+      return host === 'localhost' || host.endsWith('.localhost') ||
+        /^127(?:\\.[0-9]{1,3}){0,3}$/.test(host) ||
+        host === '[::1]' || host === '::1' || host === '0.0.0.0';
+    } catch (_) {
+      return false;
+    }
+  };
+  const deny = (value) => {
+    if (blocked(value)) throw new TypeError('Localhost and loopback network access is blocked');
+  };
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    try { deny(input); } catch (error) { return Promise.reject(error); }
+    return nativeFetch(input, init);
+  };
+  const nativeOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    deny(url);
+    return nativeOpen.call(this, method, url, ...rest);
+  };
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = class extends NativeWebSocket {
+    constructor(url, protocols) {
+      deny(url);
+      super(url, protocols);
+    }
+  };
+})();"""
 
 
 def repository_path(project_id: str) -> Path:
@@ -83,7 +116,9 @@ def commit_version(
             encoding="utf-8",
         )
         (path / "styles.css").write_text(app_spec.css + "\n", encoding="utf-8")
-        (path / "app.js").write_text(app_spec.javascript + "\n", encoding="utf-8")
+        (path / "app.js").write_text(
+            guarded_browser_javascript(app_spec.javascript), encoding="utf-8"
+        )
         generated_files.extend(["index.html", "styles.css", "app.js"])
     marker_path.write_text(
         json.dumps(
@@ -252,10 +287,14 @@ def render_version_files(app_spec: AppSpec) -> dict[str, str]:
             {
                 "index.html": _web_document(app_spec),
                 "styles.css": app_spec.css + "\n",
-                "app.js": app_spec.javascript + "\n",
+                "app.js": guarded_browser_javascript(app_spec.javascript),
             }
         )
     return files
+
+
+def guarded_browser_javascript(source: str) -> str:
+    return f"{NETWORK_GUARD_JAVASCRIPT}\n\n{source}\n"
 
 
 def re_full_git_commit(value: str) -> bool:

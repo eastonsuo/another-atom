@@ -79,10 +79,43 @@ function CodePreview({ spec }: { spec: AppSpec }) {
   const javascript = spec.javascript.replace(/<\/script/gi, "<\\/script");
   const css = spec.css.replace(/<\/style/gi, "<\\/style");
   const html = spec.html.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
+  const networkGuard = `(() => {
+  const blocked = (value) => {
+    try {
+      const raw = typeof value === 'string' ? value : value && value.url;
+      const host = new URL(raw, window.location.href).hostname.toLowerCase();
+      return host === 'localhost' || host.endsWith('.localhost') ||
+        /^127(?:\\.[0-9]{1,3}){0,3}$/.test(host) ||
+        host === '[::1]' || host === '::1' || host === '0.0.0.0';
+    } catch (_) {
+      return false;
+    }
+  };
+  const deny = (value) => {
+    if (blocked(value)) throw new TypeError('Localhost and loopback network access is blocked');
+  };
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    try { deny(input); } catch (error) { return Promise.reject(error); }
+    return nativeFetch(input, init);
+  };
+  const nativeOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    deny(url);
+    return nativeOpen.call(this, method, url, ...rest);
+  };
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = class extends NativeWebSocket {
+    constructor(url, protocols) {
+      deny(url);
+      super(url, protocols);
+    }
+  };
+})();`;
   const srcDoc = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'; media-src data: blob:; form-action 'none'; base-uri 'none'">
-<style>${css}</style></head><body>${html}<script>${javascript}</script></body></html>`;
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; connect-src http: https: ws: wss:; font-src 'none'; media-src data: blob:; form-action 'none'; base-uri 'none'">
+<style>${css}</style></head><body>${html}<script>${networkGuard}</script><script>${javascript}</script></body></html>`;
   return <iframe className="generated-code-preview" sandbox="allow-scripts" srcDoc={srcDoc} title={spec.project_name} />;
 }
 

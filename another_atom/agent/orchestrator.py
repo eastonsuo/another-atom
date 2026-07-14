@@ -72,6 +72,55 @@ def _contains_chinese(value: str) -> bool:
     return any("\u3400" <= character <= "\u9fff" for character in value)
 
 
+_LOCAL_SERVICE_TERMS = (
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "本地大模型",
+    "本地模型",
+    "local model",
+    "ollama",
+    "llama.cpp",
+)
+
+
+def _enforce_network_capability_policy(prompt: str, blueprint: Blueprint) -> Blueprint:
+    normalized_prompt = prompt.casefold()
+    if not any(term in normalized_prompt for term in _LOCAL_SERVICE_TERMS):
+        return blueprint
+    mapped: list[str] = []
+    omitted = list(blueprint.omitted_requirements)
+    for requirement in blueprint.mapped_requirements:
+        if any(term in requirement.casefold() for term in _LOCAL_SERVICE_TERMS):
+            if requirement not in omitted:
+                omitted.append(requirement)
+        else:
+            mapped.append(requirement)
+    chinese = _contains_chinese(prompt)
+    boundary = (
+        "不支持访问 localhost、loopback 或用户设备上的本地模型服务"
+        if chinese
+        else "localhost, loopback, and on-device model services are not supported"
+    )
+    if boundary not in omitted:
+        omitted.append(boundary)
+    reason = (
+        "当前 Web Runtime 允许公网 API，但禁止访问 localhost 和用户设备本地服务。"
+        if chinese
+        else "The Web Runtime allows public APIs but blocks localhost and on-device services."
+    )
+    reasons = [item for item in blueprint.support_reasons if item != reason]
+    reasons.append(reason)
+    return blueprint.model_copy(
+        update={
+            "support_level": SupportLevel.ADAPTED,
+            "support_reasons": reasons[:8],
+            "mapped_requirements": mapped[:12],
+            "omitted_requirements": omitted[:12],
+        }
+    )
+
+
 def _render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
     chinese = _contains_chinese(prompt)
     compact_goal = " ".join(prompt.split())
@@ -237,6 +286,8 @@ class Orchestrator:
                     run, effective_prompt, Mode(run.mode)
                 ),
             )
+            blueprint = _enforce_network_capability_policy(effective_prompt, blueprint)
+            artifact.payload = blueprint.model_dump(mode="json")
             regenerate_only = (
                 self.db.scalar(
                     select(RunEvent.id).where(

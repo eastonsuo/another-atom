@@ -52,6 +52,17 @@ def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) 
     assert provider.take_usage().request_count == 0
 
 
+def test_local_model_request_is_adapted_and_not_mapped_as_completed() -> None:
+    provider = MockLLMProvider()
+    blueprint = provider.create_blueprint(
+        "创建一个可以调用本地大模型的翻译软件", Mode.TEAM
+    )
+
+    assert blueprint.support_level == SupportLevel.ADAPTED
+    assert any("localhost" in item for item in blueprint.omitted_requirements)
+    assert all("本地大模型" not in item for item in blueprint.mapped_requirements)
+
+
 def test_ollama_lead_disables_thinking(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
     get_settings.cache_clear()
