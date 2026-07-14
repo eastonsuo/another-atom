@@ -1331,7 +1331,11 @@ class Orchestrator:
         ]
         if not response_text:
             return run.prompt
-        label = "用户补充" if any("\u3400" <= char <= "\u9fff" for char in run.prompt) else "User clarification"
+        label = (
+            "用户补充"
+            if any("\u3400" <= char <= "\u9fff" for char in run.prompt)
+            else "User clarification"
+        )
         return f"{run.prompt}\n\n{label}:\n" + "\n".join(response_text)
 
     def _create_human_task(
@@ -1344,16 +1348,22 @@ class Orchestrator:
         subject: str,
         payload: dict | None = None,
     ) -> HumanTask:
-        subject_hash = hashlib.sha256(subject.encode("utf-8")).hexdigest()
-        existing = self.db.scalar(
-            select(HumanTask).where(
-                HumanTask.run_id == run.id,
-                HumanTask.kind == kind.value,
-                HumanTask.subject_hash == subject_hash,
+        attempt = 0
+        while True:
+            unique_subject = subject if attempt == 0 else f"{subject}:repeat:{attempt}"
+            subject_hash = hashlib.sha256(unique_subject.encode("utf-8")).hexdigest()
+            existing = self.db.scalar(
+                select(HumanTask).where(
+                    HumanTask.run_id == run.id,
+                    HumanTask.kind == kind.value,
+                    HumanTask.subject_hash == subject_hash,
+                )
             )
-        )
-        if existing is not None:
-            return existing
+            if existing is None:
+                break
+            if existing.status == HumanTaskStatus.PENDING.value:
+                return existing
+            attempt += 1
         task = HumanTask(
             project_id=run.project_id,
             run_id=run.id,

@@ -1,20 +1,27 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from another_atom.agent.orchestrator import Orchestrator
 from another_atom.agent.tasks import recover_interrupted_blueprints
-from another_atom.api.routes import approve_blueprint
+from another_atom.api.routes import approve_blueprint, respond_to_human_task
 from another_atom.build.worker import claim_next_job, execute_claimed_job, process_next_job
-from another_atom.contracts.schemas import ArtifactType, Blueprint, BlueprintApproval
+from another_atom.contracts.schemas import (
+    ArtifactType,
+    Blueprint,
+    BlueprintApproval,
+    HumanTaskResponse,
+)
 from another_atom.domain.artifacts import get_artifact
 from another_atom.domain.errors import AppError
 from another_atom.domain.quota import reserve_quota
 from another_atom.storage.models import (
     Approval,
     BuildJob,
+    HumanTask,
     Project,
     ProjectSession,
     ProjectVersion,
@@ -113,6 +120,46 @@ def test_interrupted_blueprint_background_task_is_recovered(
         )
 
 
+def test_ai_edit_clarification_resume_is_left_to_build_worker_recovery(
+    queued_client: TestClient,
+) -> None:
+    initial = _create_run(queued_client, "Build a minesweeper game")
+    assert initial["status"] == "build_queued"
+    assert process_next_job(
+        queued_client.app.state.testing_session, worker_id="initial-worker"
+    )
+    completed = queued_client.get(f"/api/runs/{initial['run_id']}").json()
+    change = queued_client.post(
+        f"/api/projects/{completed['project_id']}/messages",
+        json={"message": "改一下 [pm:clarify]", "model": "mock"},
+    ).json()
+    assert process_next_job(
+        queued_client.app.state.testing_session, worker_id="clarification-worker"
+    )
+    paused = queued_client.get(f"/api/runs/{change['run_id']}").json()
+    assert paused["status"] == "needs_input"
+    task = paused["pending_human_task"]
+
+    resumed = queued_client.post(
+        f"/api/human-tasks/{task['id']}/respond",
+        json={"response": "Change the title and keep all existing behavior"},
+    ).json()
+    assert resumed["status"] == "product_running"
+    assert resumed["trigger"] == "ai_edit"
+
+    assert recover_interrupted_blueprints(queued_client.app.state.testing_session) == 0
+    with queued_client.app.state.testing_session() as db:
+        assert get_artifact(db, resumed["run_id"], ArtifactType.CHANGE_BRIEF) is None
+        assert get_artifact(db, resumed["run_id"], ArtifactType.BLUEPRINT) is None
+
+    assert process_next_job(
+        queued_client.app.state.testing_session, worker_id="recovery-worker"
+    )
+    recovered = queued_client.get(f"/api/runs/{resumed['run_id']}").json()
+    assert recovered["status"] == "completed"
+    assert recovered["trigger"] == "ai_edit"
+
+
 def test_concurrent_approval_cas_creates_one_job_and_approval(queued_client: TestClient) -> None:
     created = _create_run(queued_client, "Build a product catalog with login")
     assert created["status"] == "awaiting_approval"
@@ -156,6 +203,61 @@ def test_concurrent_approval_cas_creates_one_job_and_approval(queued_client: Tes
             )
             == 1
         )
+
+
+def test_concurrent_approve_and_reject_leave_one_consistent_decision(
+    queued_client: TestClient,
+) -> None:
+    created = _create_run(queued_client, "Build a product catalog with login")
+    assert created["status"] == "awaiting_approval"
+    task_id = created["pending_human_task"]["id"]
+    approval = BlueprintApproval(blueprint=Blueprint.model_validate(created["blueprint"]))
+    session_factory = queued_client.app.state.testing_session
+
+    def decide(decision: str) -> str:
+        with session_factory() as db:
+            user = db.get(User, "demo-user")
+            assert user is not None
+            try:
+                if decision == "approve":
+                    approve_blueprint(
+                        created["run_id"], approval, lambda _job_id: None, db, user
+                    )
+                else:
+                    respond_to_human_task(
+                        task_id,
+                        HumanTaskResponse(decision="reject"),
+                        BackgroundTasks(),
+                        lambda _run_id: None,
+                        lambda _job_id: None,
+                        db,
+                        user,
+                    )
+                return decision
+            except AppError as exc:
+                return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(decide, ["approve", "reject"]))
+
+    assert len({outcome for outcome in outcomes if outcome in {"approve", "reject"}}) == 1
+    with session_factory() as db:
+        run = db.get(Run, created["run_id"])
+        task = db.get(HumanTask, task_id)
+        jobs = db.scalar(
+            select(func.count()).select_from(BuildJob).where(BuildJob.run_id == created["run_id"])
+        )
+        approvals = db.scalar(
+            select(func.count()).select_from(Approval).where(Approval.run_id == created["run_id"])
+        )
+        assert run is not None and task is not None
+        if task.status == "approved":
+            assert run.status == "build_queued"
+            assert jobs == approvals == 1
+        else:
+            assert task.status == "rejected"
+            assert run.status == "cancelled"
+            assert jobs == approvals == 0
 
 
 def test_completed_run_is_not_replayed_when_job_cleanup_was_interrupted(

@@ -46,7 +46,12 @@ def recover_interrupted_blueprints(session_factory: sessionmaker = SessionLocal)
     """Replay Product Manager work left in-flight by a previous process."""
     with session_factory() as db:
         run_ids = list(
-            db.scalars(select(Run.id).where(Run.status == RunStatus.PRODUCT_RUNNING.value)).all()
+            db.scalars(
+                select(Run.id).where(
+                    Run.status == RunStatus.PRODUCT_RUNNING.value,
+                    Run.trigger == "build",
+                )
+            ).all()
         )
         for run_id in run_ids:
             run = db.get(Run, run_id)

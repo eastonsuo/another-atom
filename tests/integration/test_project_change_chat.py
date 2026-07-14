@@ -226,6 +226,14 @@ def test_waiting_clarification_becomes_stale_when_base_version_changes(
     assert stale.json()["code"] == "BASE_VERSION_CHANGED"
     history = client.get(f"/api/runs/{paused['run_id']}/human-tasks").json()
     assert history[-1]["status"] == "stale"
+    stale_run = client.get(f"/api/runs/{paused['run_id']}").json()
+    assert stale_run["status"] == "cancelled"
+    assert stale_run["error_code"] == "BASE_VERSION_CHANGED"
+    assert stale_run["pending_human_task"] is None
+    messages = client.get(f"/api/projects/{paused['project_id']}/messages").json()
+    assert messages[-1]["role"] == "system"
+    assert messages[-1]["message_type"] == "error"
+    assert messages[-1]["payload"]["code"] == "BASE_VERSION_CHANGED"
 
 def test_project_allows_only_one_active_code_writer(queued_client: TestClient) -> None:
     initial = _build_project(queued_client)

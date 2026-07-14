@@ -28,7 +28,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useState } from "react"
 import { PreviewLoader } from "./components/PreviewApp";
 import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
-import { api } from "./lib/api";
+import { api, ApiError } from "./lib/api";
 import type {
   AttachmentMeta,
   Blueprint,
@@ -273,6 +273,7 @@ const ZH: Record<string, string> = {
   "Send change": "发送修改",
   "Could not load Project messages": "无法读取 Project 对话",
   "Could not start Project change": "无法开始 Project 修改",
+  "This clarification expired because the Project changed. Send the change again from the current version.": "等待澄清期间 Project 已产生新版本。请基于当前版本重新发送修改要求。",
   "Vim": "Vim",
   "Versions": "版本",
   "Desktop preview": "桌面预览",
@@ -1014,6 +1015,11 @@ function Workspace({
             <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
             <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
+        ) : run.status === "cancelled" && run.error_code === "BASE_VERSION_CHANGED" ? (
+          <div className="failed-project-view">
+            <StaleClarificationState language={language} />
+            <ProjectChatPanel run={run} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
+          </div>
         ) : ready && (run.version_id || versions.length > 0) ? (
           <ResultWorkspace
             key={run.version_id}
@@ -1226,6 +1232,19 @@ function ClarificationState({ run, language }: { run: RunView; language: Languag
   </div>;
 }
 
+function StaleClarificationState({ language }: { language: Language }) {
+  return <div className="center-state scope-stop clarification-state">
+    <div className="pm-feedback-card">
+      <RoleAvatar role="product" size="large" />
+      <div>
+        <span>{ui(language, "Product Manager feedback")}</span>
+        <h1>{language === "zh" ? "这次澄清已失效" : "This clarification has expired"}</h1>
+        <p>{ui(language, "This clarification expired because the Project changed. Send the change again from the current version.")}</p>
+      </div>
+    </div>
+  </div>;
+}
+
 function FailedState({ run, setRun, refreshShell, setError, language }: { run: RunView; setRun: (run: RunView) => void; refreshShell: () => Promise<void>; setError: (error: string) => void; language: Language }) {
   const [retrying, setRetrying] = useState(false);
   const failedChecks = run.validation_report?.checks.filter((check) => check.status === "fail") ?? [];
@@ -1361,7 +1380,13 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
       await refreshRun(created.run_id);
       await refreshShell();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : ui(language, "Could not start Project change"));
+      if (reason instanceof ApiError && reason.code === "BASE_VERSION_CHANGED") {
+        await refreshRun(run.run_id);
+        await refreshShell();
+        setError(ui(language, "This clarification expired because the Project changed. Send the change again from the current version."));
+      } else {
+        setError(reason instanceof Error ? reason.message : ui(language, "Could not start Project change"));
+      }
     } finally {
       setChangeSubmitting(false);
     }

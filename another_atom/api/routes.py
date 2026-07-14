@@ -631,7 +631,38 @@ def approve_blueprint(
         raise AppError(
             "UNSUPPORTED_REQUEST", "Unsupported requests cannot enter the build pipeline", 409
         )
-    claimed = db.execute(
+    pending_task = db.scalar(
+        select(HumanTask).where(
+            HumanTask.run_id == run_id,
+            HumanTask.user_id == user.id,
+            HumanTask.kind == HumanTaskKind.APPROVAL.value,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+    )
+    if pending_task is None:
+        raise AppError(
+            "APPROVAL_NOT_ALLOWED", "This run is not waiting for Blueprint approval", 409
+        )
+    task_claimed = db.execute(
+        update(HumanTask)
+        .where(
+            HumanTask.id == pending_task.id,
+            HumanTask.user_id == user.id,
+            HumanTask.status == HumanTaskStatus.PENDING.value,
+        )
+        .values(
+            status=HumanTaskStatus.APPROVED.value,
+            response={"decision": "approve"},
+            resolved_at=now_utc(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if task_claimed.rowcount != 1:
+        db.rollback()
+        raise AppError(
+            "APPROVAL_NOT_ALLOWED", "This run is not waiting for Blueprint approval", 409
+        )
+    run_claimed = db.execute(
         update(Run)
         .where(
             Run.id == run_id,
@@ -641,7 +672,7 @@ def approve_blueprint(
         .values(status=RunStatus.BUILD_QUEUED.value, current_stage="build_queue")
         .execution_options(synchronize_session=False)
     )
-    if claimed.rowcount != 1:
+    if run_claimed.rowcount != 1:
         db.rollback()
         run = db.scalar(select(Run).where(Run.id == run_id, Run.user_id == user.id))
         if run is None:
@@ -654,17 +685,6 @@ def approve_blueprint(
         db.rollback()
         raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
     artifact = save_artifact(db, run.id, ArtifactType.BLUEPRINT, approval.blueprint)
-    pending_task = db.scalar(
-        select(HumanTask).where(
-            HumanTask.run_id == run.id,
-            HumanTask.kind == HumanTaskKind.APPROVAL.value,
-            HumanTask.status == HumanTaskStatus.PENDING.value,
-        )
-    )
-    if pending_task is not None:
-        pending_task.status = HumanTaskStatus.APPROVED.value
-        pending_task.response = {"decision": "approve"}
-        pending_task.resolved_at = now_utc()
     db.add(
         Approval(
             run_id=run.id,
@@ -1169,10 +1189,33 @@ def respond_to_human_task(
             and response.response
             and (task.response or {}).get("text") == response.response
         ):
+            if (
+                run.status == RunStatus.PRODUCT_RUNNING.value
+                and run.current_stage == "product_manager"
+            ):
+                if run.trigger == "ai_edit":
+                    job = db.scalar(
+                        select(BuildJob).where(
+                            BuildJob.run_id == run.id,
+                            BuildJob.status == BuildStatus.QUEUED.value,
+                        )
+                    )
+                    if job is not None:
+                        job_dispatcher(job.id)
+                        db.expire_all()
+                        run = _owned_run(db, task.run_id, user.id)
+                else:
+                    background_tasks.add_task(blueprint_executor, run.id)
             return _run_view(db, run)
         raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
 
     if task.kind == HumanTaskKind.INPUT_REQUEST.value:
+        if run.status != RunStatus.NEEDS_INPUT.value:
+            raise AppError(
+                "HUMAN_TASK_RUN_NOT_WAITING",
+                "This run is no longer waiting for clarification",
+                409,
+            )
         if not response.response or response.decision is not None:
             raise AppError(
                 "HUMAN_TASK_RESPONSE_REQUIRED",
@@ -1181,8 +1224,65 @@ def respond_to_human_task(
             )
         base_version_id = (task.payload or {}).get("base_version_id")
         if base_version_id and project.latest_version_id != base_version_id:
-            task.status = HumanTaskStatus.STALE.value
-            task.resolved_at = now_utc()
+            stale_claimed = db.execute(
+                update(HumanTask)
+                .where(
+                    HumanTask.id == task.id,
+                    HumanTask.user_id == user.id,
+                    HumanTask.status == HumanTaskStatus.PENDING.value,
+                )
+                .values(status=HumanTaskStatus.STALE.value, resolved_at=now_utc())
+                .execution_options(synchronize_session=False)
+            )
+            run_cancelled = db.execute(
+                update(Run)
+                .where(
+                    Run.id == run.id,
+                    Run.user_id == user.id,
+                    Run.status == RunStatus.NEEDS_INPUT.value,
+                )
+                .values(
+                    status=RunStatus.CANCELLED.value,
+                    error_code="BASE_VERSION_CHANGED",
+                    error_message=(
+                        "The clarification expired because the Project base version changed"
+                    ),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if stale_claimed.rowcount != 1 or run_cancelled.rowcount != 1:
+                db.rollback()
+                raise AppError(
+                    "HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409
+                )
+            db.add(
+                ProjectMessage(
+                    project_id=project.id,
+                    session_id=run.session_id,
+                    user_id=user.id,
+                    run_id=run.id,
+                    role="system",
+                    message_type="error",
+                    content=(
+                        "The clarification expired because the Project changed. "
+                        "Send the change again from the current version."
+                    ),
+                    payload={
+                        "human_task_id": task.id,
+                        "code": "BASE_VERSION_CHANGED",
+                        "base_version_id": base_version_id,
+                        "latest_version_id": project.latest_version_id,
+                    },
+                )
+            )
+            record_event(
+                db,
+                run.id,
+                "human_task.stale",
+                "Clarification expired because the Project base version changed",
+                stage="product_manager_clarification",
+                payload={"human_task_id": task.id, "code": "BASE_VERSION_CHANGED"},
+            )
             db.commit()
             raise AppError(
                 "BASE_VERSION_CHANGED",
@@ -1284,6 +1384,12 @@ def respond_to_human_task(
             "Approve the Blueprint from its review card, or reject this task",
             422,
         )
+    if run.status != RunStatus.AWAITING_APPROVAL.value:
+        raise AppError(
+            "HUMAN_TASK_RUN_NOT_WAITING",
+            "This run is no longer waiting for approval",
+            409,
+        )
     target_status = (
         HumanTaskStatus.REJECTED.value
         if response.decision == "reject"
@@ -1306,7 +1412,20 @@ def respond_to_human_task(
     if claimed.rowcount != 1:
         db.rollback()
         raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
-    run.status = RunStatus.CANCELLED.value
+    run_cancelled = db.execute(
+        update(Run)
+        .where(
+            Run.id == run.id,
+            Run.user_id == user.id,
+            Run.status == RunStatus.AWAITING_APPROVAL.value,
+        )
+        .values(status=RunStatus.CANCELLED.value)
+        .execution_options(synchronize_session=False)
+    )
+    if run_cancelled.rowcount != 1:
+        db.rollback()
+        raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
+    db.refresh(run)
     project.status = (
         ProjectStatus.READY.value if project.latest_version_id else ProjectStatus.DRAFT.value
     )

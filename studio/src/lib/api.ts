@@ -24,6 +24,13 @@ import type {
   VersionView,
 } from "../types";
 
+export class ApiError extends Error {
+  constructor(public readonly code: string, message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -31,7 +38,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(error.message ?? "Request failed");
+    throw new ApiError(error.code ?? "REQUEST_FAILED", error.message ?? "Request failed", response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
