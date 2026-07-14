@@ -53,6 +53,7 @@ from another_atom.contracts.schemas import (
     Mode,
     ModelOption,
     ModelsView,
+    ProductSpec,
     ProjectFileContent,
     ProjectFileEntry,
     ProjectFileSaveRequest,
@@ -242,6 +243,7 @@ def _run_view(db: Session, run: Run) -> RunView:
         status=RunStatus(run.status),
         current_stage=run.current_stage,
         blueprint=_artifact_model(db, run.id, ArtifactType.BLUEPRINT, Blueprint),
+        product_spec=_artifact_model(db, run.id, ArtifactType.PRODUCT_SPEC, ProductSpec),
         architecture_spec=_artifact_model(
             db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
         ),
@@ -682,13 +684,19 @@ def approve_blueprint(
         db.rollback()
         raise AppError("RUN_NOT_FOUND", "Run was not found", 404)
     artifact = save_artifact(db, run.id, ArtifactType.BLUEPRINT, approval.blueprint)
+    product_spec_artifact = get_artifact(db, run.id, ArtifactType.PRODUCT_SPEC)
+    approved_artifact = product_spec_artifact or artifact
     db.add(
         Approval(
             run_id=run.id,
             user_id=user.id,
-            artifact_id=artifact.id,
+            artifact_id=approved_artifact.id,
             approved=True,
-            payload=approval.blueprint.model_dump(mode="json"),
+            payload=(
+                product_spec_artifact.payload
+                if product_spec_artifact
+                else approval.blueprint.model_dump(mode="json")
+            ),
         )
     )
     job = BuildJob(run_id=run.id, project_id=run.project_id, status=BuildStatus.QUEUED.value)
@@ -1700,6 +1708,7 @@ _ARTIFACT_FILE_PATHS = {
         ".another-atom/generated/repair-validation-report.json"
     ),
     ArtifactType.REVIEW_REPORT: ".another-atom/generated/review-report.json",
+    ArtifactType.PRODUCT_SPEC: ".another-atom/generated/product-spec.json",
     ArtifactType.DATA_REVIEW: ".another-atom/generated/legacy-data-review.json",
 }
 

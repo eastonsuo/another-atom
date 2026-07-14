@@ -42,7 +42,9 @@ def test_database_bootstrap_creates_default_admin(tmp_path, monkeypatch) -> None
         get_settings.cache_clear()
 
 
-def test_database_bootstrap_demotes_stale_admin_accounts(tmp_path, monkeypatch) -> None:
+def test_database_bootstrap_preserves_console_assigned_admin_accounts(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("PROJECT_REPOSITORY_ROOT", str(tmp_path / "repositories"))
     get_settings.cache_clear()
     engine = create_database_engine(f"sqlite:///{tmp_path / 'demote.db'}")
@@ -55,7 +57,7 @@ def test_database_bootstrap_demotes_stale_admin_accounts(tmp_path, monkeypatch) 
         with Session(engine) as db:
             stale = db.scalar(select(User).where(User.username == "admin"))
             assert stale is not None
-            assert stale.role == "user"
+            assert stale.role == "admin"
             configured = db.scalar(select(User).where(User.username == "ops-admin"))
             assert configured is not None
             assert configured.role == "admin"
@@ -130,6 +132,10 @@ def test_admin_endpoints_require_an_authenticated_admin(client: TestClient) -> N
     unauthenticated = client.get("/api/admin/users")
     assert unauthenticated.status_code == 401
     assert unauthenticated.json()["code"] == "AUTHENTICATION_REQUIRED"
+    unauthenticated_update = client.patch(
+        "/api/admin/users/missing/role", json={"role": "admin"}
+    )
+    assert unauthenticated_update.status_code == 401
 
     client.post(
         "/api/auth/signup",
@@ -138,6 +144,10 @@ def test_admin_endpoints_require_an_authenticated_admin(client: TestClient) -> N
     forbidden = client.get("/api/admin/users")
     assert forbidden.status_code == 403
     assert forbidden.json()["code"] == "ADMIN_ACCESS_REQUIRED"
+    forbidden_update = client.patch(
+        "/api/admin/users/missing/role", json={"role": "admin"}
+    )
+    assert forbidden_update.status_code == 403
 
     admin_login = client.post(
         "/api/admin/login",
@@ -145,6 +155,69 @@ def test_admin_endpoints_require_an_authenticated_admin(client: TestClient) -> N
     )
     assert admin_login.status_code == 403
     assert admin_login.json()["code"] == "ADMIN_ACCESS_REQUIRED"
+
+
+def test_admin_can_promote_a_registered_user_and_the_role_survives_bootstrap(
+    client: TestClient,
+) -> None:
+    created_user = client.post(
+        "/api/auth/signup",
+        json={
+            "username": "future-admin",
+            "password": "future-admin-password",
+            "display_name": "Future Admin",
+        },
+    ).json()
+    client.post("/api/auth/logout")
+    _create_admin(client)
+    assert client.post(
+        "/api/admin/login",
+        json={"username": "admin", "password": "admin12345"},
+    ).status_code == 200
+
+    promoted = client.patch(
+        f"/api/admin/users/{created_user['id']}/role",
+        json={"role": "admin"},
+    )
+
+    assert promoted.status_code == 200
+    assert promoted.headers["cache-control"] == "no-store"
+    assert promoted.json() == {
+        "id": created_user["id"],
+        "username": "future-admin",
+        "display_name": "Future Admin",
+        "role": "admin",
+    }
+    assert client.get("/api/admin/users").json()["total"] == 0
+
+    client.post("/api/auth/logout")
+    promoted_login = client.post(
+        "/api/admin/login",
+        json={"username": "future-admin", "password": "future-admin-password"},
+    )
+    assert promoted_login.status_code == 200
+
+    with client.app.state.testing_session() as db:
+        engine = db.get_bind()
+    init_database(engine)
+    with client.app.state.testing_session() as db:
+        persisted = db.get(User, created_user["id"])
+        assert persisted is not None
+        assert persisted.role == "admin"
+
+
+def test_admin_role_update_rejects_invalid_or_missing_targets(client: TestClient) -> None:
+    _create_admin(client)
+    assert client.post(
+        "/api/admin/login",
+        json={"username": "admin", "password": "admin12345"},
+    ).status_code == 200
+
+    invalid = client.patch("/api/admin/users/missing/role", json={"role": "user"})
+    assert invalid.status_code == 422
+    missing = client.patch("/api/admin/users/missing/role", json={"role": "admin"})
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "USER_NOT_FOUND"
 
 
 def test_admin_can_list_users_projects_and_latest_run(client: TestClient) -> None:

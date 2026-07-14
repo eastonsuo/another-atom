@@ -28,6 +28,7 @@ from another_atom.contracts.schemas import (
     Mode,
     PMRequirementAssessment,
     PreviousFailureContext,
+    ProductSpec,
     ProjectStatus,
     RequirementDelta,
     ReviewReport,
@@ -47,6 +48,7 @@ from another_atom.repository.service import (
     build_source_snapshot,
     calculate_source_diff,
     commit_version,
+    write_product_spec,
 )
 from another_atom.storage.models import (
     Artifact,
@@ -61,6 +63,91 @@ from another_atom.storage.models import (
 
 T = TypeVar("T", bound=BaseModel)
 logger = get_logger("orchestrator")
+
+
+def _contains_chinese(value: str) -> bool:
+    return any("\u3400" <= character <= "\u9fff" for character in value)
+
+
+def _render_product_spec(prompt: str, blueprint: Blueprint) -> ProductSpec:
+    chinese = _contains_chinese(prompt)
+    if chinese:
+        summary = f"{blueprint.project_name}：围绕用户原始目标整理的可构建产品方案。"
+        lines = [
+            f"# {blueprint.project_name} 产品说明",
+            "",
+            "## 用户目标",
+            "",
+            prompt.strip(),
+            "",
+            "## 页面",
+            "",
+            *[f"- {item}" for item in blueprint.pages],
+            "",
+            "## 核心功能",
+            "",
+            *[f"- {item}" for item in blueprint.modules],
+            "",
+            "## 已映射需求",
+            "",
+            *([f"- {item}" for item in blueprint.mapped_requirements] or ["- 无"]),
+            "",
+            "## 当前能力边界",
+            "",
+            *([f"- {item}" for item in blueprint.omitted_requirements] or ["- 无额外删减"]),
+            "",
+            "## 数据与状态",
+            "",
+            *([f"- {item}" for item in blueprint.data_requirements] or ["- 无额外数据要求"]),
+            "",
+            "## 验收边界",
+            "",
+            "- 页面和核心功能可在当前 Web Runtime 中运行。",
+            "- 被调整或省略的能力不会伪装成真实可用服务。",
+        ]
+    else:
+        summary = f"{blueprint.project_name}: a buildable product plan based on the request."
+        lines = [
+            f"# {blueprint.project_name} Product Specification",
+            "",
+            "## User goal",
+            "",
+            prompt.strip(),
+            "",
+            "## Pages",
+            "",
+            *[f"- {item}" for item in blueprint.pages],
+            "",
+            "## Core features",
+            "",
+            *[f"- {item}" for item in blueprint.modules],
+            "",
+            "## Mapped requirements",
+            "",
+            *([f"- {item}" for item in blueprint.mapped_requirements] or ["- None"]),
+            "",
+            "## Capability boundary",
+            "",
+            *([f"- {item}" for item in blueprint.omitted_requirements] or ["- No omissions"]),
+            "",
+            "## Data and state",
+            "",
+            *(
+                [f"- {item}" for item in blueprint.data_requirements]
+                or ["- No extra data requirements"]
+            ),
+            "",
+            "## Acceptance boundary",
+            "",
+            "- The pages and core features run in the current Web Runtime.",
+            "- Adapted or omitted capabilities are not presented as real services.",
+        ]
+    content = "\n".join(lines).strip() + "\n"
+    return ProductSpec(
+        summary=summary,
+        content=content,
+        content_hash=f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}",
+    )
 
 
 class Orchestrator:
@@ -138,7 +225,9 @@ class Orchestrator:
                 "product_manager",
                 ArtifactType.BLUEPRINT,
                 Blueprint,
-                lambda: self._provider(run).create_blueprint(effective_prompt, Mode(run.mode)),
+                lambda: self._create_blueprint_in_request_language(
+                    run, effective_prompt, Mode(run.mode)
+                ),
             )
             regenerate_only = (
                 self.db.scalar(
@@ -175,6 +264,11 @@ class Orchestrator:
                     }
                 )
                 artifact.payload = blueprint.model_dump(mode="json")
+            product_spec = _render_product_spec(effective_prompt, blueprint)
+            write_product_spec(run.project_id, product_spec.content)
+            product_spec_artifact = save_artifact(
+                self.db, run.id, ArtifactType.PRODUCT_SPEC, product_spec
+            )
             project = self.db.get(Project, run.project_id)
             if project:
                 project.name = blueprint.project_name
@@ -186,6 +280,8 @@ class Orchestrator:
                 {
                     "artifact_id": artifact.id,
                     "artifact_type": ArtifactType.BLUEPRINT.value,
+                    "product_spec_artifact_id": product_spec_artifact.id,
+                    "product_spec_path": product_spec.path,
                     "support_level": blueprint.support_level.value,
                 },
             )
@@ -206,18 +302,20 @@ class Orchestrator:
                     run,
                     kind=HumanTaskKind.APPROVAL,
                     stage="blueprint_approval",
-                    prompt="Review and confirm the adapted Blueprint before building",
-                    subject=f"blueprint:{artifact.id}:{artifact.updated_at.isoformat()}",
+                    prompt="查看并确认产品说明后继续构建",
+                    subject=f"product_spec:{product_spec_artifact.id}:{product_spec.content_hash}",
                     payload={
-                        "artifact_id": artifact.id,
-                        "artifact_type": ArtifactType.BLUEPRINT.value,
+                        "artifact_id": product_spec_artifact.id,
+                        "artifact_type": ArtifactType.PRODUCT_SPEC.value,
+                        "path": product_spec.path,
+                        "content_hash": product_spec.content_hash,
                         "support_level": blueprint.support_level.value,
                     },
                 )
                 self._record_event_once(
                     run,
                     "approval.required",
-                    "Review and confirm the Blueprint before building",
+                    "Review and confirm the product specification before building",
                     "blueprint_approval",
                 )
             else:
@@ -259,6 +357,7 @@ class Orchestrator:
             )
             self._fail_run(run, "LLM_OUTPUT_FAILED", str(exc))
             return None
+
         except AppError as exc:
             logger.warning(
                 "blueprint_stage_failed",
@@ -276,6 +375,25 @@ class Orchestrator:
             if current:
                 self._fail_run(current, "BLUEPRINT_FAILED", str(exc))
             return None
+
+    def _create_blueprint_in_request_language(
+        self, run: Run, prompt: str, mode: Mode
+    ) -> Blueprint:
+        blueprint = self._provider(run).create_blueprint(prompt, mode)
+        if _contains_chinese(prompt):
+            localized_fields = [
+                *blueprint.support_reasons,
+                *blueprint.mapped_requirements,
+                *blueprint.omitted_requirements,
+                *blueprint.pages,
+                *blueprint.modules,
+                blueprint.visual_direction,
+                *blueprint.data_requirements,
+                *([blueprint.rewrite_suggestion] if blueprint.rewrite_suggestion else []),
+            ]
+            if any(not _contains_chinese(value) for value in localized_fields):
+                raise ValueError("Product Manager output must use the user's Chinese language")
+        return blueprint
 
     def execute_approved_run(self, run_id: str) -> None:
         run = self.db.get(Run, run_id)

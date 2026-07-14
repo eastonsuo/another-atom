@@ -333,11 +333,46 @@ class MockLLMProvider:
             modules = ["Primary workspace", "Controls", "Status feedback"]
             visual_direction = "Clear application interface with strong interaction feedback"
             data_requirements = ["Local application state"]
+        chinese = any("\u3400" <= character <= "\u9fff" for character in prompt)
+        if chinese:
+            if is_game:
+                mapped = ["浏览器内可交互游戏", "客户端游戏状态", "响应式操作"]
+                pages = ["游戏主界面"]
+                modules = ["雷区", "剩余雷数", "计时", "重新开始", "胜负状态"]
+                visual_direction = "清晰的复古游戏界面，棋盘状态易于辨认"
+                data_requirements = ["本地棋盘状态", "地雷位置", "已用时间"]
+            elif is_catalog:
+                mapped = ["响应式商品目录", "商品详情导航", "可调整的界面方向"]
+                pages = ["首页", "商品目录", "商品详情"]
+                modules = ["首屏", "精选商品", "商品列表", "商品详情"]
+                visual_direction = "排版清晰、配色克制的商品浏览界面"
+                data_requirements = ["受控的示例商品数据"]
+            else:
+                mapped = ["浏览器内交互", "响应式布局", "客户端本地状态"]
+                pages = ["应用主界面"]
+                modules = ["主要工作区", "操作控件", "状态反馈"]
+                visual_direction = "交互反馈清晰的应用界面"
+                data_requirements = ["本地应用状态"]
+            omitted = (
+                ["不实现服务端认证、支付和持久化数据库写入"]
+                if support_level == SupportLevel.ADAPTED
+                else []
+            )
         return Blueprint(
             project_name=project_name,
             product_type=product_type,
             support_level=support_level,
-            support_reasons=[self._support_reason(support_level)],
+            support_reasons=[
+                (
+                    "当前 Web Runtime 可直接实现这项需求。"
+                    if support_level == SupportLevel.SUPPORTED
+                    else "可保留主要 Web 体验，但外部或服务端能力需要调整。"
+                    if support_level == SupportLevel.ADAPTED
+                    else "主要目标超出当前 Web Runtime 的实现边界。"
+                )
+                if chinese
+                else self._support_reason(support_level)
+            ],
             mapped_requirements=mapped,
             omitted_requirements=omitted,
             rewrite_suggestion=(
@@ -799,6 +834,11 @@ class MockLLMProvider:
     def _web_rewrite(prompt: str) -> str:
         """Create a deterministic Web alternative without changing the product goal."""
         normalized = prompt.lower()
+        if any("\u3400" <= character <= "\u9fff" for character in prompt):
+            return (
+                "构建原产品目标的浏览器版本，保留核心流程和交互，使用客户端本地状态，"
+                "仅把当前 Runtime 不支持的原生或服务端能力替换为明确标注的演示数据。"
+            )
         if "camera" in normalized:
             return (
                 "Build a browser-based camera interface prototype that preserves the capture "
@@ -941,7 +981,10 @@ class OllamaCloudProvider:
                 "payments, persistent database writes, or external services must be omitted or "
                 "represented with local demo state. Use unsupported only when the primary goal "
                 "cannot be represented as a Web application. Preserve the user's language and "
-                "expand concrete pages, interactions, states, error feedback, and visual direction."
+                "expand concrete pages, interactions, states, error feedback, and visual direction. "
+                "Every user-facing string field MUST use the same language as the request. If the "
+                "request contains Chinese, project_name, reasons, pages, modules, requirements, "
+                "data requirements, and visual_direction must be written in Chinese."
             ),
             {"request": prompt, "mode": mode.value},
         )

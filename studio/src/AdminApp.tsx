@@ -150,7 +150,9 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
   const [loadingProjects, setLoadingProjects] = useState<string | null>(null);
   const [detail, setDetail] = useState<AdminProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [promotingUserId, setPromotingUserId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -205,22 +207,46 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
     }
   };
 
+  const promoteUser = async (user: AdminUserSummary) => {
+    if (promotingUserId) return;
+    const confirmed = window.confirm(`确认将 ${user.display_name}（@${user.username}）设为管理员？该账户将可以查看所有用户与 Project，并继续配置其他管理员。`);
+    if (!confirmed) return;
+    setPromotingUserId(user.id);
+    setError("");
+    setNotice("");
+    try {
+      await api.adminPromoteUser(user.id);
+      setUsers((current) => current ? {
+        ...current,
+        items: current.items.filter((item) => item.id !== user.id),
+        total: Math.max(0, current.total - 1),
+      } : current);
+      setExpanded((current) => current === user.id ? null : current);
+      setNotice(`${user.display_name} 已设为管理员。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "管理员权限配置失败");
+    } finally {
+      setPromotingUserId(null);
+    }
+  };
+
   const lastPage = Math.max(1, Math.ceil((users?.total ?? 0) / (users?.page_size ?? 20)));
   return (
     <div className="admin-shell">
       <header className="admin-header">
-        <div className="admin-brand"><AtomLogo /><div><span>只读运营后台</span><strong>Another Atom Admin</strong></div></div>
+        <div className="admin-brand"><AtomLogo /><div><span>运营与权限后台</span><strong>Another Atom Admin</strong></div></div>
         <div><span className="admin-account"><ShieldCheck size={14} />{admin.display_name}</span><button onClick={async () => { await api.logout(); window.location.assign("/admin/login"); }}><LogOut size={15} />退出</button></div>
       </header>
       <main className="admin-main">
         <section className="admin-title">
-          <div><span>V1 SYSTEM OVERVIEW</span><h1>用户与项目</h1><p>查看注册用户、Project 简介和最新一次执行进度。</p></div>
+          <div><span>V1 SYSTEM OVERVIEW</span><h1>用户与项目</h1><p>查看注册用户和 Project 状态，并配置管理员权限。</p></div>
           <button className="admin-refresh" onClick={() => void loadUsers()}><RefreshCw size={16} />刷新</button>
         </section>
         <form className="admin-search" onSubmit={(event) => { event.preventDefault(); setPage(1); setQuery(queryInput.trim()); }}>
           <Search size={17} /><input placeholder="搜索显示名称或用户名" value={queryInput} onChange={(event) => setQueryInput(event.target.value)} /><button type="submit">搜索</button>
         </form>
         {error && <div className="admin-error" role="alert"><CircleAlert size={16} />{error}<button onClick={() => setError("")}><X size={14} /></button></div>}
+        {notice && <div className="admin-notice" role="status"><ShieldCheck size={16} />{notice}<button onClick={() => setNotice("")}><X size={14} /></button></div>}
         <section className="admin-users-card">
           <div className="admin-list-head"><span><Users size={16} />注册用户</span><b>{users?.total ?? 0}</b></div>
           {loading ? <div className="admin-empty"><LoaderCircle className="spin" />正在加载用户……</div> : users?.items.length ? users.items.map((user) => (
@@ -233,6 +259,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
                 <em>{user.plan}</em>
               </button>
               {expanded === user.id && <div className="admin-projects">
+                <div className="admin-user-actions"><div><ShieldCheck size={16} /><span><strong>管理员权限</strong><small>管理员可查看所有用户、Project 和 Run 日志，并配置其他管理员。</small></span></div><button disabled={Boolean(promotingUserId)} onClick={() => void promoteUser(user)}>{promotingUserId === user.id ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}设为管理员</button></div>
                 {loadingProjects === user.id ? <div className="admin-empty"><LoaderCircle className="spin" />正在加载 Project……</div> : projects[user.id]?.items.length ? <>{projects[user.id].items.map((project) => <ProjectRow project={project} onOpen={openDetail} key={project.id} />)}<ProjectPagination projects={projects[user.id]} onPage={(nextPage) => void loadProjects(user.id, nextPage)} /></> : <div className="admin-empty">该用户还没有 Project。</div>}
               </div>}
             </div>

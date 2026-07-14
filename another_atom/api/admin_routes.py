@@ -15,6 +15,7 @@ from another_atom.contracts.schemas import (
     AdminProjectSummary,
     AdminRunSummary,
     AdminUserList,
+    AdminUserRoleUpdate,
     AdminUserSummary,
     AdminUserView,
     ArtifactType,
@@ -313,6 +314,33 @@ def list_users(
         page=page,
         page_size=page_size,
         total=total,
+    )
+
+
+@router.patch("/users/{user_id}/role", response_model=AdminUserView)
+def update_user_role(
+    user_id: str,
+    role_update: AdminUserRoleUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+) -> AdminUserView:
+    _no_store(response)
+    user = _admin_user(db, user_id)
+    user.role = role_update.role
+    db.commit()
+    logger.info(
+        "admin_user_role_updated",
+        extra={
+            "user_id": admin.id,
+            "resource_id": user.id,
+            "status": role_update.role,
+        },
+    )
+    return AdminUserView(
+        id=user.id,
+        username=user.username or "",
+        display_name=user.display_name,
     )
 
 

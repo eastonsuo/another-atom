@@ -1,7 +1,7 @@
 import re
 from collections.abc import Generator
 
-from sqlalchemy import Engine, create_engine, event, inspect, or_, select, text
+from sqlalchemy import Engine, create_engine, event, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from another_atom.config import get_settings
@@ -200,20 +200,8 @@ def init_database(target_engine: Engine | None = None) -> None:
                     settings.admin_password, admin.password_hash
                 ):
                     admin.password_hash = hash_password(settings.admin_password)
-            # The configured credentials are the only source of admin identity;
-            # demote any stale admin account left behind by earlier configurations.
-            leftover_admins = db.scalars(
-                select(User).where(
-                    User.role == "admin",
-                    or_(User.username.is_(None), User.username != admin_username),
-                )
-            ).all()
-            for leftover in leftover_admins:
-                leftover.role = "user"
-                logger.warning(
-                    "stale_admin_demoted",
-                    extra={"user_id": leftover.id, "status": "warning"},
-                )
+            # Configuration guarantees one recoverable administrator. Additional
+            # administrators assigned in the admin console remain valid across restarts.
             db.commit()
         projects = db.scalars(select(Project).order_by(Project.created_at)).all()
         for project in projects:

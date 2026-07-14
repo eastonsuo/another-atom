@@ -1,7 +1,8 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from another_atom.config import get_settings
-from another_atom.storage.models import User
+from another_atom.storage.models import Approval, Artifact, User
 
 
 def _create_run(client: TestClient, payload: dict, headers: dict | None = None) -> dict:
@@ -140,6 +141,13 @@ def test_blueprint_cannot_be_approved_twice(client: TestClient) -> None:
     assert created["blueprint"]["support_level"] == "adapted"
     payload = {"blueprint": created["blueprint"]}
     assert client.post(f"/api/runs/{created['run_id']}/approve", json=payload).status_code == 202
+    with client.app.state.testing_session() as db:
+        approval = db.scalar(select(Approval).where(Approval.run_id == created["run_id"]))
+        assert approval is not None
+        artifact = db.get(Artifact, approval.artifact_id)
+        assert artifact is not None
+        assert artifact.artifact_type == "product_spec"
+        assert approval.payload["path"] == "docs/product-spec.md"
     second = client.post(f"/api/runs/{created['run_id']}/approve", json=payload)
     assert second.status_code == 409
     assert second.json()["code"] == "APPROVAL_NOT_ALLOWED"
@@ -206,6 +214,46 @@ def test_adapted_request_waits_for_approval(queued_client: TestClient) -> None:
     assert run["build_job_id"] is None
     events = queued_client.get(f"/api/runs/{run['run_id']}/events/history").json()
     assert "approval.required" in [event["type"] for event in events]
+
+
+def test_chinese_adapted_request_creates_chinese_product_spec_for_review(
+    queued_client: TestClient,
+) -> None:
+    run = _create_run(
+        queued_client,
+        {
+            "prompt": "创建一个带登录和数据库保存记录的翻译软件",
+            "mode": "team",
+        },
+    )
+
+    assert run["status"] == "awaiting_approval"
+    assert run["product_spec"]["path"] == "docs/product-spec.md"
+    assert "## 用户目标" in run["product_spec"]["content"]
+    assert "创建一个带登录和数据库保存记录的翻译软件" in run["product_spec"]["content"]
+    assert "视觉方向" not in run["product_spec"]["content"]
+    assert any("\u3400" <= character <= "\u9fff" for character in run["blueprint"]["modules"][0])
+    assert run["pending_human_task"]["payload"]["artifact_type"] == "product_spec"
+    assert run["pending_human_task"]["payload"]["path"] == "docs/product-spec.md"
+
+    files = queued_client.get(
+        f"/api/projects/{run['project_id']}/files",
+        params={"run_id": run["run_id"]},
+    ).json()
+    assert any(
+        item["source"] == "repository" and item["path"] == "docs/product-spec.md"
+        for item in files
+    )
+    document = queued_client.get(
+        f"/api/projects/{run['project_id']}/files/content",
+        params={
+            "run_id": run["run_id"],
+            "source": "repository",
+            "path": "docs/product-spec.md",
+        },
+    )
+    assert document.status_code == 200
+    assert document.json()["content"] == run["product_spec"]["content"]
 
 
 def test_unavailable_model_is_rejected_before_project_creation(client: TestClient) -> None:

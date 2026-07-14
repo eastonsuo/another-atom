@@ -53,6 +53,11 @@ export const api = {
   adminMe: () => request<AdminUserView>("/api/admin/me"),
   adminUsers: (query = "", page = 1, pageSize = 20) =>
     request<AdminUserList>(`/api/admin/users?${new URLSearchParams({ query, page: String(page), page_size: String(pageSize) })}`),
+  adminPromoteUser: (userId: string) =>
+    request<AdminUserView>(`/api/admin/users/${userId}/role`, {
+      method: "PATCH",
+      body: JSON.stringify({ role: "admin" }),
+    }),
   adminUserProjects: (userId: string, page = 1, pageSize = 20) =>
     request<AdminProjectList>(`/api/admin/users/${userId}/projects?${new URLSearchParams({ page: String(page), page_size: String(pageSize) })}`),
   adminProject: (projectId: string) =>

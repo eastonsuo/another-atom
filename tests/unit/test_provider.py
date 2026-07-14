@@ -222,7 +222,7 @@ def test_minesweeper_preserves_the_game_goal_and_generates_web_source(
 
     assert blueprint.support_level == SupportLevel.SUPPORTED
     assert blueprint.product_type == "web_game"
-    assert blueprint.pages == ["Game"]
+    assert blueprint.pages == ["游戏主界面"]
     assert "minefield" in app_spec.html
     assert "function reveal" in app_spec.javascript
     assert app_spec.products == []

@@ -302,6 +302,35 @@ def save_repository_text_file(
     return repository_content_hash(content), commit, len(encoded)
 
 
+def write_product_spec(project_id: str, content: str) -> tuple[str, str]:
+    relative_path = "docs/product-spec.md"
+    root = initialize_repository(project_id)
+    candidate = _repository_text_path(project_id, relative_path)
+    encoded = content.encode("utf-8")
+    if len(encoded) > MAX_BROWSER_FILE_BYTES:
+        raise RepositoryError("Product specification is too large to save")
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    previous = candidate.read_bytes() if candidate.exists() else None
+    if previous == encoded:
+        return repository_content_hash(content), _git(root, "rev-parse", "HEAD")
+    try:
+        _atomic_write(candidate, encoded)
+        _git(root, "add", "--", relative_path)
+        _git(root, "commit", "-m", "docs: add product specification")
+        commit = _git(root, "rev-parse", "HEAD")
+    except RepositoryError:
+        if previous is None:
+            candidate.unlink(missing_ok=True)
+        else:
+            _atomic_write(candidate, previous)
+        try:
+            _git(root, "restore", "--staged", "--", relative_path)
+        except RepositoryError:
+            pass
+        raise
+    return repository_content_hash(content), commit
+
+
 def find_file_save_commit(project_id: str, operation_id: str) -> str | None:
     root = repository_path(project_id)
     result = _git(

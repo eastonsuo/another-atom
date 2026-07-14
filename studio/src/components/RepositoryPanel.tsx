@@ -59,7 +59,10 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
       setFiles(next);
       const preferred = selected
         ? next.find((file) => file.source === selected.source && file.path === selected.path)
-        : next.find((file) => file.source === "repository" && file.path === "README.md")
+        : run.status === "awaiting_approval"
+          ? next.find((file) => file.source === "repository" && file.path === "docs/product-spec.md")
+            ?? next.find((file) => file.source === "repository" && file.path === "README.md")
+          : next.find((file) => file.source === "repository" && file.path === "README.md")
           ?? next.find((file) => file.source === "artifact" && file.path.endsWith("app-spec.json"))
           ?? next[0];
       if (preferred) await openFile(preferred);
@@ -73,14 +76,14 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
     } finally {
       setLoading(false);
     }
-  }, [confirmDiscard, language, openFile, run.project_id, run.run_id, selected]);
+  }, [confirmDiscard, language, openFile, run.project_id, run.run_id, run.status, selected]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(timer);
     // Refresh only when the Project/Run changes; selected file updates must not reload the panel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.project_id, run.run_id]);
+  }, [run.project_id, run.run_id, run.status]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {

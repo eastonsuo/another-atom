@@ -187,7 +187,7 @@ running
 - 长期 Agent Memory 或基于向量检索的 RAG；
 - 外部 Git 或用户本地代码的无授权读取；
 - 任意 Shell、动态依赖安装或绕过 Sandbox 的执行；
-- 在本轮同时交付完整 Markdown ProductSpec 代际与编辑器；当前 PM 的可执行 Contract 仍是 Blueprint。
+- ProductSpec 已能写入 `docs/product-spec.md` 并作为 adapted 确认页的查看对象；完整 generation、编辑失效、重新生成和显式 Architect Handoff 仍待完成，当前 PM 的下游可执行 Contract 仍是同源 Blueprint。
 - 通用 Stop/Cancel API、富 Diff 消息卡片和所有风险类型的业务适配器。
 
 ## 8. 验收标准

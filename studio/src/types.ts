@@ -24,6 +24,14 @@ export interface Blueprint {
   data_requirements: string[];
 }
 
+export interface ProductSpec {
+  schema_version: "1.0";
+  path: "docs/product-spec.md";
+  summary: string;
+  content: string;
+  content_hash: string;
+}
+
 export interface ProductItem {
   id: string;
   name: string;
@@ -61,6 +69,7 @@ export interface RunView {
   status: string;
   current_stage: string;
   blueprint: Blueprint | null;
+  product_spec: ProductSpec | null;
   app_spec: AppSpec | null;
   validation_report: { passed: boolean; checks: { check_id: string; label: string; status: string; detail?: string | null }[] } | null;
   architecture_spec: {

@@ -6,6 +6,7 @@ import {
   Code2,
   Download,
   ExternalLink,
+  FileText,
   History,
   Layers3,
   LoaderCircle,
@@ -36,6 +37,7 @@ import type {
   Mode,
   ProjectView,
   ProjectMessageView,
+  ProductSpec,
   QuotaView,
   ModelsView,
   RunEvent,
@@ -976,8 +978,7 @@ function Workspace({
   language: Language;
 }) {
   const [approving, setApproving] = useState(false);
-  const [blueprint, setBlueprint] = useState<Blueprint | null>(run.blueprint);
-  const effectiveBlueprint = blueprint ?? run.blueprint;
+  const effectiveBlueprint = run.blueprint;
   const ready = run.status === "completed" || run.status === "completed_degraded";
 
   const approve = async () => {
@@ -1004,7 +1005,7 @@ function Workspace({
       </section>
       <section className="workspace-content">
         {run.status === "awaiting_approval" && effectiveBlueprint ? (
-          <BlueprintEditor blueprint={effectiveBlueprint} setBlueprint={setBlueprint} approve={approve} approving={approving} language={language} />
+          <ProductSpecApproval productSpec={run.product_spec} blueprint={effectiveBlueprint} approve={approve} approving={approving} language={language} />
         ) : run.status === "needs_input" && run.pending_human_task?.kind === "input_request" ? (
           <div className="failed-project-view">
             <ClarificationState run={run} language={language} />
@@ -1141,18 +1142,17 @@ function BlueprintSnapshot({ blueprint, language }: { blueprint: Blueprint; lang
   </details>;
 }
 
-function BlueprintEditor({ blueprint, setBlueprint, approve, approving, language }: { blueprint: Blueprint; setBlueprint: (value: Blueprint) => void; approve: () => void; approving: boolean; language: Language }) {
-  return <div className="blueprint-view">
-    <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>{ui(language, "Human-in-the-loop · Adapted scope")}</span><h1>{ui(language, "Confirm the scope change")}</h1><p>{ui(language, "The Web application can continue after you accept the adapted runtime capabilities.")}</p></div><SupportBadge level={blueprint.support_level} language={language} /></div>
-    {blueprint.support_level === "adapted" && <div className="scope-note"><CircleAlert size={17} /><div><strong>{ui(language, "Some requirements were adapted")}</strong><p>{blueprint.omitted_requirements.join(" ")}</p></div></div>}
-    <div className="blueprint-form">
-      <label>{ui(language, "Project name")}<input value={blueprint.project_name} onChange={(e) => setBlueprint({ ...blueprint, project_name: e.target.value })} /></label>
-      <label>{ui(language, "Visual direction")}<textarea value={blueprint.visual_direction} onChange={(e) => setBlueprint({ ...blueprint, visual_direction: e.target.value })} /></label>
-      <div className="blueprint-group"><span>{ui(language, "Pages")}</span><div className="token-row">{blueprint.pages.map((page) => <b key={page}>{page}</b>)}</div></div>
-      <div className="blueprint-group"><span>{ui(language, "Modules")}</span><div className="token-row">{blueprint.modules.map((module) => <b key={module}>{module}</b>)}</div></div>
-      <div className="blueprint-group"><span>{ui(language, "Mapped requirements")}</span><ul>{blueprint.mapped_requirements.map((item) => <li key={item}><Check size={15} /> {item}</li>)}</ul></div>
+function ProductSpecApproval({ productSpec, blueprint, approve, approving, language }: { productSpec: ProductSpec | null; blueprint: Blueprint; approve: () => void; approving: boolean; language: Language }) {
+  const chinese = language === "zh";
+  return <div className="blueprint-view product-spec-approval">
+    <div className="content-heading blueprint-heading"><RoleAvatar role="product" size="large" /><div><span>{chinese ? "产品经理 · 产品方案" : "Product Manager · Product plan"}</span><h1>{chinese ? "产品说明待确认" : "Product specification ready"}</h1><p>{chinese ? "产品经理已把需求整理成 Markdown 文档。这里不展示视觉稿，请先查看完整产品说明。" : "The Product Manager prepared a Markdown specification. Review the document before continuing."}</p></div><SupportBadge level={blueprint.support_level} language={language} /></div>
+    {blueprint.support_level === "adapted" && <div className="scope-note"><CircleAlert size={17} /><div><strong>{chinese ? "方案包含能力调整" : "The plan includes capability adaptations"}</strong><p>{chinese ? `共 ${blueprint.omitted_requirements.length} 项调整，具体内容和验收边界已写入产品说明。` : `${blueprint.omitted_requirements.length} adaptations are documented with their acceptance boundaries.`}</p></div></div>}
+    <div className="product-spec-card">
+      <FileText size={24} />
+      <div><span>{chinese ? "完整产品说明" : "Full product specification"}</span><strong>{productSpec?.path ?? "docs/product-spec.md"}</strong><p>{productSpec?.summary ?? (chinese ? "当前任务由旧版本创建，尚无独立产品说明文件。" : "This legacy run does not have a standalone product specification file.")}</p></div>
     </div>
-    <div className="approval-bar"><div><strong>{ui(language, "Accept the adapted scope?")}</strong><span>{ui(language, "This records an explicit risk confirmation.")}</span></div><button onClick={approve} disabled={approving || !blueprint.project_name.trim()}>{approving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />} {ui(language, "Confirm & build")}</button></div>
+    <div className="product-spec-tip"><CircleAlert size={16} /><span>{chinese ? "请在右侧“项目文件”中查看 Markdown 文档；确认后才会进入架构设计和代码生成。" : "Open Project files on the right to review the Markdown document. Architecture and code generation start only after confirmation."}</span></div>
+    <div className="approval-bar"><div><strong>{chinese ? "确认当前产品方案？" : "Approve this product plan?"}</strong><span>{chinese ? "确认对象是产品说明及其中记录的能力边界，不是视觉稿。" : "You are approving the product specification and its capability boundary, not a visual mockup."}</span></div><button onClick={approve} disabled={approving || !productSpec}>{approving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />} {chinese ? "确认并构建" : "Confirm and build"}</button></div>
   </div>;
 }
 

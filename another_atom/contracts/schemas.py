@@ -77,6 +77,7 @@ class ArtifactType(StrEnum):
     BASE_SOURCE_SNAPSHOT = "base_source_snapshot"
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
+    PRODUCT_SPEC = "product_spec"
     ARCHITECTURE_SPEC = "architecture_spec"
     APP_SPEC = "app_spec"
     APP_SPEC_REPAIR = "app_spec_repair"
@@ -129,6 +130,14 @@ class Blueprint(BaseModel):
         if any(not item for item in cleaned):
             raise ValueError("Blueprint page and module labels cannot be blank")
         return cleaned
+
+
+class ProductSpec(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    path: Literal["docs/product-spec.md"] = "docs/product-spec.md"
+    summary: str = Field(min_length=1, max_length=600)
+    content: str = Field(min_length=1, max_length=30_000)
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class PMRequirementAssessment(BaseModel):
@@ -372,6 +381,7 @@ class RunView(BaseModel):
     status: RunStatus
     current_stage: str
     blueprint: Blueprint | None = None
+    product_spec: ProductSpec | None = None
     architecture_spec: ArchitectureSpec | None = None
     app_spec: AppSpec | None = None
     data_profile: DataProfile | None = None
@@ -556,6 +566,10 @@ class UserView(BaseModel):
 
 class AdminUserView(UserView):
     role: Literal["admin"] = "admin"
+
+
+class AdminUserRoleUpdate(BaseModel):
+    role: Literal["admin"]
 
 
 class AdminUserSummary(BaseModel):
