@@ -16,6 +16,7 @@ from another_atom.repository.service import (
     commit_version,
     initialize_repository,
 )
+from another_atom.runtime.artifacts import create_architecture_design
 
 
 def test_existing_project_source_becomes_an_implicit_change_baseline(
@@ -77,6 +78,44 @@ def test_existing_project_source_becomes_an_implicit_change_baseline(
     assert "app.js" not in source_diff.changed_files
     assert {"app-spec.json", "index.html"} <= set(source_diff.changed_files)
     get_settings.cache_clear()
+
+
+def test_architect_revises_complete_design_for_project_change() -> None:
+    provider = MockLLMProvider()
+    prompt = "创建一个复古像素风扫雷游戏"
+    blueprint = provider.create_blueprint(prompt, Mode.TEAM)
+    product_content = "# 扫雷游戏\n"
+    product_spec = ProductSpec(
+        summary="扫雷游戏产品说明",
+        content=product_content,
+        content_hash=f"sha256:{sha256(product_content.encode()).hexdigest()}",
+    )
+    base_draft = provider.create_architecture_design(product_spec, blueprint)
+    base_design = create_architecture_design(base_draft, product_spec.content_hash)
+    brief = provider.create_change_brief(
+        "增加难度选择，并保留现有计时和插旗逻辑",
+        blueprint,
+        provider.create_app_spec(blueprint, base_draft.visual_tokens, prompt),
+    )
+    requirements = provider.create_requirement_delta(brief, blueprint)
+    revised_spec = provider.revise_architecture_spec(
+        blueprint, base_draft.visual_tokens, brief, requirements
+    )
+
+    revised = provider.revise_architecture_design(
+        product_spec,
+        blueprint,
+        base_design,
+        revised_spec,
+        brief,
+        requirements,
+    )
+
+    assert revised.visual_tokens == revised_spec
+    assert revised.components == base_design.components
+    assert revised.interactions[: len(base_design.interactions)] == base_design.interactions
+    assert any("增加难度选择" in item for item in revised.interactions)
+    assert any("本轮验收" in item for item in revised.acceptance_mapping)
 
 
 def test_source_context_uses_selected_then_mentioned_then_sorted_files() -> None:

@@ -408,6 +408,11 @@ def test_visible_stream_emits_only_message_and_validates_enveloped_result(
         for kind, payload in events
         if kind == "agent.message.delta"
     ) == visible
+    assert "".join(
+        payload["delta"]
+        for kind, payload in events
+        if kind == "agent.output.delta"
+    ) == encoded
     provider.end_stage()
     get_settings.cache_clear()
 

@@ -371,6 +371,7 @@ const ZH: Record<string, string> = {
   "event.provider.response.received": "模型响应已接收",
   "event.provider.contract_correction.started": "正在修正结构化输出",
   "event.provider.deadline.exceeded": "模型阶段已超过总时限",
+  "event.agent.output.delta": "模型返回内容已更新",
   "event.alternative.regeneration_requested": "PM 草案重新生成",
   "event.product_spec.updated": "产品说明摘要已更新",
   "event.product_spec.regenerated": "产品说明已重新生成",
@@ -505,6 +506,44 @@ function eventMessage(language: Language, event: RunEvent): string {
   }
   if (event.type === "provider.deadline.exceeded") {
     return language === "zh" ? "本阶段已达到共享总时限。" : "This stage reached its shared deadline.";
+  }
+  if (event.type === "source.patch_created") {
+    const files = Array.isArray(event.payload.patch_files)
+      ? event.payload.patch_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `工程师已返回绑定当前基线的源码 Patch：${detail}。`
+      : `The Engineer returned a source patch bound to the current baseline: ${detail}.`;
+  }
+  if (event.type === "source.patch_check_started") {
+    const count = typeof event.payload.patch_count === "number" ? event.payload.patch_count : 0;
+    return language === "zh"
+      ? `Runtime 正在校验 ${count} 个文件 Patch 的路径、基线 hash 和可应用性。`
+      : `Runtime is validating paths, baseline hashes, and applicability for ${count} file patches.`;
+  }
+  if (event.type === "source.patch_applied") {
+    const files = Array.isArray(event.payload.applied_files)
+      ? event.payload.applied_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `Patch 已在隔离候选工作区应用：${detail}。正在根据真实候选源码继续校验。`
+      : `The patch was applied in an isolated candidate workspace: ${detail}. Validation is continuing against the resulting source.`;
+  }
+  if (event.type === "source.patch_failed") {
+    const errorCode = typeof event.payload.error_code === "string" ? event.payload.error_code : "PATCH_FAILED";
+    return language === "zh"
+      ? `Patch 本地校验或应用失败（${errorCode}），未写入新的项目版本。`
+      : `Local patch validation or apply failed (${errorCode}); no new project version was written.`;
+  }
+  if (event.type === "source.diff_created") {
+    const changed = Array.isArray(event.payload.changed_files) ? event.payload.changed_files.length : 0;
+    const added = Array.isArray(event.payload.added_files) ? event.payload.added_files.length : 0;
+    const removed = Array.isArray(event.payload.removed_files) ? event.payload.removed_files.length : 0;
+    return language === "zh"
+      ? `Runtime 已从应用后的真实文件计算 SourceDiff：修改 ${changed}、新增 ${added}、删除 ${removed}。`
+      : `Runtime calculated SourceDiff from the applied files: ${changed} changed, ${added} added, ${removed} removed.`;
   }
   return displayText(language, event.payload.message ?? event.type) || eventTitle(language, event);
 }
@@ -707,6 +746,7 @@ function Studio() {
       "agent.message.delta",
       "agent.message.completed",
       "agent.message.failed",
+      "agent.output.delta",
       "product_spec.regeneration_started",
       "product_spec.regenerated",
       "product_spec.regeneration_failed",
@@ -1656,16 +1696,25 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
   const [projectMessages, setProjectMessages] = useState<ProjectMessageView[]>([]);
   const [messagesError, setMessagesError] = useState("");
   const [approvingProposalId, setApprovingProposalId] = useState("");
+  const historyRef = useRef<HTMLDivElement | null>(null);
   const isClarification = run.status === "needs_input" && run.pending_human_task?.kind === "input_request";
   const isProductSpecRevision = run.status === "awaiting_approval" && run.pending_human_task?.kind === "approval" && Boolean(run.product_spec);
   const canSend = isClarification || isProductSpecRevision || (
     TERMINAL.has(run.status) && run.status !== "needs_input"
   );
-  const latestMessageEvent = [...events].reverse().find((event) => event.type.startsWith("agent.message."));
+  const latestMessageEvent = [...events].reverse().find((event) => event.type.startsWith("agent.message.") || event.type.startsWith("agent.output."));
+  const latestProjectMessage = projectMessages[projectMessages.length - 1];
+  const latestModelOutputLength = typeof latestProjectMessage?.payload.model_output === "string" ? latestProjectMessage.payload.model_output.length : 0;
 
   useEffect(() => {
     window.localStorage.setItem(draftKey, changeMessage);
   }, [changeMessage, draftKey]);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [latestModelOutputLength, projectMessages.length]);
   useEffect(() => {
     let active = true;
     api.projectMessages(run.project_id)
@@ -1673,28 +1722,62 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
       .catch((reason) => { if (active) setMessagesError(reason instanceof Error ? reason.message : ui(language, "Could not load Project messages")); });
     return () => { active = false; };
   }, [language, latestMessageEvent?.sequence, run.project_id, run.run_id]);
+  useEffect(() => {
+    if (!changeSubmitting) return;
+    let active = true;
+    const syncMessages = () => {
+      api.projectMessages(run.project_id)
+        .then((messages) => { if (active) { setProjectMessages((current) => {
+          const pending = current.filter((message) => message.id.startsWith("optimistic-") && !messages.some((persisted) => persisted.payload.client_message_id === message.id));
+          return [...messages, ...pending];
+        }); setMessagesError(""); } })
+        .catch((reason) => { if (active) setMessagesError(reason instanceof Error ? reason.message : ui(language, "Could not load Project messages")); });
+    };
+    syncMessages();
+    const timer = window.setInterval(syncMessages, 250);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [changeSubmitting, language, run.project_id]);
   const submitChange = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!changeMessage.trim() || changeSubmitting || !canSend) return;
+    const submittedMessage = changeMessage.trim();
+    const optimisticMessageId = `optimistic-${Date.now()}`;
+    const optimisticMessage: ProjectMessageView | null = !isClarification && !isProductSpecRevision ? {
+      id: optimisticMessageId,
+      project_id: run.project_id,
+      run_id: null,
+      role: "user",
+      message_type: "request",
+      content: submittedMessage,
+      payload: { status: "sending" },
+      created_at: new Date().toISOString(),
+    } : null;
     setChangeSubmitting(true);
     setError("");
+    if (optimisticMessage) {
+      setProjectMessages((current) => [...current, optimisticMessage]);
+      setChangeMessage("");
+    }
     try {
       if (isClarification && run.pending_human_task) {
-        const created = await api.respondHumanTask(run.pending_human_task.id, changeMessage.trim());
+        const created = await api.respondHumanTask(run.pending_human_task.id, submittedMessage);
         setChangeMessage("");
         await refreshRun(created.run_id);
         await refreshShell();
         return;
       }
       if (isProductSpecRevision) {
-        await onReviseProductSpec(changeMessage.trim());
+        await onReviseProductSpec(submittedMessage);
         setChangeMessage("");
         await refreshShell();
         return;
       }
-      const result: ProjectMessageResult = await api.sendProjectMessage(run.project_id, changeMessage.trim(), run.model);
-      setChangeMessage("");
-      setProjectMessages((current) => [...current, result.user_message, result.lead_message]);
+      const result: ProjectMessageResult = await api.sendProjectMessage(run.project_id, submittedMessage, run.model, optimisticMessageId);
+      setProjectMessages((current) => [
+        ...current.filter((message) => message.id !== optimisticMessageId && message.id !== result.user_message.id && message.id !== result.lead_message.id),
+        result.user_message,
+        result.lead_message,
+      ]);
     } catch (reason) {
       if (reason instanceof ApiError && reason.code === "BASE_VERSION_CHANGED") {
         await refreshRun(run.run_id);
@@ -1702,6 +1785,10 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
         setError(ui(language, "This clarification expired because the Project changed. Send the change again from the current version."));
       } else {
         setError(reason instanceof Error ? reason.message : ui(language, "Could not start Project change"));
+      }
+      if (optimisticMessage) {
+        setProjectMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+        setChangeMessage(submittedMessage);
       }
     } finally {
       setChangeSubmitting(false);
@@ -1749,13 +1836,58 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
   return <section className="project-chat-panel">
     <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
-    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-30).map((message) => <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`} key={message.id}><b>{roleName(message.role)}</b><span>{message.content || (message.payload.status === "streaming" ? (language === "zh" ? "正在回复…" : "Responding…") : "")}{message.payload.status === "streaming" && message.content ? <i className="streaming-cursor" /> : null}</span>{message.message_type === "change_proposal" && <div className="project-change-proposal"><strong>{String(message.payload.change_summary ?? (language === "zh" ? "修改当前项目" : "Modify the current Project"))}</strong><small>{language === "zh" ? "确认后才会创建修改 Run 并写入代码。" : "A change Run and code write start only after confirmation."}</small><button type="button" onClick={() => void approveProposal(message)} disabled={message.payload.status !== "pending" || Boolean(approvingProposalId)}>{approvingProposalId === message.id ? <LoaderCircle className="spin" size={14} /> : <Code2 size={14} />}{message.payload.status === "approved" ? (language === "zh" ? "已开始修改" : "Change started") : message.payload.status === "stale" ? (language === "zh" ? "已失效" : "Expired") : (language === "zh" ? "修改代码" : "Modify code")}</button></div>}</div>)}</div>}
+    {projectMessages.length > 0 && <div className="project-chat-history" ref={historyRef}>{projectMessages.slice(-30).map((message) => <ProjectChatMessageRow key={message.id} message={message} language={language} roleName={roleName} approvingProposalId={approvingProposalId} onApproveProposal={approveProposal} />)}</div>}
     <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} rows={2} placeholder={inputHint} /><small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend} title={!canSend ? inputHint : `${submitLabel}（Shift + Enter）`}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} <span>{submitLabel}</span><kbd>Shift + Enter</kbd></button></form>
   </section>;
 }
 
+function ProjectChatMessageRow({ message, language, roleName, approvingProposalId, onApproveProposal }: { message: ProjectMessageView; language: Language; roleName: (role: ProjectMessageView["role"]) => string; approvingProposalId: string; onApproveProposal: (proposal: ProjectMessageView) => Promise<void> }) {
+  const status = typeof message.payload.status === "string" ? message.payload.status : "";
+  const modelOutput = typeof message.payload.model_output === "string" ? message.payload.model_output : "";
+  const streaming = status === "streaming";
+  const [outputOpen, setOutputOpen] = useState(streaming);
+  const [animatedOutput, setAnimatedOutput] = useState(() => streaming ? "" : modelOutput);
+  const outputRef = useRef<HTMLPreElement | null>(null);
+  useEffect(() => {
+    if (!streaming || animatedOutput.length >= modelOutput.length) return;
+    const timer = window.setTimeout(() => {
+      setAnimatedOutput((current) => modelOutput.slice(0, Math.min(current.length + 1, modelOutput.length)));
+    }, 10);
+    return () => window.clearTimeout(timer);
+  }, [animatedOutput.length, modelOutput, streaming]);
+  const displayedOutput = streaming ? animatedOutput : modelOutput;
+  useEffect(() => {
+    if (!streaming || !outputOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayedOutput.length, outputOpen, streaming]);
+  const showModelOutput = (message.message_type === "agent_update" || Boolean(modelOutput)) && (streaming || Boolean(modelOutput) || status === "failed");
+  const outputLabel = streaming
+    ? (language === "zh" ? "模型流式返回" : "Live model output")
+    : status === "failed"
+      ? (language === "zh" ? "模型返回已中断" : "Model output interrupted")
+      : (language === "zh" ? "模型返回详情" : "Model output details");
+  const outputSize = modelOutput
+    ? (language === "zh" ? `${modelOutput.length.toLocaleString()} 字符` : `${modelOutput.length.toLocaleString()} characters`)
+    : (language === "zh" ? "等待首批内容" : "Waiting for first content");
+  return <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`}>
+    <b>{roleName(message.role)}</b>
+    <span>{message.content || (streaming ? (language === "zh" ? "正在生成可验证的结果…" : "Generating a verifiable result…") : "")}{streaming && message.content ? <i className="streaming-cursor" /> : null}</span>
+    {showModelOutput && <div className={`agent-stream-detail${outputOpen ? " expanded" : ""}`}>
+      <button className="agent-stream-toggle" type="button" onClick={() => setOutputOpen((current) => !current)} aria-expanded={outputOpen}>
+        <ChevronRight size={13} /><span>{outputLabel}</span><small>{outputSize}</small>
+      </button>
+      {outputOpen && <pre className="agent-stream-output" ref={outputRef}>{displayedOutput || (language === "zh" ? "正在等待模型返回首批内容…" : "Waiting for the first model output…")}{streaming && modelOutput ? <i className="streaming-cursor" /> : null}</pre>}
+    </div>}
+    {message.message_type === "change_proposal" && <div className="project-change-proposal"><strong>{String(message.payload.change_summary ?? (language === "zh" ? "修改当前项目" : "Modify the current Project"))}</strong><small>{language === "zh" ? "确认后才会创建修改 Run 并写入代码。" : "A change Run and code write start only after confirmation."}</small><button type="button" onClick={() => void onApproveProposal(message)} disabled={message.payload.status !== "pending" || Boolean(approvingProposalId)}>{approvingProposalId === message.id ? <LoaderCircle className="spin" size={14} /> : <Code2 size={14} />}{message.payload.status === "approved" ? (language === "zh" ? "已开始修改" : "Change started") : message.payload.status === "stale" ? (language === "zh" ? "已失效" : "Expired") : (language === "zh" ? "修改代码" : "Modify code")}</button></div>}
+  </div>;
+}
+
 function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent[]; language: Language }) {
   const label = ui(language, "Run log");
+  const visibleEvents = events.filter((event) => event.type !== "agent.output.delta");
   return (
         <aside className="debug-panel workspace-run-log" aria-live="polite">
           <div className="debug-panel-head">
@@ -1770,13 +1902,13 @@ function RunLogPanel({ run, events, language }: { run: RunView; events: RunEvent
           </a>
           <div className="debug-panel-meta">
             <span>{stageLabel(language, run.current_stage)}</span>
-            <span>{events.length} {ui(language, events.length === 1 ? "persisted event" : "persisted events")}</span>
+            <span>{visibleEvents.length} {ui(language, visibleEvents.length === 1 ? "persisted event" : "persisted events")}</span>
           </div>
           <div className="debug-stream">
-            {events.length === 0 ? (
+            {visibleEvents.length === 0 ? (
               <p className="debug-empty">{ui(language, "No persisted events yet.")}</p>
             ) : (
-              [...events].reverse().map((event) => (
+              [...visibleEvents].reverse().map((event) => (
                 <div className="debug-line" key={event.event_id}>
                   <div className="debug-line-head">
                     <b>#{event.sequence}</b>

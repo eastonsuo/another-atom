@@ -43,8 +43,7 @@ from another_atom.contracts.schemas import (
     RunStatus,
     SourceBundle,
     SourceContext,
-    SourceDiff,
-    SourceFileDraft,
+    SourcePatchSet,
     SupportLevel,
     ValidationReport,
     VersionSource,
@@ -56,14 +55,20 @@ from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
 from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
+    SourcePatchError,
+    apply_source_patch_set,
     build_source_context,
     build_source_snapshot,
-    calculate_source_diff,
+    calculate_source_diff_from_files,
     commit_version,
     write_architecture_design,
     write_product_spec,
 )
-from another_atom.runtime.artifacts import create_architecture_design, create_source_bundle
+from another_atom.runtime.artifacts import (
+    create_architecture_design,
+    create_source_bundle,
+    create_source_bundle_from_files,
+)
 from another_atom.runtime.client import RuntimeExecutorError, execute_request
 from another_atom.storage.models import (
     Artifact,
@@ -94,6 +99,7 @@ _PROVIDER_EVENT_MESSAGES = {
     "agent.message.delta": "Agent response updated",
     "agent.message.completed": "Agent response completed",
     "agent.message.failed": "Agent response interrupted",
+    "agent.output.delta": "Agent model output updated",
 }
 
 
@@ -260,7 +266,9 @@ class Orchestrator:
             current = self.db.get(Run, run_id)
             if current is None:
                 return
-            if event_type.startswith("agent.message."):
+            if event_type.startswith("agent.message.") or event_type.startswith(
+                "agent.output."
+            ):
                 self._persist_agent_message_event(current, stage, event_type, payload)
             record_event(
                 self.db,
@@ -312,6 +320,16 @@ class Orchestrator:
             delta = payload.get("delta")
             if isinstance(delta, str) and delta:
                 message.content = f"{message.content}{delta}"
+            return
+        if event_type == "agent.output.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                next_payload = dict(message.payload or {})
+                current_output = next_payload.get("model_output")
+                next_payload["model_output"] = (
+                    f"{current_output if isinstance(current_output, str) else ''}{delta}"
+                )
+                message.payload = next_payload
             return
         next_payload = dict(message.payload or {})
         next_payload["status"] = (
@@ -1062,8 +1080,17 @@ class Orchestrator:
                 {"artifact_id": architecture_artifact.id},
             )
             if base_architecture_design is not None:
-                architecture_draft = ArchitectureDesignDraft.model_validate(
-                    base_architecture_design.model_dump(mode="python")
+                architecture_draft = self._run_unpersisted_agent_stage(
+                    run,
+                    "architect_design_revision",
+                    lambda: self._provider(run).revise_architecture_design(
+                        product_spec,
+                        blueprint,
+                        base_architecture_design,
+                        architecture_spec,
+                        change_brief,
+                        requirement_delta,
+                    ),
                 )
             else:
                 architecture_draft = self._run_unpersisted_agent_stage(
@@ -1086,6 +1113,13 @@ class Orchestrator:
                 ArtifactType.ARCHITECTURE_DESIGN,
                 architecture_design,
             )
+            self._record_event_once(
+                run,
+                "architecture.design_revised",
+                "ArchitectureDesign was synchronized with the approved change",
+                "architect",
+                {"content_hash": architecture_design.content_hash},
+            )
             self.db.commit()
 
             source_context_artifact = get_artifact(
@@ -1099,6 +1133,7 @@ class Orchestrator:
                     effective_prompt,
                     get_settings().max_source_chars,
                     self._selected_files_for_run(run),
+                    ["app-spec.json"],
                 )
                 source_context_artifact = save_artifact(
                     self.db, run.id, ArtifactType.SOURCE_CONTEXT, source_context
@@ -1126,43 +1161,100 @@ class Orchestrator:
                 "Engineer is modifying the current Project source",
                 "engineer",
             )
-            app_spec, app_artifact, _ = self._run_agent_stage(
-                run,
-                "engineer",
-                ArtifactType.APP_SPEC,
-                AppSpec,
-                lambda: self._align_app_spec_visual_tokens(
-                    self._provider(run).revise_app_spec(
+            patch_artifact = get_artifact(
+                self.db, run.id, ArtifactType.SOURCE_PATCH_SET
+            )
+            if patch_artifact is not None:
+                patch_set = SourcePatchSet.model_validate(patch_artifact.payload)
+            else:
+                patch_set, patch_artifact, _ = self._run_agent_stage(
+                    run,
+                    "engineer",
+                    ArtifactType.SOURCE_PATCH_SET,
+                    SourcePatchSet,
+                    lambda: self._provider(run).create_source_patch_set(
+                        run.id,
+                        source_snapshot,
+                        source_context,
+                        product_spec,
                         blueprint,
+                        architecture_design,
                         architecture_spec,
-                        base_app_spec,
                         change_brief,
                         requirement_delta,
-                        product_spec,
-                        source_context,
+                        base_app_spec,
                     ),
-                    architecture_spec,
-                ),
+                )
+            if patch_set.run_id != run.id:
+                raise AppError(
+                    "PATCH_BASE_MISMATCH",
+                    "SourcePatchSet does not match the active Run",
+                    422,
+                )
+            self._record_event_once(
+                run,
+                "source.patch_created",
+                "Engineer produced a baseline-bound SourcePatchSet",
+                "engineer",
+                {
+                    "artifact_id": patch_artifact.id,
+                    "patch_files": [item.path for item in patch_set.patches],
+                },
             )
             self._record_event_once(
                 run,
-                "stage.completed",
-                "Candidate AppSpec passed schema validation",
+                "source.patch_check_started",
+                "Runtime is validating and checking the SourcePatchSet",
+                "engineer",
+                {"patch_count": len(patch_set.patches)},
+            )
+            self.db.commit()
+            try:
+                app_spec, candidate_files, apply_report = apply_source_patch_set(
+                    source_snapshot,
+                    source_context,
+                    patch_set,
+                    base_app_spec,
+                    architecture_spec,
+                )
+            except SourcePatchError as exc:
+                self._record_event_once(
+                    run,
+                    "source.patch_failed",
+                    str(exc),
+                    "engineer",
+                    {"error_code": exc.code},
+                )
+                self.db.commit()
+                raise AppError(exc.code, str(exc), 422) from exc
+            source_bundle = create_source_bundle_from_files(
+                candidate_files, blueprint.product_type
+            )
+            source_diff = calculate_source_diff_from_files(
+                source_snapshot, candidate_files
+            )
+            save_artifact(self.db, run.id, ArtifactType.APP_SPEC, app_spec)
+            save_artifact(
+                self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle
+            )
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF, source_diff)
+            apply_artifact = save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.SOURCE_PATCH_APPLY_REPORT,
+                apply_report,
+            )
+            self._record_event_once(
+                run,
+                "source.patch_applied",
+                "Runtime applied the SourcePatchSet in an isolated candidate workspace",
                 "engineer",
                 {
-                    "artifact_id": app_artifact.id,
-                    "source_context_artifact_id": source_context_artifact.id,
-                    "source_trimming_applied": source_context.trimming_applied,
+                    "artifact_id": apply_artifact.id,
+                    "applied_files": apply_report.applied_files,
+                    "candidate_source_hash": apply_report.candidate_source_hash,
                 },
             )
-            diff_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF)
-            if diff_artifact is None:
-                source_diff = calculate_source_diff(source_snapshot, app_spec)
-                diff_artifact = save_artifact(
-                    self.db, run.id, ArtifactType.SOURCE_DIFF, source_diff
-                )
-            else:
-                source_diff = SourceDiff.model_validate(diff_artifact.payload)
             if not (
                 source_diff.changed_files
                 or source_diff.added_files
@@ -1184,37 +1276,19 @@ class Orchestrator:
                     "removed_files": source_diff.removed_files,
                 },
             )
+            self._record_event_once(
+                run,
+                "stage.completed",
+                "SourcePatchSet passed local apply and candidate Contract validation",
+                "engineer",
+                {
+                    "artifact_id": patch_artifact.id,
+                    "source_context_artifact_id": source_context_artifact.id,
+                    "source_trimming_applied": source_context.trimming_applied,
+                },
+            )
             self.db.commit()
 
-            if base_version.source_bundle:
-                base_source_bundle = SourceBundle.model_validate(base_version.source_bundle)
-                unit_tests = [
-                    SourceFileDraft.model_validate(
-                        item.model_dump(mode="python", exclude={"content_hash"})
-                    )
-                    for item in base_source_bundle.files
-                    if item.role == "test"
-                ]
-            else:
-                unit_tests = [
-                    SourceFileDraft(
-                        path="tests/app.test.js",
-                        role="test",
-                        content=(
-                            "import test from 'node:test';\n"
-                            "import assert from 'node:assert/strict';\n"
-                            "import { readFile } from 'node:fs/promises';\n"
-                            "test('源码入口存在', async () => {\n"
-                            "  assert.ok((await readFile('index.html', 'utf8')).length > 0);\n"
-                            "});\n"
-                        ),
-                    )
-                ]
-            source_bundle = create_source_bundle(
-                EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
-                blueprint.product_type,
-            )
-            save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
             execution_result, build_job = self._run_build(
                 run,
                 project,
@@ -1226,47 +1300,12 @@ class Orchestrator:
                 attempt=1,
             )
             validation_report = execution_result.validation_report
-            if not validation_report.passed and self._can_auto_repair(validation_report):
-                app_spec = self._run_engineer_repair(
-                    run, blueprint, architecture_spec, app_spec, validation_report
-                )
-                source_bundle = create_source_bundle(
-                    EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
-                    blueprint.product_type,
-                )
-                execution_result, build_job = self._run_build(
-                    run,
-                    project,
-                    blueprint,
-                    product_spec,
-                    architecture_design,
-                    app_spec,
-                    source_bundle,
-                    attempt=2,
-                )
-                validation_report = execution_result.validation_report
-                save_artifact(
-                    self.db,
-                    run.id,
-                    ArtifactType.REPAIR_VALIDATION_REPORT,
-                    validation_report,
-                )
-                self._record_event_once(
-                    run,
-                    "repair.validation_completed",
-                    "The revised SourceBundle completed build, unit tests, and validation",
-                    "build",
-                    {"passed": validation_report.passed, "repair_attempt": 1},
-                )
-                source_diff = calculate_source_diff(source_snapshot, app_spec)
-                save_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF, source_diff)
-                self.db.commit()
             if not validation_report.passed:
                 build_job.status = BuildStatus.FAILED.value
                 self._fail_run(
                     run,
                     "BUILD_VALIDATION_FAILED",
-                    "The Web source validator rejected the modified AppSpec",
+                    "The Web source validator rejected the applied SourcePatchSet",
                 )
                 return
             compatibility_review = ReviewReport(

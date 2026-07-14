@@ -225,6 +225,14 @@ def test_visible_agent_message_is_persisted_and_replayable(
             },
         )
         handler(
+            "agent.output.delta",
+            {
+                "message_id": message_id,
+                "role": "Engineer（工程师）",
+                "delta": '{"message":"正在生成","result":',
+            },
+        )
+        handler(
             "agent.message.completed",
             {"message_id": message_id, "role": "Engineer（工程师）"},
         )
@@ -238,14 +246,17 @@ def test_visible_agent_message_is_persisted_and_replayable(
     assert visible["message_type"] == "agent_update"
     assert visible["content"] == "我正在生成并校验应用源码。"
     assert visible["payload"]["status"] == "completed"
+    assert visible["payload"]["model_output"] == '{"message":"正在生成","result":'
 
     events = queued_client.get(f"/api/runs/{run['run_id']}/events/history").json()
     message_events = [event for event in events if event["type"].startswith("agent.message.")]
+    output_events = [event for event in events if event["type"] == "agent.output.delta"]
     assert [event["type"] for event in message_events[-3:]] == [
         "agent.message.started",
         "agent.message.delta",
         "agent.message.completed",
     ]
+    assert output_events[-1]["payload"]["delta"] == '{"message":"正在生成","result":'
 
 
 def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:

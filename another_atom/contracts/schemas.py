@@ -86,6 +86,8 @@ class ArtifactType(StrEnum):
     REQUIREMENT_DELTA = "requirement_delta"
     BASE_SOURCE_SNAPSHOT = "base_source_snapshot"
     SOURCE_CONTEXT = "source_context"
+    SOURCE_PATCH_SET = "source_patch_set"
+    SOURCE_PATCH_APPLY_REPORT = "source_patch_apply_report"
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     PRODUCT_SPEC = "product_spec"
@@ -378,7 +380,78 @@ class SourceContext(BaseModel):
     used_source_chars: int = Field(ge=0)
     included_files: list[SourceSnapshotFile] = Field(default_factory=list)
     omitted_files: list[str] = Field(default_factory=list)
+    runtime_managed_files: list[str] = Field(default_factory=list)
     trimming_applied: bool = False
+
+
+class AppSpecDelta(BaseModel):
+    project_name: str | None = Field(default=None, min_length=1, max_length=160)
+    tagline: str | None = Field(default=None, min_length=1, max_length=160)
+    hero_title: str | None = Field(default=None, min_length=1, max_length=120)
+    hero_body: str | None = Field(default=None, min_length=1, max_length=300)
+    pages: list[PageSpec] | None = Field(default=None, min_length=1, max_length=12)
+    products: list[ProductItem] | None = Field(default=None, max_length=12)
+
+
+class SourcePatchOperation(BaseModel):
+    path: str = Field(min_length=1, max_length=240)
+    operation: Literal["modify", "add", "delete"]
+    before_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    unified_diff: str = Field(min_length=1, max_length=120_000)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_normalized_relative_posix(cls, value: str) -> str:
+        normalized = value.strip()
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or "\\" in normalized
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("Patch path must be a normalized relative POSIX path")
+        return normalized
+
+    @model_validator(mode="after")
+    def hash_matches_operation(self) -> SourcePatchOperation:
+        if self.operation in {"modify", "delete"} and self.before_hash is None:
+            raise ValueError("modify/delete patches require before_hash")
+        if self.operation == "add" and self.before_hash is not None:
+            raise ValueError("add patches cannot include before_hash")
+        return self
+
+
+class SourcePatchSet(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    project_id: str = Field(min_length=1, max_length=80)
+    run_id: str = Field(min_length=1, max_length=80)
+    base_version_id: str = Field(min_length=1, max_length=80)
+    base_git_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    summary: str = Field(min_length=1, max_length=800)
+    app_spec_delta: AppSpecDelta = Field(default_factory=AppSpecDelta)
+    patches: list[SourcePatchOperation] = Field(min_length=1, max_length=20)
+
+    @field_validator("patches")
+    @classmethod
+    def patch_paths_are_unique(
+        cls, value: list[SourcePatchOperation]
+    ) -> list[SourcePatchOperation]:
+        paths = [item.path for item in value]
+        if len(paths) != len(set(paths)):
+            raise ValueError("SourcePatchSet paths must be unique")
+        return value
+
+
+class SourcePatchApplyReport(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: Literal["passed"] = "passed"
+    source_context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    applied_files: list[str] = Field(min_length=1, max_length=20)
+    candidate_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checks: list[str] = Field(min_length=1, max_length=20)
 
 
 class SourceDiff(BaseModel):
@@ -732,6 +805,7 @@ class ProjectMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     model: str | None = Field(default=None, min_length=1, max_length=100)
     selected_files: list[str] = Field(default_factory=list, max_length=20)
+    client_message_id: str | None = Field(default=None, min_length=1, max_length=80)
 
     @field_validator("message")
     @classmethod

@@ -90,10 +90,10 @@ export const api = {
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
   projectMessages: (projectId: string) =>
     request<ProjectMessageView[]>(`/api/projects/${projectId}/messages`),
-  sendProjectMessage: (projectId: string, message: string, model: string) =>
+  sendProjectMessage: (projectId: string, message: string, model: string, clientMessageId?: string) =>
     request<ProjectMessageResult>(`/api/projects/${projectId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ message, model }),
+      body: JSON.stringify({ message, model, client_message_id: clientMessageId }),
     }),
   approveProjectChange: (projectId: string, proposalId: string) =>
     request<RunView>(`/api/projects/${projectId}/change-proposals/${proposalId}/approve`, {

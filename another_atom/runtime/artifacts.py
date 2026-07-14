@@ -144,3 +144,38 @@ def create_source_bundle(
         files=files,
         manifest_hash=manifest_hash,
     )
+
+
+def create_source_bundle_from_files(
+    candidate_files: dict[str, str],
+    project_type: str,
+) -> SourceBundle:
+    files: list[SourceFile] = []
+    for path, content in sorted(candidate_files.items()):
+        role = (
+            "config"
+            if path == "app-spec.json"
+            else "test"
+            if path.startswith("tests/") and path.endswith(".test.js")
+            else "source"
+        )
+        files.append(
+            SourceFile(
+                path=path,
+                role=role,
+                content=content,
+                content_hash=content_hash(content),
+            )
+        )
+    manifest_payload = [
+        {"path": item.path, "role": item.role, "content_hash": item.content_hash}
+        for item in files
+    ]
+    manifest_hash = content_hash(
+        json.dumps(manifest_payload, ensure_ascii=False, separators=(",", ":"))
+    )
+    return SourceBundle(
+        project_type=project_type,
+        files=files,
+        manifest_hash=manifest_hash,
+    )

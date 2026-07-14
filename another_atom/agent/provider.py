@@ -4,6 +4,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from difflib import unified_diff
 from typing import Protocol, TypeVar
 from uuid import uuid4
 
@@ -13,10 +14,12 @@ from pydantic import BaseModel, ValidationError
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
+    AppSpecDelta,
     ArchitectureComponent,
     ArchitectureDesign,
     ArchitectureDesignDraft,
     ArchitectureSpec,
+    BaseSourceSnapshot,
     Blueprint,
     ChangeBrief,
     DataCheck,
@@ -37,8 +40,14 @@ from another_atom.contracts.schemas import (
     ReviewReport,
     SourceContext,
     SourceFileDraft,
+    SourcePatchOperation,
+    SourcePatchSet,
     SupportLevel,
     ValidationReport,
+)
+from another_atom.repository.service import (
+    calculate_source_context_hash,
+    render_version_files,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -165,7 +174,7 @@ class LLMProvider(Protocol):
     def route_message(self, message: str, force_team: bool = False) -> LeadDecision: ...
 
     def route_project_message(
-        self, message: str, project_context: dict
+        self, message: str, project_context: dict, *, stream: bool = False
     ) -> ProjectLeadDecision: ...
 
     def assess_requirements(
@@ -194,6 +203,16 @@ class LLMProvider(Protocol):
         requirement_delta: RequirementDelta,
     ) -> ArchitectureSpec: ...
 
+    def revise_architecture_design(
+        self,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureDesignDraft: ...
+
     def revise_app_spec(
         self,
         blueprint: Blueprint,
@@ -204,6 +223,20 @@ class LLMProvider(Protocol):
         product_spec: ProductSpec,
         source_context: SourceContext,
     ) -> AppSpec: ...
+
+    def create_source_patch_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+    ) -> SourcePatchSet: ...
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
 
@@ -360,7 +393,7 @@ class MockLLMProvider:
         )
 
     def route_project_message(
-        self, message: str, project_context: dict
+        self, message: str, project_context: dict, *, stream: bool = False
     ) -> ProjectLeadDecision:
         self._record_request()
         self._raise_if_requested(message, "project-lead")
@@ -592,6 +625,51 @@ class MockLLMProvider:
             color_updates["primary_color"] = "#217A58"
         return architecture_spec.model_copy(update=color_updates)
 
+    def revise_architecture_design(
+        self,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureDesignDraft:
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "architect-design-change")
+        goal = change_brief.goal.strip()
+        summary_note = f"本轮基于现有设计修订：{goal}"
+        summary = architecture_design.summary
+        if summary_note not in summary:
+            summary = f"{summary.rstrip()} {summary_note}"[:600]
+
+        interaction_note = f"本轮变更“{goal}”：必须保留未被需求改变的既有交互。"
+        interactions = [*architecture_design.interactions]
+        if interaction_note not in interactions:
+            interactions = [*interactions, interaction_note][-20:]
+
+        acceptance_mapping = [*architecture_design.acceptance_mapping]
+        for criterion in requirement_delta.acceptance_criteria:
+            mapping = f"本轮验收“{criterion}”映射到对应源码行为和单元测试。"
+            if mapping not in acceptance_mapping:
+                acceptance_mapping.append(mapping)
+
+        return ArchitectureDesignDraft(
+            summary=summary,
+            target_platform=architecture_design.target_platform,
+            runtime_adapter=architecture_design.runtime_adapter,
+            capability_gaps=list(architecture_design.capability_gaps),
+            components=list(architecture_design.components),
+            state_and_data_flow=list(architecture_design.state_and_data_flow),
+            interactions=interactions,
+            interfaces=list(architecture_design.interfaces),
+            directory_plan=list(architecture_design.directory_plan),
+            test_strategy=list(architecture_design.test_strategy),
+            acceptance_mapping=acceptance_mapping[-30:],
+            visual_tokens=architecture_spec,
+            requires_product_reapproval=architecture_design.requires_product_reapproval,
+            reapproval_reason=architecture_design.reapproval_reason,
+        )
+
     def revise_app_spec(
         self,
         blueprint: Blueprint,
@@ -604,6 +682,18 @@ class MockLLMProvider:
     ) -> AppSpec:
         self._record_request()
         self._raise_if_requested(change_brief.original_request, "engineer-change")
+        return self._revised_app_spec_candidate(
+            architecture_spec,
+            app_spec,
+            change_brief,
+        )
+
+    @staticmethod
+    def _revised_app_spec_candidate(
+        architecture_spec: ArchitectureSpec,
+        app_spec: AppSpec,
+        change_brief: ChangeBrief,
+    ) -> AppSpec:
         request = change_brief.original_request.strip()
         hero_title = app_spec.hero_title
         quoted = re.findall(r"[\"“”']([^\"“”']{1,120})[\"“”']", request)
@@ -641,6 +731,73 @@ class MockLLMProvider:
                 "accent_color": architecture_spec.accent_color,
                 "background_color": architecture_spec.background_color,
             }
+        )
+
+    def create_source_patch_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+    ) -> SourcePatchSet:
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "engineer-change")
+        candidate = self._revised_app_spec_candidate(
+            architecture_spec,
+            app_spec,
+            change_brief,
+        )
+        before_files = {item.path: item for item in source_snapshot.files}
+        after_files = render_version_files(candidate)
+        patches: list[SourcePatchOperation] = []
+        for path in ("index.html", "styles.css", "app.js"):
+            before = before_files.get(path)
+            after = after_files.get(path)
+            if before is None or after is None or before.content == after:
+                continue
+            patch_lines = unified_diff(
+                before.content.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+            )
+            patches.append(
+                SourcePatchOperation(
+                    path=path,
+                    operation="modify",
+                    before_hash=before.sha256,
+                    unified_diff="".join(patch_lines),
+                )
+            )
+        metadata_fields = (
+            "project_name",
+            "tagline",
+            "hero_title",
+            "hero_body",
+            "pages",
+            "products",
+        )
+        delta = {
+            field: getattr(candidate, field)
+            for field in metadata_fields
+            if getattr(candidate, field) != getattr(app_spec, field)
+        }
+        return SourcePatchSet(
+            project_id=source_snapshot.project_id,
+            run_id=run_id,
+            base_version_id=source_snapshot.base_version_id,
+            base_git_commit=source_snapshot.base_git_commit,
+            source_manifest_hash=source_snapshot.source_manifest_hash,
+            source_context_hash=calculate_source_context_hash(source_context),
+            summary=requirement_delta.change_summary,
+            app_spec_delta=AppSpecDelta(**delta),
+            patches=patches,
         )
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
@@ -1220,7 +1377,7 @@ class OllamaCloudProvider:
         )
 
     def route_project_message(
-        self, message: str, project_context: dict
+        self, message: str, project_context: dict, *, stream: bool = False
     ) -> ProjectLeadDecision:
         return self._structured_chat(
             ProjectLeadDecision,
@@ -1240,6 +1397,7 @@ class OllamaCloudProvider:
             {"message": message, "project_context": project_context},
             timeout_seconds=self.lead_timeout,
             think=False,
+            stream=stream,
         )
 
     def assess_requirements(
@@ -1371,6 +1529,39 @@ class OllamaCloudProvider:
             },
         )
 
+    def revise_architecture_design(
+        self,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+    ) -> ArchitectureDesignDraft:
+        return self._structured_chat(
+            ArchitectureDesignDraft,
+            "Architect（架构师）",
+            (
+                "基于 current_architecture_design 修订并返回一份完整的新 ArchitectureDesignDraft，"
+                "不是局部 Patch，也不是从零重新设计。保留本轮需求未改变的目标平台、Runtime "
+                "Adapter、组件职责、状态与数据流、接口边界、目录和测试约束；根据 ChangeBrief "
+                "与 RequirementDelta 同步修订所有受影响的页面/组件、交互、数据流、接口、测试策略"
+                "和验收映射。visual_tokens 必须与 revised_architecture_spec 完全一致。只有变更超出"
+                "已确认 ProductSpec 的范围、目标平台、外部能力或高风险权限时，才要求产品重新确认。"
+                "当前适配器仍禁止包安装、生成后端、Shell、动态 import、eval、localhost 和回环地址；"
+                "只有已确认产品需求明确要求时才允许公网 HTTPS API。用户可见说明默认使用中文。"
+            ),
+            {
+                "product_spec": product_spec.model_dump(mode="json"),
+                "blueprint": blueprint.model_dump(mode="json"),
+                "current_architecture_design": architecture_design.model_dump(mode="json"),
+                "revised_architecture_spec": architecture_spec.model_dump(mode="json"),
+                "change_brief": change_brief.model_dump(mode="json"),
+                "requirement_delta": requirement_delta.model_dump(mode="json"),
+            },
+            stream=True,
+        )
+
     def revise_app_spec(
         self,
         blueprint: Blueprint,
@@ -1401,6 +1592,58 @@ class OllamaCloudProvider:
                 "requirement_delta": requirement_delta.model_dump(mode="json"),
                 "product_spec": product_spec.model_dump(mode="json"),
                 "source_context": source_context.model_dump(mode="json"),
+            },
+            stream=True,
+        )
+
+    def create_source_patch_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+    ) -> SourcePatchSet:
+        app_spec_metadata = app_spec.model_dump(
+            mode="json", exclude={"html", "css", "javascript"}
+        )
+        return self._structured_chat(
+            SourcePatchSet,
+            "Engineer（工程师）",
+            (
+                "基于固定基线和 supplied_source_context 返回一份结构化 SourcePatchSet，"
+                "不要返回完整 AppSpec 或完整候选文件。每个 patches 项只修改一个文件，"
+                "unified_diff 必须使用标准 a/path 与 b/path header，并与 operation、path 和 "
+                "before_hash 一致。只能 modify/delete supplied_source_context.included_files 中"
+                "完整提供的文件；不得猜测 omitted_files。禁止修改 app-spec.json、Runtime 管理的 "
+                "index.html 文档 shell 和 app.js network guard。只在 app_spec_delta 中返回确实变化的"
+                "非源码元数据；代码和颜色不得放入 Delta。保留需求未改变的源码、交互和测试。"
+                "公共 HTTPS API 仅在已确认需求要求时允许；禁止 localhost、回环地址、动态 import、"
+                "eval、包安装、后端和 Shell。所有 Project、Run、版本、commit、Manifest 与 Context "
+                "绑定字段必须原样复制 supplied_binding。"
+            ),
+            {
+                "supplied_binding": {
+                    "project_id": source_snapshot.project_id,
+                    "run_id": run_id,
+                    "base_version_id": source_snapshot.base_version_id,
+                    "base_git_commit": source_snapshot.base_git_commit,
+                    "source_manifest_hash": source_snapshot.source_manifest_hash,
+                    "source_context_hash": calculate_source_context_hash(source_context),
+                },
+                "supplied_source_context": source_context.model_dump(mode="json"),
+                "current_app_spec_metadata": app_spec_metadata,
+                "product_spec": product_spec.model_dump(mode="json"),
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_design": architecture_design.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
+                "change_brief": change_brief.model_dump(mode="json"),
+                "requirement_delta": requirement_delta.model_dump(mode="json"),
             },
             stream=True,
         )
@@ -1944,6 +2187,42 @@ class OllamaCloudProvider:
         final_body: dict = {}
         visible_content = ""
         visible_message_closed = False
+        output_sent = 0
+        output_last_emitted = time.monotonic()
+        message_started = False
+
+        def emit_output(*, force: bool = False) -> None:
+            nonlocal output_sent, output_last_emitted, message_started
+            if not visible_message_id:
+                return
+            output = "".join(content_parts)
+            if not output:
+                return
+            now = time.monotonic()
+            if (
+                not force
+                and message_started
+                and len(output) - output_sent < 256
+                and now - output_last_emitted < 0.15
+            ):
+                return
+            if not message_started:
+                self._emit_provider_event(
+                    "agent.message.started",
+                    message_id=visible_message_id,
+                    role=role,
+                )
+                message_started = True
+            delta = output[output_sent:]
+            if delta:
+                self._emit_provider_event(
+                    "agent.output.delta",
+                    message_id=visible_message_id,
+                    role=role,
+                    delta=delta,
+                )
+                output_sent = len(output)
+                output_last_emitted = now
         with httpx.stream(
             "POST",
             f"{self.host}/api/chat",
@@ -1962,6 +2241,7 @@ class OllamaCloudProvider:
                 hidden_activity = message.get("thinking") or ""
                 if content:
                     content_parts.append(content)
+                    emit_output()
                     if visible_message_id and not visible_message_closed:
                         next_visible, message_complete = self._partial_visible_message(
                             "".join(content_parts)
@@ -1971,12 +2251,6 @@ class OllamaCloudProvider:
                             or message_complete
                         ):
                             delta = next_visible[len(visible_content) :]
-                            if not visible_content:
-                                self._emit_provider_event(
-                                    "agent.message.started",
-                                    message_id=visible_message_id,
-                                    role=role,
-                                )
                             self._emit_provider_event(
                                 "agent.message.delta",
                                 message_id=visible_message_id,
@@ -2005,6 +2279,7 @@ class OllamaCloudProvider:
                     )
                     last_progress = now
                 self._request_timeout(timeout)
+        emit_output(force=True)
         return {**final_body, "message": {"content": "".join(content_parts)}}
 
     def _deepseek_stream_response(
@@ -2023,6 +2298,42 @@ class OllamaCloudProvider:
         last_progress = time.monotonic()
         visible_content = ""
         visible_message_closed = False
+        output_sent = 0
+        output_last_emitted = time.monotonic()
+        message_started = False
+
+        def emit_output(*, force: bool = False) -> None:
+            nonlocal output_sent, output_last_emitted, message_started
+            if not visible_message_id:
+                return
+            output = "".join(content_parts)
+            if not output:
+                return
+            now = time.monotonic()
+            if (
+                not force
+                and message_started
+                and len(output) - output_sent < 256
+                and now - output_last_emitted < 0.15
+            ):
+                return
+            if not message_started:
+                self._emit_provider_event(
+                    "agent.message.started",
+                    message_id=visible_message_id,
+                    role=role,
+                )
+                message_started = True
+            delta = output[output_sent:]
+            if delta:
+                self._emit_provider_event(
+                    "agent.output.delta",
+                    message_id=visible_message_id,
+                    role=role,
+                    delta=delta,
+                )
+                output_sent = len(output)
+                output_last_emitted = now
         request_body = {
             **request_body,
             "stream_options": {"include_usage": True},
@@ -2048,6 +2359,7 @@ class OllamaCloudProvider:
                 hidden_activity = delta.get("reasoning_content") or ""
                 if content:
                     content_parts.append(content)
+                    emit_output()
                     if visible_message_id and not visible_message_closed:
                         next_visible, message_complete = self._partial_visible_message(
                             "".join(content_parts)
@@ -2057,12 +2369,6 @@ class OllamaCloudProvider:
                             or message_complete
                         ):
                             delta_text = next_visible[len(visible_content) :]
-                            if not visible_content:
-                                self._emit_provider_event(
-                                    "agent.message.started",
-                                    message_id=visible_message_id,
-                                    role=role,
-                                )
                             self._emit_provider_event(
                                 "agent.message.delta",
                                 message_id=visible_message_id,
@@ -2091,6 +2397,7 @@ class OllamaCloudProvider:
                     )
                     last_progress = now
                 self._request_timeout(timeout)
+        emit_output(force=True)
         return "".join(content_parts), usage
 
     @staticmethod

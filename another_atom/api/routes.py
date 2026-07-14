@@ -1898,6 +1898,7 @@ def send_project_message(
             payload={
                 "selected_files": request.selected_files,
                 "model": selected_model,
+                "client_message_id": request.client_message_id,
             },
         )
         db.add(user_message)
@@ -1909,6 +1910,23 @@ def send_project_message(
             request.message,
             request.selected_files,
         )
+        lead_message = ProjectMessage(
+            project_id=project.id,
+            session_id=project_session.id,
+            user_id=user.id,
+            run_id=None,
+            role="lead",
+            message_type="agent_update",
+            content="",
+            payload={
+                "status": "streaming",
+                "model": selected_model,
+                "model_output": "",
+            },
+        )
+        db.add(lead_message)
+        db.flush()
+        db.commit()
         provider = get_llm_provider(model=selected_model)
         reserved = provider.reservation_units
         db.execute(
@@ -1921,8 +1939,64 @@ def send_project_message(
         db.rollback()
         _release_project_turn(db, project.id, turn_id)
         raise
+
+    active_provider_message_id: str | None = None
+
+    def persist_project_lead_stream(event_type: str, payload: dict) -> None:
+        nonlocal active_provider_message_id
+        if event_type not in {
+            "agent.message.started",
+            "agent.message.delta",
+            "agent.message.completed",
+            "agent.message.failed",
+            "agent.output.delta",
+        }:
+            return
+        streamed = db.get(ProjectMessage, lead_message.id)
+        if streamed is None:
+            return
+        next_payload = dict(streamed.payload or {})
+        if event_type == "agent.message.started":
+            incoming_message_id = payload.get("message_id")
+            if isinstance(incoming_message_id, str):
+                if (
+                    active_provider_message_id
+                    and incoming_message_id != active_provider_message_id
+                ):
+                    current_output = next_payload.get("model_output")
+                    next_payload["model_output"] = (
+                        f"{current_output if isinstance(current_output, str) else ''}"
+                        "\n\n--- provider retry ---\n"
+                    )
+                    streamed.content = ""
+                active_provider_message_id = incoming_message_id
+            next_payload["status"] = "streaming"
+        elif event_type == "agent.message.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                streamed.content = f"{streamed.content}{delta}"
+        elif event_type == "agent.output.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                current_output = next_payload.get("model_output")
+                next_payload["model_output"] = (
+                    f"{current_output if isinstance(current_output, str) else ''}{delta}"
+                )
+        elif event_type == "agent.message.completed":
+            next_payload["status"] = "completed"
+        else:
+            next_payload["status"] = "failed"
+            if payload.get("reason"):
+                next_payload["reason"] = payload["reason"]
+        streamed.payload = next_payload
+        db.commit()
+
+    provider.begin_stage(
+        timeout_seconds=get_settings().ollama_lead_timeout_seconds,
+        event_handler=persist_project_lead_stream,
+    )
     try:
-        decision = provider.route_project_message(request.message, context)
+        decision = provider.route_project_message(request.message, context, stream=True)
         usage = provider.take_usage()
     except (LLMProviderError, ValueError) as exc:
         usage = provider.take_usage()
@@ -1965,6 +2039,8 @@ def send_project_message(
             "Project conversation failed",
             502,
         ) from exc
+    finally:
+        provider.end_stage()
 
     message_type = {
         ProjectLeadIntent.ANSWER: "answer",
@@ -1988,18 +2064,16 @@ def send_project_message(
                 "selected_files": request.selected_files,
             }
         )
-    lead_message = ProjectMessage(
-        project_id=project.id,
-        session_id=project_session.id,
-        user_id=user.id,
-        role="lead",
-        message_type=message_type,
-        content=decision.response,
-        payload=payload,
-    )
+    streamed_payload = dict(lead_message.payload or {})
+    lead_message.message_type = message_type
+    lead_message.content = decision.response
+    lead_message.payload = {
+        **streamed_payload,
+        **payload,
+        "status": payload.get("status", "completed"),
+    }
     db.add_all(
         [
-            lead_message,
             LeadMessage(
                 user_id=user.id,
                 content=request.message,
@@ -2217,6 +2291,10 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.CHANGE_BRIEF: ".another-atom/generated/change-brief.json",
     ArtifactType.REQUIREMENT_DELTA: ".another-atom/generated/requirement-delta.json",
     ArtifactType.BASE_SOURCE_SNAPSHOT: ".another-atom/generated/base-source-snapshot.json",
+    ArtifactType.SOURCE_PATCH_SET: ".another-atom/generated/source-patch-set.json",
+    ArtifactType.SOURCE_PATCH_APPLY_REPORT: (
+        ".another-atom/generated/source-patch-apply-report.json"
+    ),
     ArtifactType.SOURCE_DIFF: ".another-atom/generated/source-diff.json",
     ArtifactType.BLUEPRINT: ".another-atom/generated/blueprint.json",
     ArtifactType.ARCHITECTURE_DESIGN: ".another-atom/generated/architecture-design.json",

@@ -1,8 +1,10 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from another_atom.agent.provider import MockLLMProvider
 from another_atom.build.worker import process_next_job
 from another_atom.storage.models import (
     Artifact,
@@ -82,7 +84,12 @@ def _approve_change(client: TestClient, project_id: str, proposal_id: str) -> di
 
 def test_project_chat_proposes_then_modifies_existing_code(
     client: TestClient,
+    monkeypatch,
 ) -> None:
+    def reject_legacy_full_app_spec(*args, **kwargs):
+        raise AssertionError("Project modification must not call revise_app_spec")
+
+    monkeypatch.setattr(MockLLMProvider, "revise_app_spec", reject_legacy_full_app_spec)
     initial = _build_project(client)
     project_id = initial["project_id"]
     deployment = client.post(
@@ -148,11 +155,19 @@ def test_project_chat_proposes_then_modifies_existing_code(
                 Artifact.artifact_type == "source_context",
             )
         )
+        architecture_design = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == run["run_id"],
+                Artifact.artifact_type == "architecture_design",
+            )
+        )
     assert {
         "change_brief",
         "requirement_delta",
         "base_source_snapshot",
         "source_context",
+        "source_patch_set",
+        "source_patch_apply_report",
         "source_diff",
         "architecture_design",
         "architecture_spec",
@@ -163,14 +178,31 @@ def test_project_chat_proposes_then_modifies_existing_code(
         "validation_report",
     } <= artifacts
     assert source_context is not None
+    assert architecture_design is not None
+    assert any(
+        "夜间扫雷" in item
+        for item in architecture_design.payload["interactions"]
+    )
     assert source_context.payload["trimming_applied"] is False
     assert {item["path"] for item in source_context.payload["included_files"]} == {
-        "app-spec.json",
         "index.html",
         "styles.css",
         "app.js",
         "tests/app.test.js",
     }
+    assert source_context.payload["runtime_managed_files"] == ["app-spec.json"]
+    project_files = client.get(
+        f"/api/projects/{project_id}/files", params={"run_id": run["run_id"]}
+    ).json()
+    project_paths = {entry["path"] for entry in project_files}
+    assert ".another-atom/generated/source-patch-set.json" in project_paths
+    assert ".another-atom/generated/source-patch-apply-report.json" in project_paths
+    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
+    event_types = [event["type"] for event in events]
+    assert "source.patch_created" in event_types
+    assert "source.patch_check_started" in event_types
+    assert "source.patch_applied" in event_types
+    assert "source.diff_created" in event_types
 
 
 def test_project_chat_clarifies_before_creating_a_run(client: TestClient) -> None:
@@ -255,6 +287,72 @@ def test_project_chat_answer_uses_context_without_creating_a_run(
         project = db.get(Project, project_id)
         assert project is not None
         assert project.active_write_run_id is None
+
+
+def test_project_chat_stream_updates_the_same_persisted_lead_message(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class StreamingProjectProvider(MockLLMProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.event_handler = None
+
+        def begin_stage(self, *, timeout_seconds, event_handler=None) -> None:
+            del timeout_seconds
+            self.event_handler = event_handler
+
+        def end_stage(self) -> None:
+            self.event_handler = None
+
+        def route_project_message(self, message, project_context, *, stream=False):
+            decision = super().route_project_message(message, project_context, stream=stream)
+            if stream and self.event_handler:
+                encoded = json.dumps(
+                    {"message": "正在读取项目上下文。", "result": decision.model_dump(mode="json")},
+                    ensure_ascii=False,
+                )
+                midpoint = len(encoded) // 2
+                self.event_handler(
+                    "agent.message.delta",
+                    {"delta": "正在读取项目上下文。"},
+                )
+                self.event_handler("agent.output.delta", {"delta": encoded[:midpoint]})
+                self.event_handler("agent.output.delta", {"delta": encoded[midpoint:]})
+                self.event_handler("agent.message.completed", {})
+            return decision
+
+    provider = StreamingProjectProvider()
+    monkeypatch.setattr(
+        "another_atom.api.routes.get_llm_provider",
+        lambda model=None: provider,
+    )
+    initial = _build_project(client)
+    response = client.post(
+        f"/api/projects/{initial['project_id']}/messages",
+        json={
+            "message": "这个项目使用了哪些颜色？",
+            "model": "mock",
+            "client_message_id": "optimistic-test-message",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    lead = response.json()["lead_message"]
+    assert lead["message_type"] == "answer"
+    assert lead["payload"]["status"] == "completed"
+    assert lead["payload"]["model_output"].startswith('{"message": "正在读取项目上下文。"')
+    messages = client.get(f"/api/projects/{initial['project_id']}/messages").json()
+    turn_messages = [
+        message
+        for message in messages
+        if message["payload"].get("client_message_id") == "optimistic-test-message"
+        or message["id"] == lead["id"]
+    ]
+    assert [(message["role"], message["message_type"]) for message in turn_messages] == [
+        ("user", "request"),
+        ("lead", "answer"),
+    ]
 
 
 def test_failed_first_build_requires_proposal_approval_to_continue(
@@ -465,6 +563,51 @@ def test_failed_change_preserves_base_version_and_releases_project_lock(
         "requirement_delta",
         "source_context",
     }
+
+
+def test_invalid_source_patch_fails_without_creating_a_version(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    initial = _build_project(client)
+    project_id = initial["project_id"]
+    original = MockLLMProvider.create_source_patch_set
+
+    def tampered_patch(self, *args, **kwargs):
+        patch_set = original(self, *args, **kwargs)
+        first = patch_set.patches[0].model_copy(update={"before_hash": "0" * 64})
+        return patch_set.model_copy(
+            update={"patches": [first, *patch_set.patches[1:]]}
+        )
+
+    monkeypatch.setattr(MockLLMProvider, "create_source_patch_set", tampered_patch)
+    proposal = _propose_change(
+        client,
+        project_id,
+        '把标题改成“不会提交的版本”',
+    )
+    failed = _approve_change(client, project_id, proposal["proposal_id"])
+
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "PATCH_HASH_MISMATCH"
+    assert failed["version_id"] is None
+    versions = client.get(f"/api/projects/{project_id}/versions").json()
+    assert [version["id"] for version in versions] == [initial["version_id"]]
+    with client.app.state.testing_session() as db:
+        project = db.get(Project, project_id)
+        artifacts = set(
+            db.scalars(
+                select(Artifact.artifact_type).where(
+                    Artifact.run_id == failed["run_id"]
+                )
+            ).all()
+        )
+    assert project is not None
+    assert project.active_write_run_id is None
+    assert "source_patch_set" in artifacts
+    assert "source_patch_apply_report" not in artifacts
+    events = client.get(f"/api/runs/{failed['run_id']}/events/history").json()
+    assert "source.patch_failed" in [event["type"] for event in events]
 
 
 def test_project_message_history_is_owner_scoped(client: TestClient) -> None:
