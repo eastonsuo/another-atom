@@ -334,4 +334,4 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 
 - **源码仓库：** [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - **在线版本：** Railway 已部署并完成公开访问验收；具体服务域名由 Railway 部署环境管理。
-- **当前限制：** 真实 Linux Sandbox 安全验收、完整 Project 对话线程、失败后的 Retry/Resolve 和需要后端的产品能力仍待后续版本完善。
+- **当前限制：** Project 问答与修改提案已分流，但异步可恢复的 ConversationJob、通用 Approval subject、真实 Linux Sandbox 安全验收、完整 Retry/Resolve 和需要后端的产品能力仍待后续版本完善。

@@ -13,6 +13,7 @@ import type {
   ProjectFileEntry,
   ProjectFileSaveResult,
   ProjectMessageView,
+  ProjectMessageResult,
   HumanTaskView,
   ProjectView,
   QuotaView,
@@ -89,10 +90,14 @@ export const api = {
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
   projectMessages: (projectId: string) =>
     request<ProjectMessageView[]>(`/api/projects/${projectId}/messages`),
-  createProjectChange: (projectId: string, message: string, model: string) =>
-    request<RunView>(`/api/projects/${projectId}/messages`, {
+  sendProjectMessage: (projectId: string, message: string, model: string) =>
+    request<ProjectMessageResult>(`/api/projects/${projectId}/messages`, {
       method: "POST",
       body: JSON.stringify({ message, model }),
+    }),
+  approveProjectChange: (projectId: string, proposalId: string) =>
+    request<RunView>(`/api/projects/${projectId}/change-proposals/${proposalId}/approve`, {
+      method: "POST",
     }),
   humanTasks: (runId: string) =>
     request<HumanTaskView[]>(`/api/runs/${runId}/human-tasks`),

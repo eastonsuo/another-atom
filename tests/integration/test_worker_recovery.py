@@ -129,10 +129,19 @@ def test_ai_edit_clarification_resume_is_left_to_build_worker_recovery(
         queued_client.app.state.testing_session, worker_id="initial-worker"
     )
     completed = queued_client.get(f"/api/runs/{initial['run_id']}").json()
-    change = queued_client.post(
+    proposal = queued_client.post(
         f"/api/projects/{completed['project_id']}/messages",
-        json={"message": "改一下 [pm:clarify]", "model": "mock"},
+        json={
+            "message": "改一下 [lead:propose] [pm:clarify]",
+            "model": "mock",
+        },
     ).json()
+    assert proposal["intent"] == "propose_change"
+    change = queued_client.post(
+        f"/api/projects/{completed['project_id']}/change-proposals/"
+        f"{proposal['proposal_id']}/approve"
+    ).json()
+    assert change["status"] == "build_queued"
     assert process_next_job(
         queued_client.app.state.testing_session, worker_id="clarification-worker"
     )

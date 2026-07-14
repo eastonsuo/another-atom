@@ -25,7 +25,6 @@ from another_atom.contracts.schemas import (
     DataProfile,
     HumanTaskKind,
     HumanTaskStatus,
-    LeadRoute,
     Mode,
     PMRequirementAssessment,
     PreviousFailureContext,
@@ -605,37 +604,6 @@ class Orchestrator:
             self._fail_run(run, "BASE_VERSION_NOT_FOUND", "The Project base version is unavailable")
             return
         effective_prompt = self._effective_prompt(run)
-        try:
-            lead_decision = self._run_unpersisted_agent_stage(
-                run,
-                "team_leader",
-                lambda: self._provider(run).route_message(effective_prompt),
-            )
-            if lead_decision.route == LeadRoute.DIRECT:
-                run.status = RunStatus.COMPLETED.value
-                run.current_stage = "complete"
-                project.status = ProjectStatus.READY.value
-                if project.active_write_run_id == run.id:
-                    project.active_write_run_id = None
-                self._record_project_message_once(
-                    run,
-                    "lead",
-                    "answer",
-                    lead_decision.response,
-                    {"reason": lead_decision.reason},
-                )
-                self._record_event_once(
-                    run,
-                    "lead.answered",
-                    "Lead answered without starting a code change",
-                    "team_leader",
-                    {"reason": lead_decision.reason},
-                )
-                self.db.commit()
-                return
-        except (LLMProviderError, ValueError) as exc:
-            self._fail_run(run, "CHANGE_PIPELINE_FAILED", str(exc))
-            return
         try:
             assessment = (
                 self._run_unpersisted_agent_stage(

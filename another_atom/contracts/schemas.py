@@ -17,6 +17,12 @@ class LeadRoute(StrEnum):
     TEAM = "team"
 
 
+class ProjectLeadIntent(StrEnum):
+    ANSWER = "answer"
+    CLARIFY = "clarify"
+    PROPOSE_CHANGE = "propose_change"
+
+
 class SupportLevel(StrEnum):
     SUPPORTED = "supported"
     ADAPTED = "adapted"
@@ -526,6 +532,7 @@ class ProjectMessageView(BaseModel):
         "answer",
         "clarification",
         "clarification_response",
+        "change_proposal",
         "change_brief",
         "result",
         "error",
@@ -533,6 +540,30 @@ class ProjectMessageView(BaseModel):
     content: str
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class ProjectLeadDecision(BaseModel):
+    intent: ProjectLeadIntent
+    response: str = Field(min_length=1, max_length=1200)
+    reason: str = Field(min_length=1, max_length=300)
+    change_summary: str | None = Field(default=None, max_length=600)
+
+    @field_validator("change_summary")
+    @classmethod
+    def change_summary_matches_intent(cls, value: str | None, info: Any) -> str | None:
+        intent = info.data.get("intent")
+        if intent == ProjectLeadIntent.PROPOSE_CHANGE and not (value and value.strip()):
+            raise ValueError("A proposed change requires a change summary")
+        return value.strip() if value else None
+
+
+class ProjectMessageResult(BaseModel):
+    intent: ProjectLeadIntent
+    user_message: ProjectMessageView
+    lead_message: ProjectMessageView
+    proposal_id: str | None = None
+    model: str
+    fallback_provider: str | None = None
 
 
 class QuotaView(BaseModel):

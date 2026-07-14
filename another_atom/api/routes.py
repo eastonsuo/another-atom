@@ -60,7 +60,9 @@ from another_atom.contracts.schemas import (
     ProjectFileEntry,
     ProjectFileSaveRequest,
     ProjectFileSaveResult,
+    ProjectLeadIntent,
     ProjectMessageRequest,
+    ProjectMessageResult,
     ProjectMessageView,
     ProjectStatus,
     ProjectView,
@@ -92,6 +94,8 @@ from another_atom.domain.events import record_event
 from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
+    build_source_context,
+    build_source_snapshot,
     commit_version,
     initialize_repository,
     list_repository_files,
@@ -1546,14 +1550,326 @@ def list_project_messages(
     return [_project_message_view(message) for message in messages]
 
 
+def _project_context_snapshot(
+    db: Session,
+    project: Project,
+    request_message: str,
+    selected_files: list[str],
+) -> dict:
+    base_version = (
+        db.get(ProjectVersion, project.latest_version_id)
+        if project.latest_version_id
+        else None
+    )
+    base_run = db.get(Run, base_version.run_id) if base_version else None
+    latest_project_run = db.scalar(
+        select(Run)
+        .where(Run.project_id == project.id)
+        .order_by(Run.created_at.desc())
+    )
+    context_run = base_run or latest_project_run
+    blueprint = (
+        _artifact_model(db, context_run.id, ArtifactType.BLUEPRINT, Blueprint)
+        if context_run
+        else None
+    )
+    product_spec = (
+        _artifact_model(db, context_run.id, ArtifactType.PRODUCT_SPEC, ProductSpec)
+        if context_run
+        else None
+    )
+    architecture_spec = (
+        _artifact_model(
+            db,
+            context_run.id,
+            ArtifactType.ARCHITECTURE_SPEC,
+            ArchitectureSpec,
+        )
+        if context_run
+        else None
+    )
+    app_spec = AppSpec.model_validate(base_version.app_spec) if base_version else None
+    deployment = db.scalar(select(Deployment).where(Deployment.project_id == project.id))
+    project_messages = db.scalars(
+        select(ProjectMessage)
+        .where(ProjectMessage.project_id == project.id)
+        .order_by(ProjectMessage.created_at, ProjectMessage.id)
+    ).all()
+    source_context = None
+    source_error = None
+    if base_version and base_version.git_commit:
+        try:
+            source_snapshot = build_source_snapshot(
+                project.id,
+                base_version.id,
+                base_version.git_commit,
+            )
+            source_context = build_source_context(
+                source_snapshot,
+                request_message,
+                get_settings().max_source_chars,
+                selected_files,
+            )
+        except RepositoryError as exc:
+            source_error = str(exc)
+    latest_failed_run = (
+        latest_project_run
+        if latest_project_run and latest_project_run.status == RunStatus.FAILED.value
+        else None
+    )
+    snapshot = {
+        "schema_version": "1.0",
+        "project_id": project.id,
+        "project_name": project.name,
+        "project_status": project.status,
+        "current_version": (
+            {
+                "id": base_version.id,
+                "number": base_version.version_number,
+                "git_commit": base_version.git_commit,
+            }
+            if base_version
+            else None
+        ),
+        "published_version_id": deployment.version_id if deployment and deployment.active else None,
+        "product_spec": product_spec.model_dump(mode="json") if product_spec else None,
+        "blueprint": blueprint.model_dump(mode="json") if blueprint else None,
+        "architecture_spec": (
+            architecture_spec.model_dump(mode="json") if architecture_spec else None
+        ),
+        "application": (
+            app_spec.model_dump(
+                mode="json",
+                exclude={"html", "css", "javascript"},
+            )
+            if app_spec
+            else None
+        ),
+        "source_context": source_context.model_dump(mode="json") if source_context else None,
+        "source_context_error": source_error,
+        "conversation": [
+            {
+                "role": message.role,
+                "message_type": message.message_type,
+                "content": message.content,
+            }
+            for message in project_messages
+        ],
+        "selected_files": selected_files,
+        "latest_failure": (
+            {
+                "run_id": latest_failed_run.id,
+                "stage": latest_failed_run.current_stage,
+                "error_code": latest_failed_run.error_code,
+                "error_message": latest_failed_run.error_message,
+            }
+            if latest_failed_run
+            else None
+        ),
+    }
+    snapshot["context_hash"] = "sha256:" + hashlib.sha256(
+        json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return snapshot
+
+
+def _project_context_manifest(snapshot: dict) -> dict:
+    source_context = snapshot.get("source_context") or {}
+    return {
+        "context_hash": snapshot["context_hash"],
+        "document_contracts": [
+            key
+            for key in ("product_spec", "blueprint", "architecture_spec", "application")
+            if snapshot.get(key) is not None
+        ],
+        "conversation_message_count": len(snapshot.get("conversation") or []),
+        "source_manifest_hash": source_context.get("source_manifest_hash"),
+        "max_source_chars": source_context.get("max_source_chars"),
+        "used_source_chars": source_context.get("used_source_chars"),
+        "included_files": [
+            {"path": item["path"], "sha256": item["sha256"]}
+            for item in source_context.get("included_files", [])
+        ],
+        "omitted_files": source_context.get("omitted_files", []),
+        "trimming_applied": source_context.get("trimming_applied", False),
+        "source_context_error": snapshot.get("source_context_error"),
+    }
+
+
 @router.post(
     "/projects/{project_id}/messages",
+    response_model=ProjectMessageResult,
+)
+def send_project_message(
+    project_id: str,
+    request: ProjectMessageRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProjectMessageResult:
+    project = _owned_project(db, project_id, user.id)
+    model_config = models()
+    base_version = (
+        db.get(ProjectVersion, project.latest_version_id)
+        if project.latest_version_id
+        else None
+    )
+    base_run = db.get(Run, base_version.run_id) if base_version else None
+    selected_model = request.model or (base_run.model if base_run else model_config.default_model)
+    if selected_model not in {option.id for option in model_config.models}:
+        raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
+    project_session = ProjectSession(
+        project_id=project.id,
+        user_id=user.id,
+        title="Project conversation",
+    )
+    db.add(project_session)
+    db.flush()
+    user_message = ProjectMessage(
+        project_id=project.id,
+        session_id=project_session.id,
+        user_id=user.id,
+        run_id=None,
+        role="user",
+        message_type="request",
+        content=request.message,
+        payload={
+            "selected_files": request.selected_files,
+            "model": selected_model,
+        },
+    )
+    db.add(user_message)
+    db.flush()
+    db.commit()
+    context = _project_context_snapshot(
+        db,
+        project,
+        request.message,
+        request.selected_files,
+    )
+    provider = get_llm_provider(model=selected_model)
+    reserved = provider.reservation_units
+    db.execute(
+        update(User)
+        .where(User.id == user.id)
+        .values(quota_reserved=User.quota_reserved + reserved)
+    )
+    db.commit()
+    try:
+        decision = provider.route_project_message(request.message, context)
+        usage = provider.take_usage()
+    except (LLMProviderError, ValueError) as exc:
+        usage = provider.take_usage()
+        _settle_lead_quota(db, user.id, reserved, usage.request_count)
+        error_message = ProjectMessage(
+            project_id=project.id,
+            session_id=project_session.id,
+            user_id=user.id,
+            role="system",
+            message_type="error",
+            content="项目对话处理失败，请重试。",
+            payload={"error_code": "PROJECT_LEAD_FAILED"},
+        )
+        db.add(error_message)
+        db.commit()
+        raise AppError("PROJECT_LEAD_FAILED", str(exc), 502) from exc
+    except Exception as exc:
+        logger.exception(
+            "project_lead_platform_failure",
+            extra={"project_id": project.id, "provider": provider.name},
+        )
+        usage = provider.take_usage()
+        _settle_lead_quota(db, user.id, reserved, usage.request_count)
+        db.add(
+            ProjectMessage(
+                project_id=project.id,
+                session_id=project_session.id,
+                user_id=user.id,
+                role="system",
+                message_type="error",
+                content="项目对话处理失败，请重试。",
+                payload={"error_code": "PROJECT_LEAD_PLATFORM_FAILED"},
+            )
+        )
+        db.commit()
+        raise AppError(
+            "PROJECT_LEAD_PLATFORM_FAILED",
+            "Project conversation failed",
+            502,
+        ) from exc
+
+    message_type = {
+        ProjectLeadIntent.ANSWER: "answer",
+        ProjectLeadIntent.CLARIFY: "clarification",
+        ProjectLeadIntent.PROPOSE_CHANGE: "change_proposal",
+    }[decision.intent]
+    context_manifest = _project_context_manifest(context)
+    payload = {
+        "reason": decision.reason,
+        "model": selected_model,
+        **context_manifest,
+    }
+    if decision.intent == ProjectLeadIntent.PROPOSE_CHANGE:
+        payload.update(
+            {
+                "status": "pending",
+                "change_summary": decision.change_summary,
+                "request_message_id": user_message.id,
+                "base_version_id": base_version.id if base_version else None,
+                "base_git_commit": base_version.git_commit if base_version else None,
+                "selected_files": request.selected_files,
+            }
+        )
+    lead_message = ProjectMessage(
+        project_id=project.id,
+        session_id=project_session.id,
+        user_id=user.id,
+        role="lead",
+        message_type=message_type,
+        content=decision.response,
+        payload=payload,
+    )
+    db.add_all(
+        [
+            lead_message,
+            LeadMessage(
+                user_id=user.id,
+                content=request.message,
+                route=f"project_{decision.intent.value}",
+                response=decision.response,
+                reason=decision.reason,
+                model=selected_model,
+                request_count=usage.request_count,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            ),
+        ]
+    )
+    _settle_lead_quota(db, user.id, reserved, usage.request_count)
+    db.commit()
+    db.refresh(user_message)
+    db.refresh(lead_message)
+    return ProjectMessageResult(
+        intent=decision.intent,
+        user_message=_project_message_view(user_message),
+        lead_message=_project_message_view(lead_message),
+        proposal_id=(
+            lead_message.id
+            if decision.intent == ProjectLeadIntent.PROPOSE_CHANGE
+            else None
+        ),
+        model=selected_model,
+        fallback_provider=usage.fallback_provider,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/change-proposals/{proposal_id}/approve",
     response_model=RunView,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def create_project_change(
+def approve_project_change_proposal(
     project_id: str,
-    request: ProjectMessageRequest,
+    proposal_id: str,
     background_tasks: BackgroundTasks,
     blueprint_executor: Callable[[str], None] = Depends(get_blueprint_executor),
     job_dispatcher: Callable[[str], None] = Depends(get_job_dispatcher),
@@ -1561,187 +1877,137 @@ def create_project_change(
     user: User = Depends(get_current_user),
 ) -> RunView:
     project = _owned_project(db, project_id, user.id)
-    base_version = (
-        db.get(ProjectVersion, project.latest_version_id)
-        if project.latest_version_id
-        else None
+    proposal = db.get(ProjectMessage, proposal_id)
+    if (
+        proposal is None
+        or proposal.project_id != project.id
+        or proposal.user_id != user.id
+        or proposal.role != "lead"
+        or proposal.message_type != "change_proposal"
+    ):
+        raise AppError("CHANGE_PROPOSAL_NOT_FOUND", "Project change proposal was not found", 404)
+    proposal_payload = dict(proposal.payload or {})
+    if proposal_payload.get("status") == "approved" and proposal_payload.get("run_id"):
+        existing_run = db.get(Run, str(proposal_payload["run_id"]))
+        if existing_run is not None:
+            return _run_view(db, existing_run)
+    if proposal_payload.get("status") != "pending":
+        raise AppError("CHANGE_PROPOSAL_NOT_PENDING", "Project change proposal is not pending", 409)
+
+    request_message = db.get(ProjectMessage, proposal_payload.get("request_message_id"))
+    if request_message is None or request_message.project_id != project.id:
+        raise AppError("CHANGE_PROPOSAL_INVALID", "Proposal request message was not found", 409)
+    selected_model = str(
+        proposal_payload.get("model")
+        or request_message.payload.get("model")
+        or ""
     )
     model_config = models()
-    base_run = db.get(Run, base_version.run_id) if base_version else None
-    selected_model = request.model or (base_run.model if base_run else model_config.default_model)
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
 
-    # A failed first build has no ProjectVersion yet. Keep the conversation in
-    # the existing Project and start a new build attempt from the user's
-    # corrected request instead of silently creating another Project.
-    if base_version is None:
-        project_session = ProjectSession(
-            project_id=project.id,
-            user_id=user.id,
-            title="Project recovery",
-        )
-        db.add(project_session)
-        db.flush()
-        run = Run(
-            project_id=project.id,
-            session_id=project_session.id,
-            user_id=user.id,
-            mode=Mode.TEAM.value,
-            model=selected_model,
-            trigger="build",
-            status=RunStatus.PRODUCT_RUNNING.value,
-            current_stage="product_manager",
-            prompt=request.message,
-        )
-        db.add(run)
-        db.flush()
-        claimed = db.execute(
-            update(Project)
-            .where(
-                Project.id == project.id,
-                Project.user_id == user.id,
-                Project.latest_version_id.is_(None),
-                Project.active_write_run_id.is_(None),
-            )
-            .values(
-                active_write_run_id=run.id,
-                status=ProjectStatus.BUILDING.value,
-                prompt=request.message,
-            )
-            .execution_options(synchronize_session=False)
-        )
-        if claimed.rowcount != 1:
-            db.rollback()
-            raise AppError(
-                "PROJECT_WRITE_BUSY",
-                "Another recovery attempt is already writing this Project",
-                409,
-            )
-        previous_run = db.scalar(
-            select(Run)
-            .where(Run.project_id == project.id, Run.id != run.id)
-            .order_by(Run.created_at.desc())
-        )
-        db.add(
-            ProjectMessage(
-                project_id=project.id,
-                session_id=project_session.id,
-                user_id=user.id,
-                run_id=run.id,
-                role="user",
-                message_type="request",
-                content=request.message,
-                payload={
-                    "request_type": "failure_recovery",
-                    "retry_of_run_id": previous_run.id if previous_run else None,
-                    "selected_files": request.selected_files,
-                },
-            )
-        )
-        record_event(
-            db,
-            run.id,
-            "project.recovery_started",
-            "A corrected request is continuing in the existing Project",
-            stage="product_manager",
-            payload={"retry_of_run_id": previous_run.id if previous_run else None},
-        )
+    base_version_id = proposal_payload.get("base_version_id")
+    if base_version_id != project.latest_version_id:
+        proposal.payload = {**proposal_payload, "status": "stale"}
         db.commit()
-        background_tasks.add_task(blueprint_executor, run.id)
-        db.refresh(run)
-        return _run_view(db, run)
-
-    if not base_version.git_commit:
         raise AppError(
-            "VERSION_NOT_FOUND",
-            "The current Project version does not have a Git commit",
+            "BASE_VERSION_CHANGED",
+            "The Project version changed after this proposal was prepared",
             409,
         )
+    base_version = db.get(ProjectVersion, base_version_id) if base_version_id else None
+    if base_version is not None and not base_version.git_commit:
+        raise AppError("VERSION_NOT_FOUND", "The current Project version has no Git commit", 409)
 
-    project_session = ProjectSession(
-        project_id=project.id,
-        user_id=user.id,
-        title="Project change",
-    )
-    db.add(project_session)
-    db.flush()
     run = Run(
         project_id=project.id,
-        session_id=project_session.id,
+        session_id=proposal.session_id,
         user_id=user.id,
         mode=Mode.TEAM.value,
         model=selected_model,
-        trigger="ai_edit",
-        base_version_id=base_version.id,
-        status=RunStatus.BUILD_QUEUED.value,
-        current_stage="team_leader",
-        prompt=request.message,
+        trigger="ai_edit" if base_version else "build",
+        base_version_id=base_version.id if base_version else None,
+        status=(
+            RunStatus.BUILD_QUEUED.value
+            if base_version
+            else RunStatus.PRODUCT_RUNNING.value
+        ),
+        current_stage="team_leader" if base_version else "product_manager",
+        prompt=request_message.content,
     )
     db.add(run)
     db.flush()
+    claim_filters = [
+        Project.id == project.id,
+        Project.user_id == user.id,
+        Project.active_write_run_id.is_(None),
+    ]
+    claim_filters.append(
+        Project.latest_version_id == base_version.id
+        if base_version
+        else Project.latest_version_id.is_(None)
+    )
     claimed = db.execute(
         update(Project)
-        .where(
-            Project.id == project.id,
-            Project.user_id == user.id,
-            Project.latest_version_id == base_version.id,
-            Project.active_write_run_id.is_(None),
-        )
+        .where(*claim_filters)
         .values(
             active_write_run_id=run.id,
             status=ProjectStatus.BUILDING.value,
+            **({"prompt": request_message.content} if base_version is None else {}),
         )
         .execution_options(synchronize_session=False)
     )
     if claimed.rowcount != 1:
         db.rollback()
-        current_project = _owned_project(db, project.id, user.id)
-        if current_project.latest_version_id != base_version.id:
-            raise AppError(
-                "BASE_VERSION_CHANGED",
-                "The Project version changed before this modification could start",
-                409,
-            )
-        raise AppError(
-            "PROJECT_WRITE_BUSY",
-            "Another change is already writing this Project",
-            409,
+        raise AppError("PROJECT_WRITE_BUSY", "Another operation is writing this Project", 409)
+
+    request_message.run_id = run.id
+    request_message.payload = {
+        **request_message.payload,
+        "base_version_id": base_version.id if base_version else None,
+        "selected_files": proposal_payload.get("selected_files", []),
+    }
+    proposal.run_id = run.id
+    proposal.payload = {**proposal_payload, "status": "approved", "run_id": run.id}
+    if base_version:
+        job = BuildJob(run_id=run.id, project_id=project.id, status=BuildStatus.QUEUED.value)
+        db.add(job)
+        db.flush()
+        record_event(
+            db,
+            run.id,
+            "project.change_queued",
+            "Approved Project change queued from the current version",
+            stage="team_leader",
+            payload={
+                "proposal_id": proposal.id,
+                "base_version_id": base_version.id,
+                "base_git_commit": base_version.git_commit,
+                "build_job_id": job.id,
+            },
         )
-    message = ProjectMessage(
-        project_id=project.id,
-        session_id=project_session.id,
-        user_id=user.id,
-        run_id=run.id,
-        role="user",
-        message_type="request",
-        content=request.message,
-        payload={
-            "base_version_id": base_version.id,
-            "selected_files": request.selected_files,
-        },
-    )
-    job = BuildJob(
-        run_id=run.id,
-        project_id=project.id,
-        status=BuildStatus.QUEUED.value,
-    )
-    db.add_all([message, job])
-    db.flush()
-    record_event(
-        db,
-        run.id,
-        "project.change_queued",
-        "Project change queued from the current version",
-        stage="team_leader",
-        payload={
-            "base_version_id": base_version.id,
-            "base_git_commit": base_version.git_commit,
-            "build_job_id": job.id,
-        },
-    )
+    else:
+        previous_run = db.scalar(
+            select(Run)
+            .where(Run.project_id == project.id, Run.id != run.id)
+            .order_by(Run.created_at.desc())
+        )
+        record_event(
+            db,
+            run.id,
+            "project.recovery_started",
+            "An approved recovery request is continuing in the existing Project",
+            stage="product_manager",
+            payload={
+                "proposal_id": proposal.id,
+                "retry_of_run_id": previous_run.id if previous_run else None,
+            },
+        )
     db.commit()
-    job_dispatcher(job.id)
+    if base_version:
+        job_dispatcher(job.id)
+    else:
+        background_tasks.add_task(blueprint_executor, run.id)
     db.refresh(run)
     return _run_view(db, run)
 

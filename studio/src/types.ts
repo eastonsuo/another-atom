@@ -105,10 +105,19 @@ export interface ProjectMessageView {
   project_id: string;
   run_id: string | null;
   role: "user" | "lead" | "system";
-  message_type: "request" | "answer" | "clarification" | "clarification_response" | "change_brief" | "result" | "error";
+  message_type: "request" | "answer" | "clarification" | "clarification_response" | "change_proposal" | "change_brief" | "result" | "error";
   content: string;
   payload: Record<string, unknown>;
   created_at: string;
+}
+
+export interface ProjectMessageResult {
+  intent: "answer" | "clarify" | "propose_change";
+  user_message: ProjectMessageView;
+  lead_message: ProjectMessageView;
+  proposal_id: string | null;
+  model: string;
+  fallback_provider: string | null;
 }
 
 export interface RunEvent {

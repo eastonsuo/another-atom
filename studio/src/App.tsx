@@ -38,6 +38,7 @@ import type {
   Mode,
   ProjectView,
   ProjectMessageView,
+  ProjectMessageResult,
   ProductSpec,
   QuotaView,
   ModelsView,
@@ -274,7 +275,6 @@ const ZH: Record<string, string> = {
   "Project conversation": "项目对话",
   "Describe what should change in the current version.": "描述你希望基于当前版本修改什么。",
   "Ask about the Project or describe what you want to change.": "询问项目，或描述你想修改的内容。",
-  "Send change": "发送修改",
   "Could not load Project messages": "无法读取 Project 对话",
   "Could not start Project change": "无法开始 Project 修改",
   "This clarification expired because the Project changed. Send the change again from the current version.": "等待澄清期间 Project 已产生新版本。请基于当前版本重新发送修改要求。",
@@ -1327,7 +1327,9 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
     setRetrying(true);
     setError("");
     try {
-      const created = await api.createProjectChange(run.project_id, run.prompt, run.model);
+      const routed = await api.sendProjectMessage(run.project_id, run.prompt, run.model);
+      if (!routed.proposal_id) throw new Error(ui(language, "The retry request did not produce a code change proposal."));
+      const created = await api.approveProjectChange(run.project_id, routed.proposal_id);
       setRun(created);
       await refreshShell();
     } catch (reason) {
@@ -1448,6 +1450,7 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
   const [changeSubmitting, setChangeSubmitting] = useState(false);
   const [projectMessages, setProjectMessages] = useState<ProjectMessageView[]>([]);
   const [messagesError, setMessagesError] = useState("");
+  const [approvingProposalId, setApprovingProposalId] = useState("");
   useEffect(() => {
     let active = true;
     api.projectMessages(run.project_id)
@@ -1461,12 +1464,16 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
     setChangeSubmitting(true);
     setError("");
     try {
-      const created = run.pending_human_task?.kind === "input_request"
-        ? await api.respondHumanTask(run.pending_human_task.id, changeMessage.trim())
-        : await api.createProjectChange(run.project_id, changeMessage.trim(), run.model);
+      if (run.pending_human_task?.kind === "input_request") {
+        const created = await api.respondHumanTask(run.pending_human_task.id, changeMessage.trim());
+        setChangeMessage("");
+        await refreshRun(created.run_id);
+        await refreshShell();
+        return;
+      }
+      const result: ProjectMessageResult = await api.sendProjectMessage(run.project_id, changeMessage.trim(), run.model);
       setChangeMessage("");
-      await refreshRun(created.run_id);
-      await refreshShell();
+      setProjectMessages((current) => [...current, result.user_message, result.lead_message]);
     } catch (reason) {
       if (reason instanceof ApiError && reason.code === "BASE_VERSION_CHANGED") {
         await refreshRun(run.run_id);
@@ -1479,11 +1486,30 @@ function ProjectChatPanel({ run, refreshShell, refreshRun, setError, language }:
       setChangeSubmitting(false);
     }
   };
+  const approveProposal = async (proposal: ProjectMessageView) => {
+    if (approvingProposalId) return;
+    setApprovingProposalId(proposal.id);
+    setError("");
+    try {
+      const created = await api.approveProjectChange(run.project_id, proposal.id);
+      setProjectMessages((current) => current.map((message) => message.id === proposal.id ? { ...message, payload: { ...message.payload, status: "approved", run_id: created.run_id } } : message));
+      await refreshRun(created.run_id);
+      await refreshShell();
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.code === "BASE_VERSION_CHANGED") {
+        setProjectMessages((current) => current.map((message) => message.id === proposal.id ? { ...message, payload: { ...message.payload, status: "stale" } } : message));
+        await refreshShell();
+      }
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not start Project change"));
+    } finally {
+      setApprovingProposalId("");
+    }
+  };
   return <section className="project-chat-panel">
     <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
-    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? (message.message_type === "clarification" ? (language === "zh" ? "产品经理" : "Product Manager") : roleLabel(language, "leader")) : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span></div>)}</div>}
-    <form onSubmit={submitChange}><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={run.pending_human_task?.kind === "input_request" ? run.pending_human_task.prompt : ui(language, "Describe what should change in the current version.")} /><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={16} />} {run.pending_human_task?.kind === "input_request" ? (language === "zh" ? "提交补充" : "Send clarification") : ui(language, "Send change")}</button></form>
+    {projectMessages.length > 0 && <div className="project-chat-history">{projectMessages.slice(-20).map((message) => <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`} key={message.id}><b>{message.role === "user" ? (language === "zh" ? "你" : "You") : message.role === "lead" ? roleLabel(language, "leader") : (language === "zh" ? "系统" : "System")}</b><span>{message.content}</span>{message.message_type === "change_proposal" && <div className="project-change-proposal"><strong>{String(message.payload.change_summary ?? (language === "zh" ? "修改当前项目" : "Modify the current Project"))}</strong><small>{language === "zh" ? "确认后才会创建修改 Run 并写入代码。" : "A change Run and code write start only after confirmation."}</small><button type="button" onClick={() => void approveProposal(message)} disabled={message.payload.status !== "pending" || Boolean(approvingProposalId)}>{approvingProposalId === message.id ? <LoaderCircle className="spin" size={14} /> : <Code2 size={14} />}{message.payload.status === "approved" ? (language === "zh" ? "已开始修改" : "Change started") : message.payload.status === "stale" ? (language === "zh" ? "已失效" : "Expired") : (language === "zh" ? "修改代码" : "Modify code")}</button></div>}</div>)}</div>}
+    <form onSubmit={submitChange}><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} maxLength={4000} rows={2} placeholder={run.pending_human_task?.kind === "input_request" ? run.pending_human_task.prompt : (language === "zh" ? "询问当前项目，或描述你希望修改的内容。" : "Ask about the current Project or describe a change.")} /><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={16} />} {run.pending_human_task?.kind === "input_request" ? (language === "zh" ? "提交补充" : "Send clarification") : (language === "zh" ? "发送" : "Send")}</button></form>
   </section>;
 }
 

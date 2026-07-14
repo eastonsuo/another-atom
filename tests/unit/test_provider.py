@@ -4,7 +4,7 @@ import pytest
 from another_atom.agent.provider import LLMProviderError, MockLLMProvider, OllamaCloudProvider
 from another_atom.build.renderer import validate_app_spec
 from another_atom.config import get_settings
-from another_atom.contracts.schemas import LeadRoute, Mode, SupportLevel
+from another_atom.contracts.schemas import LeadRoute, Mode, ProjectLeadIntent, SupportLevel
 
 
 @pytest.fixture
@@ -50,6 +50,81 @@ def test_lead_routes_questions_and_build_requests(
 def test_force_team_does_not_spend_a_lead_model_call(provider: MockLLMProvider) -> None:
     assert provider.route_message("Maybe a catalog", force_team=True).route == LeadRoute.TEAM
     assert provider.take_usage().request_count == 0
+
+
+def test_project_lead_answers_or_proposes_from_project_context(
+    provider: MockLLMProvider,
+) -> None:
+    context = {
+        "project_name": "Current Product",
+        "application": {
+            "primary_color": "#111111",
+            "accent_color": "#2255aa",
+            "background_color": "#ffffff",
+        },
+        "blueprint": {"modules": ["翻译输入", "翻译结果"]},
+        "source_context": {
+            "included_files": [
+                {"path": "app.js", "content": "function translate() {}"}
+            ]
+        },
+    }
+
+    answer = provider.route_project_message("这个项目使用了哪些颜色？", context)
+    proposal = provider.route_project_message("把主色改成蓝色", context)
+
+    assert answer.intent == ProjectLeadIntent.ANSWER
+    assert "Current Product" in answer.response
+    assert "#2255aa" in answer.response
+    assert proposal.intent == ProjectLeadIntent.PROPOSE_CHANGE
+    assert proposal.change_summary == "把主色改成蓝色"
+
+
+def test_ollama_project_lead_receives_project_source_context(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {
+                    "content": (
+                        '{"intent":"answer","response":"Uses current code",'
+                        '"reason":"Project context supplied","change_summary":null}'
+                    )
+                },
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    provider = OllamaCloudProvider(model="deepseek-v4-flash")
+    decision = provider.route_project_message(
+        "现在怎么实现的？",
+        {
+            "project_name": "Current Product",
+            "product_spec": {"content": "Approved product document"},
+            "source_context": {
+                "included_files": [
+                    {"path": "app.js", "content": "function translate() {}"}
+                ]
+            },
+        },
+    )
+
+    assert decision.intent == ProjectLeadIntent.ANSWER
+    assert "Approved product document" in captured["messages"][1]["content"]
+    assert "function translate() {}" in captured["messages"][1]["content"]
+    assert captured["think"] is False
+    get_settings.cache_clear()
 
 
 def test_local_model_request_is_adapted_and_not_mapped_as_completed() -> None:

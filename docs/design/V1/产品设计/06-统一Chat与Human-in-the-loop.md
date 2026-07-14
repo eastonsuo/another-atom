@@ -184,7 +184,7 @@ ai_edit Run
 
 ## 7. 当前实现边界
 
-当前代码已经完成以下 V1 纵切，但不代表 Project Chat 路由已满足本文目标：
+当前代码已经完成以下 V1 纵切：
 
 1. 持久化 Human Task，实现 `input_request` 和 `approval` 的共享状态与归属校验；
 2. PM 可以返回 `ready` 或 `needs_input`，后者在 Project Chat 中显示问题；
@@ -194,14 +194,16 @@ ai_edit Run
 6. 修复 Project 写占用、等待阶段和恢复之间的并发边界；
 7. 增加主链、重复回复、越权、持久化恢复、已有代码修改和失败继续测试。
 8. stale 时同步终结 Run、记录系统消息并引导用户基于当前版本重发；`ai_edit` 重启恢复不会进入首次 Blueprint 流水线。
+9. 已有 Project 消息先组装 Project Context，再由 `ProjectLeadDecision(answer|clarify|propose_change)` 路由；answer/clarify 不创建 Run。
+10. `propose_change` 形成持久化修改任务卡；点击“修改代码”后才创建执行 Run、BuildJob 和写占用；重复批准返回同一 Run，旧基线任务进入 stale。
+11. Project Lead Context 包含当前有效文档、Project 对话与按固定源码字符预算装箱的基线源码，并保存 Context hash 和源码清单供排障。
 
 当前与目标设计不一致、必须修复的部分：
 
-- Project Chat 会先创建 `ai_edit` Run、BuildJob 和写占用，再由 Worker 做 direct/team 判断；
-- direct 回答只接收当前消息，没有正确传递 Project Context 和最近对话；
-- Lead 判断需要修改后没有 `project_change` Approval 和“修改代码”按钮，会直接进入固定团队；
+- Project Lead 路由仍为同步 HTTP 调用，缺少可重启恢复的 ConversationJob 和消息 idempotency key；
+- 修改任务卡尚未使用通用 Approval subject；当前专用 proposal 状态支持 pending、approved、stale 和幂等批准，但不支持独立 reject/cancel；
+- 批准前只有 Lead change summary，完整 ChangeBrief 在批准后的 Run 内产生；
 - Engineer 已接收完整 ProductSpec、有效 Contract 和按固定字符预算装箱的基线源码；但仍返回完整 AppSpec，SourcePatchSet 与隔离 apply 尚未实现；
-- direct Run 的 completed 状态被前端投影为全部角色已完成。
 
 本轮也不将以下能力暗示为已完成：
 

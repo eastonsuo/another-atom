@@ -126,6 +126,8 @@ PM 专项流程负责生成简介和 `docs/product-spec.md`、检测用户修改
 
 该纵切只覆盖 adapted Blueprint 的批准路径。pending 请求当前由 Run 状态、Blueprint Artifact 和 `approval.required` 事件表达，`Approval` 行只在用户确认时创建；当前表结构无法表达多个不同风险对象，也没有 rejected、cancelled、stale、subject hash、budget limit 和失效原因。当前 `save_artifact` 还会按 `run_id + artifact_type` 更新既有 Artifact payload，因此通用 Approval 不能直接假设现有 artifact ID 已经具备不可变版本语义。
 
+Project 代码修改已新增一个批准前不建 Run 的专用纵切：Lead 的任务卡以 `ProjectMessage(message_type=change_proposal)` 保存 pending/approved/stale，专用 approve API 重新校验 base version，成功后才创建 `ai_edit` Run、BuildJob 和写占用，重复批准返回同一 Run。它解决了当前交互授权，但不等于通用 Approval：没有独立 subject 表、reject/cancel、统一查询或 Risk Policy，后续仍需按本文 Contract 迁移。
+
 ### 2.2 目标差距
 
 通用化需要补齐：
@@ -138,7 +140,7 @@ PM 专项流程负责生成简介和 `docs/product-spec.md`、检测用户修改
 - 一个 Run 中按阶段出现不同 Approval 的能力；
 - 拒绝、取消、失效和重新请求；
 - 对话修改的执行前 Gate 与提交前 Diff Gate；
-- Project Chat 的 `project_change` workflow Gate：批准后才创建 `ai_edit` Run、BuildJob 和 Project 写占用；
+- 将已实现的 Project `change_proposal` 专用 Gate 迁移为通用 `project_change` Approval subject；
 - pending 等待期间的锁释放、批准后的基线重验；
 - budget、worktree、version、project 和 deployment 动作适配器；
 - Project 对话结果卡片和通用查询/决定 API。
