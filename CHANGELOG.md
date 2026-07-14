@@ -1,6 +1,57 @@
 # Changelog
 
-本文件按发布时间倒序记录 Another Atom 已发布的产品版本。只记录已经进入 `main` 的功能；未提交修改、设计 TODO 和 V2 规划不计入已发布能力。
+本文件按发布时间倒序记录 Another Atom 已完成验收的产品版本。未实现的设计 TODO 和 V2 规划不计入已发布能力。
+
+## 2026-07-14 — v0.2.0
+
+- **发布主题：** 统一 Project Chat 与 Human-in-the-loop
+- **产品范围：** V1 对话式 AI Coding 核心纵切
+- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)
+
+### 本次发布
+
+- **统一 Project Chat**
+  - 首次构建、已有项目修改、PM 补充问题、用户回复、审批和失败记录进入同一条 Project 消息时间线。
+  - 首次构建失败后，用户可以在原 Project 中修正需求，不再创建第二个 Project。
+- **Lead 路由与 PM 需求澄清**
+  - Project 消息先经过 Lead；`direct` 只回答、不创建版本，`team` 才进入团队修改流水线。
+  - PM 判断信息不足时创建聚焦问题并暂停；用户补充后恢复同一个 Run，而不是重新开始构建。
+- **通用 HumanTask 核心机制**
+  - 持久化 HumanTask，支持补充输入 `input_request` 和风险审批 `approval`。
+  - HumanTask 按用户归属校验；重复回复通过 CAS 只恢复一次，依赖的代码基线变化后自动进入 `stale`。
+  - adapted Blueprint 已接入 `approval` HumanTask。
+- **基于现有代码继续修改**
+  - 团队修改绑定当前 ProjectVersion 和 Git commit，成功后创建 `ai_edit` 版本，不移动现有发布指针。
+  - AI 修改、结构化 Edit 和 Vim Save 共用 Project 单写边界；等待用户补充期间释放占用，恢复写入前重新检查基线。
+- **失败后保留上下文并继续**
+  - 失败 Artifact、错误消息、Provider 用量和上一成功版本继续保留。
+  - 用户可以在原 Project Chat 中补充或调整需求；新的尝试以上一个成功版本为代码基线，不把失败候选代码当成成功版本。
+- **Studio 对话状态展示**
+  - Studio 展示 PM 问题、用户补充、审批、失败继续和持久化消息。
+  - 消息加载错误对用户可见，历史消息支持滚动查看。
+
+### 验证结果
+
+- 后端 112 项测试全部通过。
+- Studio ESLint 通过。
+- Studio 生产构建通过。
+- `git diff --check` 通过。
+- 自动化场景覆盖同 Run 恢复、重复回复、越权处理、`direct` 不创建版本、等待期间基线失效、首次失败在原 Project 继续，以及 Edit、Vim、AI 写互斥。
+
+### 当前边界
+
+- 尚未实现通用 Stop/Cancel API。
+- 尚未实现富 Diff 对话卡片。
+- HumanTask 已提供通用状态机制，但额外预算、破坏性 Diff 等完整 Risk Policy 业务适配器尚未接入。
+- 尚未实现 VersionMaterialization 和消息幂等 key。
+- PM 当前交付的可执行 Contract 仍是 Blueprint，完整 Markdown ProductSpec 工作流尚未实现。
+- V2 动态任务图、Agent 子集选择与并行执行不属于本版本。
+
+### 依据
+
+- [统一 Chat 与 Human-in-the-loop 设计](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)
+- [对话式 AI Coding 实现检查](./docs/review/待办/16-[综合]-2026-07-14-对话式AI-Coding实现检查.md)
+- [统一 Chat 与 HITL 核心纵切检查](./docs/review/待办/19-[综合]-2026-07-14-统一Chat与HITL核心纵切检查.md)
 
 ## 2026-07-14 — v0.1.0
 
