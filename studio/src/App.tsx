@@ -984,10 +984,23 @@ function Composer({
   language: Language;
   sendToLead: (forceTeam?: boolean, messageOverride?: string) => void;
 }) {
-  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
-  useEffect(() => {
-    setClarificationAnswers({});
-  }, [leadDecision?.message_id]);
+  const clarificationMessageId = leadDecision?.route === "clarify" ? leadDecision.message_id : null;
+  const [clarificationState, setClarificationState] = useState<{
+    messageId: string | null;
+    answers: Record<string, string>;
+  }>({ messageId: null, answers: {} });
+  const clarificationAnswers = clarificationState.messageId === clarificationMessageId
+    ? clarificationState.answers
+    : {};
+  const selectClarificationAnswer = (questionId: string, value: string) => {
+    setClarificationState((current) => ({
+      messageId: clarificationMessageId,
+      answers: {
+        ...(current.messageId === clarificationMessageId ? current.answers : {}),
+        [questionId]: value,
+      },
+    }));
+  };
   const addFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).slice(0, 5 - attachments.length);
     setAttachments([
@@ -1070,7 +1083,7 @@ function Composer({
                       type="button"
                       className={clarificationAnswers[question.id] === option.value ? "selected" : ""}
                       aria-pressed={clarificationAnswers[question.id] === option.value}
-                      onClick={() => setClarificationAnswers((current) => ({ ...current, [question.id]: option.value }))}
+                      onClick={() => selectClarificationAnswer(question.id, option.value)}
                       key={option.value}
                     ><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</button>)}
                   </div>
@@ -1539,7 +1552,7 @@ function BuildingState({ run, events, language }: { run: RunView; events: RunEve
     const stage = event.payload.stage;
     return stage === run.current_stage || (run.current_stage === "engineer" && stage === "engineer_repair");
   });
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
   const activeModelEvents = new Set([
     "agent.attempt.started",
     "provider.request.started",
@@ -1558,14 +1571,20 @@ function BuildingState({ run, events, language }: { run: RunView; events: RunEve
   });
   useEffect(() => {
     if (!waitingForModel) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    const updateNow = () => setNow(Date.now());
+    const initialTick = window.setTimeout(updateNow, 0);
+    const timer = window.setInterval(updateNow, 1000);
+    return () => {
+      window.clearTimeout(initialTick);
+      window.clearInterval(timer);
+    };
   }, [latest?.event_id, waitingForModel]);
   const modelRequestStartedAt = waitingForModel
     ? eventTimestampMs(activeRequestStarted?.timestamp ?? latest?.timestamp ?? "")
     : null;
-  const elapsed = modelRequestStartedAt === null ? 0 : Math.max(0, Math.floor((now - modelRequestStartedAt) / 1000));
+  const elapsed = modelRequestStartedAt === null || now === 0
+    ? 0
+    : Math.max(0, Math.floor((now - modelRequestStartedAt) / 1000));
   return <div className="center-state building-cartoon">
     <div className="working-avatar"><RoleAvatar role={role} size="hero" /></div>
     <div className="working-stage"><LoaderCircle className="spin" size={15} /><span>{stageLabel(language, run.current_stage)}</span></div>
