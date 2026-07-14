@@ -75,6 +75,7 @@ class ArtifactType(StrEnum):
     CHANGE_BRIEF = "change_brief"
     REQUIREMENT_DELTA = "requirement_delta"
     BASE_SOURCE_SNAPSHOT = "base_source_snapshot"
+    SOURCE_CONTEXT = "source_context"
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     PRODUCT_SPEC = "product_spec"
@@ -232,8 +233,8 @@ class RequirementDelta(BaseModel):
 class SourceSnapshotFile(BaseModel):
     path: str = Field(min_length=1, max_length=500)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    size: int = Field(ge=0, le=256_000)
-    content: str = Field(max_length=256_000)
+    size: int = Field(ge=0)
+    content: str
 
 
 class BaseSourceSnapshot(BaseModel):
@@ -241,8 +242,18 @@ class BaseSourceSnapshot(BaseModel):
     project_id: str
     base_version_id: str
     base_git_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
-    files: list[SourceSnapshotFile] = Field(min_length=1, max_length=8)
+    files: list[SourceSnapshotFile] = Field(min_length=1)
     source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SourceContext(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    max_source_chars: int = Field(gt=0)
+    used_source_chars: int = Field(ge=0)
+    included_files: list[SourceSnapshotFile] = Field(default_factory=list)
+    omitted_files: list[str] = Field(default_factory=list)
+    trimming_applied: bool = False
 
 
 class SourceDiff(BaseModel):
@@ -494,6 +505,7 @@ class ProjectView(BaseModel):
 class ProjectMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     model: str | None = Field(default=None, min_length=1, max_length=100)
+    selected_files: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("message")
     @classmethod

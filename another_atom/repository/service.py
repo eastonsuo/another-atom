@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 from difflib import unified_diff
@@ -10,6 +11,7 @@ from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
     BaseSourceSnapshot,
+    SourceContext,
     SourceDiff,
     SourceSnapshotFile,
     VersionSource,
@@ -109,8 +111,17 @@ def build_source_snapshot(
     if not re_full_git_commit(git_commit):
         raise RepositoryError("Project version does not have a valid Git commit")
     path = repository_path(project_id)
+    tracked_files = _git(path, "ls-tree", "-r", "--name-only", git_commit).splitlines()
+    source_paths = sorted(
+        {
+            relative_path
+            for relative_path in tracked_files
+            if relative_path in VERSION_SOURCE_FILES
+            or Path(relative_path).suffix.casefold() in CODE_SUFFIXES
+        }
+    )
     files: list[SourceSnapshotFile] = []
-    for relative_path in VERSION_SOURCE_FILES:
+    for relative_path in source_paths:
         try:
             content = _git_file_at_commit(path, git_commit, relative_path)
         except RepositoryError as exc:
@@ -118,8 +129,6 @@ def build_source_snapshot(
                 continue
             raise
         encoded = content.encode("utf-8")
-        if len(encoded) > MAX_BROWSER_FILE_BYTES:
-            raise RepositoryError(f"{relative_path} is too large for Agent Context")
         files.append(
             SourceSnapshotFile(
                 path=relative_path,
@@ -138,6 +147,62 @@ def build_source_snapshot(
         files=files,
         source_manifest_hash=sha256(manifest.encode("utf-8")).hexdigest(),
     )
+
+
+def build_source_context(
+    snapshot: BaseSourceSnapshot,
+    request: str,
+    max_source_chars: int,
+    selected_files: list[str] | None = None,
+) -> SourceContext:
+    """Pack whole source files into a deterministic character budget."""
+    if max_source_chars <= 0:
+        raise RepositoryError("MAX_SOURCE_CHARS must be greater than zero")
+    files_by_path = {file.path: file for file in snapshot.files}
+    ordered_paths: list[str] = []
+
+    def add_path(relative_path: str) -> None:
+        if relative_path in files_by_path and relative_path not in ordered_paths:
+            ordered_paths.append(relative_path)
+
+    for relative_path in selected_files or []:
+        add_path(relative_path)
+    for relative_path in _mentioned_source_paths(request, files_by_path):
+        add_path(relative_path)
+    for relative_path in sorted(files_by_path):
+        add_path(relative_path)
+
+    included: list[SourceSnapshotFile] = []
+    omitted: list[str] = []
+    used_chars = 0
+    for relative_path in ordered_paths:
+        source_file = files_by_path[relative_path]
+        source_chars = len(source_file.content)
+        if used_chars + source_chars <= max_source_chars:
+            included.append(source_file)
+            used_chars += source_chars
+        else:
+            omitted.append(relative_path)
+    return SourceContext(
+        source_manifest_hash=snapshot.source_manifest_hash,
+        max_source_chars=max_source_chars,
+        used_source_chars=used_chars,
+        included_files=included,
+        omitted_files=omitted,
+        trimming_applied=bool(omitted),
+    )
+
+
+def _mentioned_source_paths(
+    request: str, files_by_path: dict[str, SourceSnapshotFile]
+) -> list[str]:
+    mentioned: list[tuple[int, str]] = []
+    for relative_path in sorted(files_by_path):
+        pattern = rf"(?<![\w./-]){re.escape(relative_path)}(?![\w./-])"
+        match = re.search(pattern, request)
+        if match:
+            mentioned.append((match.start(), relative_path))
+    return [relative_path for _, relative_path in sorted(mentioned)]
 
 
 def calculate_source_diff(

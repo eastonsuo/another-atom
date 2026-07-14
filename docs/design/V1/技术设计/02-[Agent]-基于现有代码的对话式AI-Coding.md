@@ -2,7 +2,7 @@
 
 [toc]
 
-- **文档状态：** V1 技术设计基线；Project 路由、修改授权与完整修改 Context 尚未按目标实现
+- **文档状态：** V1 技术设计基线；Engineer 源码 Context 已实现，Project 路由、修改授权与 SourcePatchSet 隔离 apply 尚未实现
 - **功能范围：** 已有 Project 中的 Lead 对话、增量修改、校验、版本与恢复
 - **合并流程基线：** [统一 Chat 与 Human-in-the-loop](../产品设计/06-统一Chat与Human-in-the-loop.md)
 - **产品设计：** [V1 通过对话修改现有项目](../产品设计/03-通过对话修改现有项目.md)
@@ -98,7 +98,7 @@ Lead(ProjectContextSnapshot) -> ProjectLeadDecision
 
 当前已新增 `GET/POST /api/projects/{project_id}/messages`。但 POST 会在意图判断前创建 `trigger=ai_edit` 的 Run、BuildJob 和写占用；Worker 才在 Run 内调用 Lead。direct 虽不创建版本，仍产生执行 Run，并被前端投影为整条流水线完成。
 
-team 路径会绑定 `base_version_id`，并顺序生成 ChangeBrief、RequirementDelta、完整 ArchitectureSpec、候选 AppSpec、SourceDiff、DataProfile、ValidationReport 和 ReviewReport，最后创建 `ai_edit` 版本。基线 Git 源码已形成 BaseSourceSnapshot，但当前 Provider 的 `revise_app_spec` 主要接收数据库 AppSpec；完整 ProductSpec 和实际源码内容没有进入 Engineer 修改输入，Snapshot 主要用于结果 Diff。
+team 路径会绑定 `base_version_id`，并顺序生成 ChangeBrief、RequirementDelta、完整 ArchitectureSpec、候选 AppSpec、SourceDiff、DataProfile、ValidationReport 和 ReviewReport，最后创建 `ai_edit` 版本。Runtime 已从基线 commit 枚举受控源码，按 `MAX_SOURCE_CHARS` 生成确定性 SourceContext Artifact，并把完整 ProductSpec、有效 Contract 与实际包含的源码传给 Provider 的 `revise_app_spec`。后续版本会沿 `base_version_id` 找到并复制有效 ProductSpec，避免第二轮修改丢失产品文档。
 
 已实现的正确性边界包括 Project 单写占用、最终基线检查、阶段 Artifact 复用、阶段配额、失败释放、用户归属校验和发布指针不变。
 
@@ -107,7 +107,7 @@ team 路径会绑定 `base_version_id`，并顺序生成 ChangeBrief、Requireme
 - Project 消息没有独立的异步路由层，answer/clarify 仍会先创建修改 Run；
 - Lead 没有接收持久化 `ProjectContextSnapshot`，直接回答无法可靠理解当前产品和最近对话；
 - `propose_change` 没有生成执行前 `project_change` Approval，用户不能通过独立“修改代码”按钮授权；
-- Engineer 没有接收完整有效 Contract 和基线全量受控源码组成的 `ModificationContextPackage`；
+- Engineer 仍输出完整候选 AppSpec；SourcePatchSet、隔离候选工作区 apply 与 apply 后真实 Diff 尚未实现；
 - Risk Policy 尚未根据范围、破坏性 Diff 和额外预算扩充 Approval；
 - SourceDiff 已持久化并可从文件面板查看，但尚未形成独立结果卡片；
 - 外部 GitHub/本地目录导入和 Git/数据库之间的 VersionMaterialization 记录尚未实现。
@@ -389,7 +389,7 @@ Package 由服务端从 Artifact 和基线 commit 重建，客户端只能提交
 
 ### 5.5 代码来源与无感基线识别
 
-当前实现只处理已经归入 Another Atom Project Repository 的代码。API 不要求客户端提交 commit 或文件内容；Runtime 根据 `Project.latest_version_id` 自动取得 Git commit，并从该 commit 读取 `app-spec.json`、`index.html`、`styles.css` 和 `app.js`，生成 BaseSourceSnapshot。当前 Snapshot 主要用于 Diff，尚未按本节要求进入 Engineer 的 Provider Context。
+当前实现只处理已经归入 Another Atom Project Repository 的代码。API 不要求客户端提交 commit 或文件内容；Runtime 根据 `Project.latest_version_id` 自动取得 Git commit，从该 commit 枚举 `VERSION_SOURCE_FILES` 和允许的代码后缀，生成 BaseSourceSnapshot，再按 `MAX_SOURCE_CHARS` 生成 SourceContext。该 Context 已进入 Engineer Provider 请求，并以 Artifact 和事件记录包含/省略清单。`selected_files` 已进入消息 API，但 Studio 尚未提交该字段；当前 UI 请求主要依赖消息中的准确相对路径和剩余路径升序。
 
 平台生成、结构化 Edit、Vim Save 与 Restore 都已经满足这一前提，因此用户可以直接在 Project 中提出修改。外部 GitHub 仓库或本地文件夹需要独立的 Import/Attach 流程完成授权、Secret 扫描、技术栈识别、初始 commit 和 ProjectVersion 建立；该流程尚未实现，不能通过允许客户端传入任意宿主路径来绕过。
 
@@ -771,7 +771,7 @@ error_code / trace_id
 
 ## 17. 实施状态与后续顺序
 
-已完成 ProjectMessage、修改 API/历史 UI、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、BaseSourceSnapshot、候选 AppSpec、Runtime SourceDiff、Project 单写占用、最终基线检查、`ai_edit` 版本，以及主路径、并发、失败和双用户测试。但当前入口在路由前创建 Run；Lead Context、执行前 Approval 和 Engineer 的完整文档/源码 Context 尚未实现。
+已完成 ProjectMessage、修改 API/历史 UI、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、BaseSourceSnapshot、`MAX_SOURCE_CHARS` 确定性源码装箱、SourceContext Artifact、完整 ProductSpec/有效 Contract/实际源码进入 Engineer、候选 AppSpec、Runtime SourceDiff、Project 单写占用、最终基线检查、`ai_edit` 版本，以及主路径、连续修改、并发、失败和双用户测试。但当前入口仍在路由前创建 Run；Lead Context、执行前 Approval、SourcePatchSet 和隔离 apply 尚未实现。
 
 后续按以下顺序完成：
 

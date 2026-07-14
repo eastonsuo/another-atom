@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     admin_password: str = "admin12345"
     admin_display_name: str = "Another Atom Admin"
     project_repository_root: Path = Path("data/project-repositories")
+    max_source_chars: int = 120_000
     sandbox_host_url: str | None = None
     sandbox_shared_secret: str | None = None
     sandbox_image: str = "another-atom-vim-sandbox:latest"

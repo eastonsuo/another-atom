@@ -1635,6 +1635,7 @@ def create_project_change(
                 payload={
                     "request_type": "failure_recovery",
                     "retry_of_run_id": previous_run.id if previous_run else None,
+                    "selected_files": request.selected_files,
                 },
             )
         )
@@ -1715,7 +1716,10 @@ def create_project_change(
         role="user",
         message_type="request",
         content=request.message,
-        payload={"base_version_id": base_version.id},
+        payload={
+            "base_version_id": base_version.id,
+            "selected_files": request.selected_files,
+        },
     )
     job = BuildJob(
         run_id=run.id,

@@ -200,7 +200,7 @@ ai_edit Run
 - Project Chat 会先创建 `ai_edit` Run、BuildJob 和写占用，再由 Worker 做 direct/team 判断；
 - direct 回答只接收当前消息，没有正确传递 Project Context 和最近对话；
 - Lead 判断需要修改后没有 `project_change` Approval 和“修改代码”按钮，会直接进入固定团队；
-- Engineer 主要基于数据库 AppSpec 修订，完整有效文档链和基线实际源码没有组成修改 Context；
+- Engineer 已接收完整 ProductSpec、有效 Contract 和按固定字符预算装箱的基线源码；但仍返回完整 AppSpec，SourcePatchSet 与隔离 apply 尚未实现；
 - direct Run 的 completed 状态被前端投影为全部角色已完成。
 
 本轮也不将以下能力暗示为已完成：

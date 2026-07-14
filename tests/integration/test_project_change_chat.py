@@ -78,6 +78,7 @@ def test_project_chat_modifies_existing_code_and_creates_ai_edit_version(
         "change_brief",
         "requirement_delta",
         "base_source_snapshot",
+        "source_context",
         "source_diff",
         "architecture_spec",
         "app_spec",
@@ -85,6 +86,21 @@ def test_project_chat_modifies_existing_code_and_creates_ai_edit_version(
         "validation_report",
         "review_report",
     } <= artifacts
+    with client.app.state.testing_session() as db:
+        source_context = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == run["run_id"],
+                Artifact.artifact_type == "source_context",
+            )
+        )
+        assert source_context is not None
+        assert source_context.payload["trimming_applied"] is False
+        assert {item["path"] for item in source_context.payload["included_files"]} == {
+            "app-spec.json",
+            "index.html",
+            "styles.css",
+            "app.js",
+        }
 
 
 def test_pm_clarification_resumes_same_project_change_run(client: TestClient) -> None:

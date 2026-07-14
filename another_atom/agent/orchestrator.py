@@ -13,6 +13,7 @@ from another_atom.agent.provider import (
     requires_pm_clarification,
 )
 from another_atom.build.renderer import normalize_architecture_visual_tokens, validate_app_spec
+from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
     AppSpec,
     ArchitectureSpec,
@@ -33,6 +34,7 @@ from another_atom.contracts.schemas import (
     RequirementDelta,
     ReviewReport,
     RunStatus,
+    SourceContext,
     SourceDiff,
     SupportLevel,
     ValidationReport,
@@ -45,6 +47,7 @@ from another_atom.domain.quota import release_quota, reserve_quota, settle_quota
 from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
+    build_source_context,
     build_source_snapshot,
     calculate_source_diff,
     commit_version,
@@ -638,6 +641,13 @@ class Orchestrator:
             self._fail_run(run, "MISSING_INPUT", "The current ArchitectureSpec could not be loaded")
             return
         base_architecture = ArchitectureSpec.model_validate(source_architecture.payload)
+        product_spec = self._product_spec_for_version(base_version)
+        if product_spec is None:
+            self._fail_run(run, "MISSING_INPUT", "The current ProductSpec could not be loaded")
+            return
+        if get_artifact(self.db, run.id, ArtifactType.PRODUCT_SPEC) is None:
+            save_artifact(self.db, run.id, ArtifactType.PRODUCT_SPEC, product_spec)
+            self.db.commit()
 
         try:
             project.status = ProjectStatus.BUILDING.value
@@ -654,7 +664,6 @@ class Orchestrator:
                     self.db, run.id, ArtifactType.BASE_SOURCE_SNAPSHOT, source_snapshot
                 )
                 self.db.commit()
-
             run.status = RunStatus.PRODUCT_RUNNING.value
             run.current_stage = "team_leader"
             previous_failure = self._previous_failure_context(run)
@@ -754,6 +763,36 @@ class Orchestrator:
             )
             self.db.commit()
 
+            source_context_artifact = get_artifact(
+                self.db, run.id, ArtifactType.SOURCE_CONTEXT
+            )
+            if source_context_artifact:
+                source_context = SourceContext.model_validate(source_context_artifact.payload)
+            else:
+                source_context = build_source_context(
+                    source_snapshot,
+                    effective_prompt,
+                    get_settings().max_source_chars,
+                    self._selected_files_for_run(run),
+                )
+                source_context_artifact = save_artifact(
+                    self.db, run.id, ArtifactType.SOURCE_CONTEXT, source_context
+                )
+            self._record_event_once(
+                run,
+                "source.context_prepared",
+                "Runtime prepared the deterministic source Context",
+                "engineer",
+                {
+                    "max_source_chars": source_context.max_source_chars,
+                    "used_source_chars": source_context.used_source_chars,
+                    "included_files": [item.path for item in source_context.included_files],
+                    "omitted_files": source_context.omitted_files,
+                    "trimming_applied": source_context.trimming_applied,
+                },
+            )
+            self.db.commit()
+
             run.status = RunStatus.ENGINEER_RUNNING.value
             run.current_stage = "engineer"
             self._record_event_once(
@@ -774,6 +813,8 @@ class Orchestrator:
                         base_app_spec,
                         change_brief,
                         requirement_delta,
+                        product_spec,
+                        source_context,
                     ),
                     architecture_spec,
                 ),
@@ -783,7 +824,11 @@ class Orchestrator:
                 "stage.completed",
                 "Candidate AppSpec passed schema validation",
                 "engineer",
-                {"artifact_id": app_artifact.id},
+                {
+                    "artifact_id": app_artifact.id,
+                    "source_context_artifact_id": source_context_artifact.id,
+                    "source_trimming_applied": source_context.trimming_applied,
+                },
             )
             diff_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF)
             if diff_artifact is None:
@@ -1284,6 +1329,38 @@ class Orchestrator:
             error_message=previous.error_message,
             artifact_types=artifact_types[:20],
         )
+
+    def _selected_files_for_run(self, run: Run) -> list[str]:
+        message = self.db.scalar(
+            select(ProjectMessage)
+            .where(
+                ProjectMessage.run_id == run.id,
+                ProjectMessage.role == "user",
+                ProjectMessage.message_type == "request",
+            )
+            .order_by(ProjectMessage.created_at.asc(), ProjectMessage.id.asc())
+            .limit(1)
+        )
+        if message is None:
+            return []
+        selected_files = message.payload.get("selected_files", [])
+        return [item for item in selected_files if isinstance(item, str)]
+
+    def _product_spec_for_version(self, version: ProjectVersion) -> ProductSpec | None:
+        current: ProjectVersion | None = version
+        visited: set[str] = set()
+        while current is not None and current.id not in visited:
+            visited.add(current.id)
+            artifact = get_artifact(self.db, current.run_id, ArtifactType.PRODUCT_SPEC)
+            if artifact is not None:
+                return ProductSpec.model_validate(artifact.payload)
+            version_run = self.db.get(Run, current.run_id)
+            current = (
+                self.db.get(ProjectVersion, version_run.base_version_id)
+                if version_run is not None and version_run.base_version_id
+                else None
+            )
+        return None
 
     def _run_agent_stage(
         self,

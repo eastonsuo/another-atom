@@ -22,9 +22,11 @@ from another_atom.contracts.schemas import (
     PMRequirementAssessment,
     PreviousFailureContext,
     ProductItem,
+    ProductSpec,
     RequirementDelta,
     ReviewIssue,
     ReviewReport,
+    SourceContext,
     SupportLevel,
     ValidationReport,
 )
@@ -159,6 +161,8 @@ class LLMProvider(Protocol):
         app_spec: AppSpec,
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
+        product_spec: ProductSpec,
+        source_context: SourceContext,
     ) -> AppSpec: ...
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
@@ -448,6 +452,8 @@ class MockLLMProvider:
         app_spec: AppSpec,
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
+        product_spec: ProductSpec,
+        source_context: SourceContext,
     ) -> AppSpec:
         self._record_request()
         self._raise_if_requested(change_brief.original_request, "engineer-change")
@@ -1065,6 +1071,8 @@ class OllamaCloudProvider:
         app_spec: AppSpec,
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
+        product_spec: ProductSpec,
+        source_context: SourceContext,
     ) -> AppSpec:
         return self._structured_chat(
             AppSpec,
@@ -1082,6 +1090,8 @@ class OllamaCloudProvider:
                 "current_app_spec": app_spec.model_dump(mode="json"),
                 "change_brief": change_brief.model_dump(mode="json"),
                 "requirement_delta": requirement_delta.model_dump(mode="json"),
+                "product_spec": product_spec.model_dump(mode="json"),
+                "source_context": source_context.model_dump(mode="json"),
             },
         )
 
