@@ -4,7 +4,7 @@
 
 > Turn a rough idea into a software project whose code you can inspect, edit, version, and publish.
 
-## Product Conclusion
+## Product Goal
 
 Another Atom is a multi-agent Vibe Coding workspace. Users may describe any software product goal; specialist Agents plan, implement, and validate, while the Project workspace keeps source files, version history, runtime results, and publishing in one continuous development loop. Web Projects can additionally be previewed and visually edited inside Studio.
 
@@ -259,12 +259,12 @@ Version-specific engineering boundaries remain in each architecture document; th
 
 ## Current Versions
 
+The current release is **v0.3.0 (2026-07-15)**. Refer to the [Release / Changelog](./CHANGELOG.md) for accepted capabilities, verification evidence, and explicit boundaries. This README keeps only the product position, overall architecture, and usage entry points instead of duplicating release details.
+
 | Version | How it advances the overall goal | Status and design sources |
 | --- | --- | --- |
 | **V1** | Proves the complete loop with a fixed specialist team, Project Git, versions, and explicit publishing; the Web source and browser Preview adapter is the currently implemented path | Railway single-replica accepted; non-Web Runtime adapters and target Linux Sandbox isolation acceptance remain. See [V1 product](./docs/design/V1/产品设计/01-核心产品需求与交互.md), [V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md), and [V1 architecture](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
 | **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/01-[Agent]-任务编排与多Agent协作.md), and [V2 architecture](./docs/design/V2/技术设计/02-[工程]-多Agent执行与沙箱架构.md) |
-
-The current code includes real and Mock LLM providers, user isolation, Project Git, interactive Preview for Web Projects, versions and publishing, durable jobs, and Provider fallback. The backend currently collects 85 unit/integration tests. See the [V1 delivery status snapshot](./docs/review/归档/11-[综合]-2026-07-13-V1交付状态摘要.md) and [V1 review](./docs/review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md) for detailed completion status.
 
 ## Quick Start
 
@@ -307,6 +307,7 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 
 ## Documentation
 
+- **Release:** [Release history and current capability boundaries](./CHANGELOG.md)
 - **Complete knowledge base (Chinese):** [Full project design knowledge base](./PROJECT_KNOWLEDGE_BASE.md)
 - **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
 - **Design:** [Design documentation index](./docs/design/README.md)
@@ -318,4 +319,4 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 
 - **Source:** [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
 - **Online:** Railway deployment and public access have been accepted; the service domain is managed by the Railway environment.
-- **Current limits:** target Linux Sandbox security acceptance, a complete Project conversation thread, failure Retry/Resolve, and backend-dependent product capabilities remain future work.
+- **Current limits:** a recoverable asynchronous `ConversationJob`, generic Approval subjects, target Linux Sandbox security acceptance, complete Retry/Resolve coverage, and backend-dependent product capabilities remain future work.

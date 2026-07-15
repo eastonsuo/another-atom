@@ -2,6 +2,59 @@
 
 本文件按发布时间倒序记录 Another Atom 已完成验收的产品版本。未实现的设计 TODO 和 V2 规划不计入已发布能力。
 
+## 2026-07-15 — v0.3.0
+
+- **发布主题：** 可检查、可恢复的对话式项目修改
+- **产品范围：** V1 ProductSpec 确认、持久化 Project Chat、架构交付、受控源码修改与 Runtime 验证
+- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)、[常驻流式对话与执行期间输入控制](./docs/design/V1/产品设计/07-常驻流式对话与执行期间输入控制.md)、[静态源码 Context 与受控文件变更执行](./docs/design/V1/技术设计/10-[Agent][TODO]-静态源码Context与Patch执行.md)
+
+### 本次发布
+
+- **首次需求澄清与 ProductSpec 确认**
+  - Lead 可以把影响产品形态的缺失信息整理为结构化选项；用户选择后，原始需求和补充结果一起传给 Product Manager。
+  - Product Manager 生成可编辑的 Markdown 产品说明；用户确认后才进入架构和工程阶段。
+- **常驻流式 Project Chat**
+  - Project 对话框在构建前后始终保留，用户消息先持久化并立即显示，模型输出和阶段进度通过流式事件持续更新。
+  - Agent 工作期间禁用新消息发送并明确说明原因；支持 `Shift + Enter` 发送。
+  - Agent 返回详情可以展开检查，不再只显示不透明的日志和转圈状态。
+- **架构交付与隔离 Runtime 验证**
+  - Architect 交付完整 ArchitectureDesign，Studio 在生成后可以直接打开查看。
+  - Engineer 生成源码和单元测试后，由 Runtime 依次执行物化、Build、Unit Test 和 Validation；失败步骤和错误证据持久化。
+- **基于现有项目的受控源码修改**
+  - Lead 先区分普通问答和代码修改；普通问答不启动团队流水线，修改请求先形成 ChangeBrief 并等待用户明确授权。
+  - Engineer 获取绑定固定版本、Git commit 和大小预算的静态源码 Context，不从 starter 或空白 AppSpec 重新生成。
+  - Engineer 返回 `SourceFileChangeSet`：只声明本轮 add、modify、delete 的文件及最终内容，不再生成 raw unified diff。
+  - Runtime 校验 Context、路径、`before_hash`、输出大小和未声明文件，在隔离目录物化候选，再从真实文件本地计算 `SourceDiff`；验证通过后才创建新版本。
+- **失败恢复与运行可见性**
+  - 修复失败 Run 使用已保存需求重新构建的入口，并保留原失败记录。
+  - Provider 请求轮次、模型持续生成状态、Agent 尝试和 Worker lease 续期进入可见事件流。
+- **管理与能力边界**
+  - 管理后台支持把用户设置为管理员。
+  - Web 能力策略允许访问公网 API，同时继续阻止 loopback / localhost 地址。
+
+### 验证结果
+
+- 后端 157 项测试全部通过。
+- Python Ruff 检查通过。
+- Studio ESLint 通过。
+- Studio 生产构建通过；仅保留现有的大 chunk 提示。
+- `git diff --check` 通过。
+
+### 当前边界
+
+- 已实现的是一次性静态源码 Context；动态补充读取、CandidateRevision 链和基于验证反馈的有界 Repair ChangeSet 尚未实现。
+- `SourceFileChangeSet` 当前只覆盖 `web-static-v1`；非 Web Runtime 适配器仍未实现。
+- 历史 raw Patch Artifact 仅保留读取兼容，新 Run 不再走 `git apply` 链。
+- 真实 Provider 和 Railway 环境仍需针对本版本完成发布验收。
+- V2 动态任务图、Agent 子集选择和并行执行不属于本版本。
+
+### 依据
+
+- [基于现有代码的对话式 AI Coding](./docs/design/V1/技术设计/02-[Agent]-基于现有代码的对话式AI-Coding.md)
+- [Project 对话路由与代码修改授权检查](./docs/review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)
+- [修改流水线设计同步与 Patch 实现检查](./docs/review/待办/26-[Agent]-2026-07-15-修改流水线设计同步与Patch实现检查.md)
+- [模型生成 Unified Diff 可靠性检查](./docs/review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)
+
 ## 2026-07-14 — v0.2.1
 
 - **发布类型：** CI 与发布元数据修复
