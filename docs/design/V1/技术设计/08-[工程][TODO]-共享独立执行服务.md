@@ -8,6 +8,7 @@
 - 智能体设计：[Another Atom V1 多智能体设计](./01-[Agent]-多Agent设计.md)
 - 系统架构：[Another Atom V1 系统架构](./03-[工程]-系统架构.md)
 - 部署设计：[Another Atom V1 运行与部署](./04-[工程]-运行与部署.md)
+- Contract 设计：[Another Atom V1 通用源码与 Runtime 校验 Contract](./12-[工程][TODO]-通用源码与Runtime校验Contract.md)
 
 > **2026-07-15 实现更新：** 已增加独立执行服务入口 `another_atom.executor.app:app`、非 root 的 `Dockerfile.executor`、`railway.executor.toml`、共享执行契约、主服务调用客户端和 `web-static-v1` 运行器。新构建会在执行服务临时目录物化源码，固定执行 `node --check app.js` 与 `node --test tests/*.test.js`，再运行确定性校验；主服务校验请求和返回指纹后保存源码包（SourceBundle）、构建产物（BuildArtifact）、执行报告（ExecutionReport）和校验报告（ValidationReport）。私有接口已经实现持有者令牌（Bearer）认证、时间戳、正文指纹、逐行 JSON（NDJSON）流式事件、全局单并发、重复执行保护、总截止时间和取消信号。本地自动化已覆盖成功链路、架构边界退回产品规格、私有 HTTP 契约、执行截止时间和取消信号；Railway 私网部署、服务中断、经 HTTP 取消运行中任务和多用户压力验收仍未完成，因此本文继续保持 `[TODO]`。
 
@@ -26,11 +27,13 @@
 - **共享方式**
   - 所有用户共享一个无状态执行服务，V1 全局并发为一；主服务负责排队和每用户并发限制，执行服务不读取用户数据库，也不保存用户源码。
 - **执行契约**
-  - 主服务发送应用规格（AppSpec）、源码包（SourceBundle）、上游指纹和固定适配器标识；执行服务流式返回阶段事件，最终返回构建产物（BuildArtifact）、执行报告（ExecutionReport）和校验报告（ValidationReport）。
+  - 主服务发送交付规格、源码包（SourceBundle）、Runtime Contract 标识/版本/指纹和上游指纹；执行服务校验同一 Contract 后流式返回阶段事件，最终返回构建产物（BuildArtifact）、执行报告（ExecutionReport）和校验报告（ValidationReport）。现有 AppSpec 与固定适配器字段属于迁移兼容。
 - **安全边界**
   - 适配器命令固化在执行服务镜像中，模型和用户不能提交命令、安装依赖或获得终端。Railway 非特权服务不能提供任务级嵌套容器，因此该方案不能声称具备任意不可信代码的强沙箱能力。
 - **迁移边界**
   - 第一阶段只实现 `web-static-v1`；其他项目类型仍可交付源码，但在没有匹配适配器时必须显示能力缺口，不能被改写成网页项目。
+
+Runtime Executor 的部署、认证、并发、临时目录和资源限制继续以本文为事实来源；SourceBundle 与 Runtime Adapter 之间的 Interface、校验职责和 `valid/source_ready/candidate_rejected/execution_blocked` 结果语义以[通用源码与 Runtime 校验 Contract](./12-[工程][TODO]-通用源码与Runtime校验Contract.md)为事实来源。执行服务不得维护另一份未暴露给 Engineer 和确定性预检的项目形态规则。
 
 ## 1. 设计结论
 
