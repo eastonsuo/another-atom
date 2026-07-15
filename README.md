@@ -2,7 +2,17 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-> 把模糊想法转化为用户可查看和编辑代码、持续迭代、管理版本并自主发布的软件项目。
+> **和 AI 团队一起，把想法做成软件。**
+
+[![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
+[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/V1/产品设计/01-核心产品需求与交互.md)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
+[![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
+
+从需求澄清到代码、验证和发布，所有过程归入同一个 Project；文档和源码可查看、可修改，项目可以基于现有版本持续迭代。
+
+[产品设计](./docs/design/V1/产品设计/01-核心产品需求与交互.md) · [技术设计](./docs/design/V1/技术设计/03-[工程]-系统架构.md) · [Release](./CHANGELOG.md) · [快速开始](#快速开始)
 
 ## 产品目标
 

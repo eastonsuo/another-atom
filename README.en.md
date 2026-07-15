@@ -2,7 +2,17 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-> Turn a rough idea into a software project whose code you can inspect, edit, version, and publish.
+> **Build software from ideas, together with an AI team.**
+
+[![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
+[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/V1/产品设计/01-核心产品需求与交互.md)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
+[![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
+
+Requirements, code, validation, and publishing stay in one Project. Documents and source remain inspectable and editable, and each iteration continues from an existing version.
+
+[Product design](./docs/design/V1/产品设计/01-核心产品需求与交互.md) · [Technical design](./docs/design/V1/技术设计/03-[工程]-系统架构.md) · [Release](./CHANGELOG.md) · [Quick start](#quick-start)
 
 ## Product Goal
 
