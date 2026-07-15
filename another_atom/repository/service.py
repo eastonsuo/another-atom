@@ -549,6 +549,10 @@ def materialize_source_file_change_set(
         candidate_files,
     )
     rendered = render_version_files(app_spec)
+    # index.html contains a Runtime-owned document shell. The Engineer proposes the
+    # application body; Runtime always writes the canonical shell so harmless
+    # formatting changes in model output cannot become source-contract failures.
+    candidate_files["index.html"] = rendered["index.html"]
     for path in sorted(required_files):
         if candidate_files[path] != rendered[path]:
             raise SourceChangeError(
@@ -567,6 +571,7 @@ def materialize_source_file_change_set(
             "path-and-before-hash-policy",
             "isolated-file-materialization",
             "undeclared-files-unchanged",
+            "runtime-document-shell-canonicalization",
             "app-spec-source-consistency",
         ],
     )
@@ -580,14 +585,7 @@ def _rebuild_app_spec_from_candidate(
     candidate_files: dict[str, str],
 ) -> AppSpec:
     html_document = candidate_files["index.html"]
-    body_start = "<body>\n"
-    body_end = '\n<script src="./app.js"></script>\n</body>\n</html>\n'
-    if html_document.count(body_start) != 1 or not html_document.endswith(body_end):
-        raise SourceChangeError(
-            "CANDIDATE_CONTRACT_INVALID",
-            "index.html changed the Runtime-managed document shell",
-        )
-    html = html_document.split(body_start, 1)[1][: -len(body_end)]
+    html = _extract_candidate_application_body(html_document)
 
     css_file = candidate_files["styles.css"]
     if not css_file.endswith("\n"):
@@ -619,6 +617,44 @@ def _rebuild_app_spec_from_candidate(
             "background_color": architecture_spec.background_color,
         }
     )
+
+
+def _extract_candidate_application_body(html_document: str) -> str:
+    body_matches = list(re.finditer(r"<body\s*>", html_document, re.IGNORECASE))
+    if len(body_matches) != 1:
+        raise SourceChangeError(
+            "CANDIDATE_CONTRACT_INVALID",
+            "index.html must contain exactly one Runtime-managed body boundary",
+        )
+    body_match = body_matches[0]
+    prefix = html_document[: body_match.start()]
+    if not re.fullmatch(
+        r"\s*<!doctype\s+html\s*>\s*<html\b[^>]*>\s*<head\b[^>]*>.*</head>\s*",
+        prefix,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        raise SourceChangeError(
+            "CANDIDATE_CONTRACT_INVALID",
+            "index.html changed the Runtime-managed document shell",
+        )
+    body_end = re.search(
+        r"\s*<script\s+src\s*=\s*(['\"])(?:\./)?app\.js\1\s*>\s*</script>"
+        r"\s*</body>\s*</html>\s*\Z",
+        html_document[body_match.end() :],
+        re.IGNORECASE | re.DOTALL,
+    )
+    if body_end is None:
+        raise SourceChangeError(
+            "CANDIDATE_CONTRACT_INVALID",
+            "index.html changed the Runtime-managed document shell",
+        )
+    html = html_document[body_match.end() : body_match.end() + body_end.start()]
+    if re.search(r"</?(?:html|head|body)\b", html, re.IGNORECASE):
+        raise SourceChangeError(
+            "CANDIDATE_CONTRACT_INVALID",
+            "index.html application body contains a nested document shell boundary",
+        )
+    return html.strip()
 
 
 def _candidate_source_hash(candidate_files: dict[str, str]) -> str:

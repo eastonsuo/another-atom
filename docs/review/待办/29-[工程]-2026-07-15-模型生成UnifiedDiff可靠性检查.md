@@ -135,3 +135,9 @@ Runtime 隐藏以下实现：
 - Orchestrator、Artifact、事件、文件面板和 Studio 已切换到 `source_file_change_set`、`source_change_apply_report` 与 `source.change_*`。旧 Patch Artifact/Event 保留只读展示；未完成旧 Patch Run 不跨协议续接。
 - 自动化证据：`tests/unit/test_source_change.py` 覆盖 modify、add/delete、Context 缺失、hash 冲突、受保护路径、输出超限、未声明文件不变和最终版本提交；Project Chat 集成测试覆盖成功修改及失败不创建版本。完整后端测试为 `157 passed`；`.venv/bin/ruff check another_atom tests` 通过；Studio `npm run lint` 与 `npm run build` 通过，Vite 仅保留既有大 chunk 警告。
 - 本 Review 继续保留在`待办`：尚未用真实 Provider 在 Railway 完成 modify、add/delete、失败不污染基线、Debug Log 导出和 Worker 重启恢复验收。
+
+## Update 2026-07-15（Runtime-managed HTML 外壳误判修正）
+
+Railway 的真实 Provider 修改“毛玻璃翻译”项目名称时，已生成合法 `SourceFileChangeSet`，但 `index.html` 的 doctype、`body` 边界或入口脚本格式没有逐字复刻 Runtime 模板，候选在 Build 前以 `CANDIDATE_CONTRACT_INVALID / index.html changed the Runtime-managed document shell` 终止。该失败仍不是业务修改错误，而是新 Contract 把 Runtime 自己拥有的外壳格式精度留给了模型。
+
+Repository Service 现只从 Engineer 候选中识别唯一应用正文和本地 `app.js` 入口，随后由 Runtime 重新生成规范 doctype、`head`、`body` 和入口脚本外壳。外部脚本、多个或嵌套文档边界仍返回 `CANDIDATE_CONTRACT_INVALID`；应用正文、`styles.css`、去除 Guard 后的 `app.js` 和 `AppSpec` 仍须一致。单元测试覆盖无害外壳格式变化可规范化、外部入口脚本仍被拒绝；完整后端测试和静态检查通过。Railway 同一修改场景仍待新部署复验，因此本文保持待办。

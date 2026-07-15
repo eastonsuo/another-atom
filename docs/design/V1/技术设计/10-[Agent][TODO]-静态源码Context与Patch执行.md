@@ -138,15 +138,15 @@ SourceFileChangeSet
 
 Runtime 在候选物化后：
 
-1. 从候选 `index.html` 提取受控 `<body>`；
+1. 从候选 `index.html` 识别唯一 `<body>` 和本地 `app.js` 入口，只提取应用正文；模型输出中的 doctype、`head`、`body` 边界格式和入口脚本格式不直接进入候选；
 2. 从 `styles.css` 读取 CSS；
 3. 从 `app.js` 去除 Runtime 注入且不可修改的网络 Guard；
 4. 将上述代码字段与 `app_spec_delta` 合并到基线 `AppSpec`；
 5. 视觉 Token 继续以修订后的 `ArchitectureSpec` 为准；
-6. 调用 `render_version_files()`，要求重新渲染的三个入口文件与候选逐字一致；
+6. 调用 `render_version_files()` 重新生成 Runtime 管理的规范 `index.html` 外壳；`styles.css`、`app.js` 和提取后的应用正文仍必须与重建后的 `AppSpec` 一致；
 7. 生成新的 `app-spec.json`，再形成候选 `SourceBundle`。
 
-不一致返回 `CANDIDATE_CONTRACT_INVALID`，不能让 Runtime 猜测源码或 AppSpec 哪一侧正确。
+这一规则不允许 Engineer 修改文档外壳，也不要求模型逐字复刻换行、缩进、doctype 大小写和脚本标签格式。Runtime 只规范化自己拥有的外壳，不猜测或改写应用正文。无法识别唯一正文边界、本地 `app.js` 入口，或正文与 `AppSpec` 不一致时返回 `CANDIDATE_CONTRACT_INVALID`。
 
 ## 6. Provider Interface
 
@@ -191,7 +191,7 @@ Runtime 按以下顺序执行：
 6. modify 使用 `replacement_content` 覆盖目标，add 创建目标，delete 删除目标；
 7. 拒绝符号链接、非普通文件、必要入口缺失和越权文件；
 8. 重新枚举候选，证明 ChangeSet 外文件 byte-level 未变化；
-9. 按第 5 节重建 `AppSpec`、`app-spec.json` 和 `SourceBundle`；
+9. 按第 5 节提取应用正文、重建 `AppSpec`，并由 Runtime 生成规范 `index.html` 外壳、`app-spec.json` 和 `SourceBundle`；
 10. 从输入与候选真实文件确定性计算 `SourceDiff`；
 11. 将候选交给 Runtime Executor 执行 Build、Unit Test 和 Validator；
 12. 全部门禁通过并完成最终 CAS 后，才创建 ProjectVersion 和 Git commit。

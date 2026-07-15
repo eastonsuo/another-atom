@@ -157,6 +157,129 @@ def test_static_source_change_round_trip_rebuilds_runtime_contract(
     get_settings.cache_clear()
 
 
+def test_static_source_change_canonicalizes_runtime_owned_html_shell(
+    tmp_path, monkeypatch
+) -> None:
+    (
+        provider,
+        blueprint,
+        architecture,
+        architecture_design,
+        app_spec,
+        product_spec,
+        snapshot,
+        brief,
+        requirements,
+    ) = _prepared_change(tmp_path, monkeypatch)
+    context = build_source_context(
+        snapshot,
+        brief.original_request,
+        120_000,
+        runtime_managed_files=["app-spec.json"],
+    )
+    change_set = provider.create_source_file_change_set(
+        "33333333-3333-3333-3333-333333333333",
+        snapshot,
+        context,
+        product_spec,
+        blueprint,
+        architecture_design,
+        architecture,
+        brief,
+        requirements,
+        app_spec,
+    )
+    index_change = next(item for item in change_set.changes if item.path == "index.html")
+    reformatted = (
+        index_change.replacement_content.replace("<!doctype html>", "<!DOCTYPE html>")
+        .replace("<body>\n", "<body >\n\n")
+        .replace(
+            '<script src="./app.js"></script>',
+            '<script src="app.js" ></script>',
+        )
+    )
+    change_set = change_set.model_copy(
+        update={
+            "changes": [
+                item.model_copy(update={"replacement_content": reformatted})
+                if item.path == "index.html"
+                else item
+                for item in change_set.changes
+            ]
+        }
+    )
+
+    candidate_app, candidate_files, report = materialize_source_file_change_set(
+        snapshot, context, change_set, app_spec, architecture
+    )
+
+    assert candidate_app.hero_title == "夜间扫雷"
+    assert candidate_files["index.html"].startswith("<!doctype html>\n")
+    assert '<script src="./app.js"></script>\n</body>\n</html>\n' in candidate_files[
+        "index.html"
+    ]
+    assert "runtime-document-shell-canonicalization" in report.checks
+    get_settings.cache_clear()
+
+
+def test_static_source_change_rejects_non_runtime_application_script(
+    tmp_path, monkeypatch
+) -> None:
+    (
+        provider,
+        blueprint,
+        architecture,
+        architecture_design,
+        app_spec,
+        product_spec,
+        snapshot,
+        brief,
+        requirements,
+    ) = _prepared_change(tmp_path, monkeypatch)
+    context = build_source_context(
+        snapshot,
+        brief.original_request,
+        120_000,
+        runtime_managed_files=["app-spec.json"],
+    )
+    change_set = provider.create_source_file_change_set(
+        "33333333-3333-3333-3333-333333333333",
+        snapshot,
+        context,
+        product_spec,
+        blueprint,
+        architecture_design,
+        architecture,
+        brief,
+        requirements,
+        app_spec,
+    )
+    change_set = change_set.model_copy(
+        update={
+            "changes": [
+                item.model_copy(
+                    update={
+                        "replacement_content": item.replacement_content.replace(
+                            './app.js', 'https://example.com/app.js'
+                        )
+                    }
+                )
+                if item.path == "index.html"
+                else item
+                for item in change_set.changes
+            ]
+        }
+    )
+
+    with pytest.raises(SourceChangeError) as raised:
+        materialize_source_file_change_set(
+            snapshot, context, change_set, app_spec, architecture
+        )
+
+    assert raised.value.code == "CANDIDATE_CONTRACT_INVALID"
+    get_settings.cache_clear()
+
+
 def test_static_source_change_cannot_modify_omitted_baseline_file(
     tmp_path, monkeypatch
 ) -> None:

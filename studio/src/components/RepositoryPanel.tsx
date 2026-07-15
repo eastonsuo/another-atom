@@ -1,5 +1,5 @@
 import { Bug, Code2, Eye, FileJson, FileText, FolderGit2, GripVertical, LoaderCircle, Maximize2, Minimize2, Pencil, Redo2, RefreshCw, Save, TerminalSquare, Undo2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import type { ProjectFileContent, ProjectFileEntry, RunEvent, RunView, VersionView } from "../types";
 import { MarkdownPreview } from "./MarkdownPreview";
@@ -31,37 +31,46 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
     return Math.min(preferred, Math.max(MIN_TOOL_PANEL_WIDTH, window.innerWidth - 96));
   });
   const [fullScreen, setFullScreen] = useState(false);
+  const refreshGeneration = useRef(0);
+  const fileOpenGeneration = useRef(0);
   const dirty = mode === "edit" && fileContent !== null && draft !== fileContent.content;
 
   const confirmDiscard = useCallback(() => !dirty || window.confirm(copy(language, "Discard unsaved changes?")), [dirty, language]);
 
   const openFile = useCallback(async (file: ProjectFileEntry) => {
-    if (!confirmDiscard()) return;
+    if (!confirmDiscard()) return false;
+    const generation = ++fileOpenGeneration.current;
     setSelected(file);
     setError("");
     setSavedCommit("");
     try {
       const result = await api.projectFile(run.project_id, run.run_id, file.path, file.source);
+      if (generation !== fileOpenGeneration.current) return false;
       setFileContent(result);
       setDraft(result.content);
       setUndoStack([]);
       setRedoStack([]);
       setMode(result.render_mode === "markdown" ? "preview" : "source");
+      return true;
     } catch (reason) {
+      if (generation !== fileOpenGeneration.current) return false;
       setFileContent(null);
       setDraft("");
       setUndoStack([]);
       setRedoStack([]);
       setError(reason instanceof Error ? reason.message : copy(language, "Could not read file"));
+      return false;
     }
   }, [confirmDiscard, language, run.project_id, run.run_id]);
 
   const refresh = useCallback(async (requestedPath?: string) => {
-    if (!confirmDiscard()) return;
+    if (!confirmDiscard()) return false;
+    const generation = ++refreshGeneration.current;
     setLoading(true);
     setError("");
     try {
       const next = await api.projectFiles(run.project_id, run.run_id);
+      if (generation !== refreshGeneration.current) return false;
       setFiles(next);
       const requested = requestedPath
         ? next.find((file) => file.source === "repository" && file.path === requestedPath)
@@ -80,10 +89,13 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
         setFileContent(null);
         setDraft("");
       }
+      return true;
     } catch (reason) {
+      if (generation !== refreshGeneration.current) return false;
       setError(reason instanceof Error ? reason.message : copy(language, "Could not list files"));
+      return false;
     } finally {
-      setLoading(false);
+      if (generation === refreshGeneration.current) setLoading(false);
     }
   }, [confirmDiscard, language, openFile, run.project_id, run.run_id, run.status, selected]);
 
@@ -97,11 +109,15 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
   useEffect(() => {
     if (!requestedFilePath) return;
     const timer = window.setTimeout(() => {
-      onRequestedFileOpened?.();
-      setActive("files");
-      const requested = files.find((file) => file.source === "repository" && file.path === requestedFilePath);
-      if (requested) void openFile(requested);
-      else void refresh(requestedFilePath);
+      void (async () => {
+        refreshGeneration.current += 1;
+        setLoading(false);
+        setActive("files");
+        const requested = files.find((file) => file.source === "repository" && file.path === requestedFilePath);
+        if (requested) await openFile(requested);
+        else await refresh(requestedFilePath);
+        onRequestedFileOpened?.();
+      })();
     }, 0);
     return () => window.clearTimeout(timer);
     // This effect represents an explicit one-shot request from the parent.
@@ -264,7 +280,7 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
   </aside>;
 }
 
-function FileGroup({ title, files, selected, onOpen }: { title: string; files: ProjectFileEntry[]; selected: ProjectFileEntry | null; onOpen: (file: ProjectFileEntry) => Promise<void> }) {
+function FileGroup({ title, files, selected, onOpen }: { title: string; files: ProjectFileEntry[]; selected: ProjectFileEntry | null; onOpen: (file: ProjectFileEntry) => Promise<unknown> }) {
   return <section><strong>{title}<span>{files.length}</span></strong>{files.length === 0 ? <small>—</small> : files.map((file) => {
     const active = selected?.path === file.path && selected.source === file.source;
     const depth = Math.min(file.path.split("/").length - 1, 3);
