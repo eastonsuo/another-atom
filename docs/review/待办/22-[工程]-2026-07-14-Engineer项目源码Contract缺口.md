@@ -15,6 +15,7 @@
 ## 摘要
 
 - **[P0｜实现与产品边界冲突]** 产品基线要求保留用户请求的项目类型；Preview 只是一种项目类型能力，不能反向限定生成边界。但当前 Engineer Contract 会把所有可构建请求收敛为 Web `AppSpec`。
+- **[P0｜可靠性未达到可用基线]** 当前实际观察中的 Engineer 候选一次通过率最多约 50%，大量错误直到 Build/Test 或 Repair 才暴露。V1 应把一次通过率提升到 90% 以上，同时保证任何候选失败都不会破坏已有可用版本。
 - **[P1｜Repository 不是 Engineer 的原生输出]** 当前项目文件由 Packager 从三个字符串派生，Engineer 不能表达多文件目录、配置、依赖声明、测试、README、服务端代码或非 Web 源码。
 - **[P1｜Runtime Adapter 与源码 Contract 耦合]** 浏览器 Preview、Validator 和 Engineer 输出共享同一个 Web Contract，导致“暂时没有运行适配器”和“不能生成该类项目”无法区分。
 
@@ -94,6 +95,33 @@ Run `f697...` 最终不是正常的校验失败，而是 `another_atom/agent/pro
 
 该结论已与[整体产品目标与定位](../../design/整体/01-[产品]-整体产品目标与定位.md#46-产品目标开放还是-runtime-无限制)和[V1 多 Agent 设计](../../design/V1/技术设计/01-[Agent]-多Agent设计.md#25-工程师engineer交付项目源码单元测试并对通过负责)对齐，不新增另一套长期设计。
 
+### 可靠性目标与统计口径
+
+当前实际使用中，Engineer 候选的一次通过率最多约 50%。这一数字来自现阶段运行观察，现有事件和统计尚不足以形成严格的历史基线；实现整改时必须先补齐可复算的通过率指标，不能继续依靠人工感受判断质量。
+
+V1 本项整改目标为：
+
+1. **Engineer 候选一次通过率达到 90% 以上。**“一次通过”指首次 Engineer 输出在不进入 Repair、不重新调用 Engineer 的情况下，连续通过结构化 Contract、SourceBundle/文件引用、Adapter 输入以及 Build/Test/Runtime 校验，并形成可预览或可交付版本。
+2. **已有可用版本保留率为 100%。** 新候选只进入隔离候选区；全部门禁通过后才原子提升为新 ProjectVersion。候选失败只能标记“本次变更未通过”，不能把项目整体改成不可用状态。
+3. **Provider 内部异常导致的任务失败为 0。** 非法 JSON、截断输出和结构纠错失败必须保留原始证据并进入有界重试或可解释失败，不能再转化为 `WORKER_FAILED`。
+4. **未通过校验的候选写入正式版本为 0。** Repair 也必须重新经过完整门禁，不能绕过 Contract、Adapter 或 Runtime 校验。
+
+一次通过率按 Adapter 分组统计，分子为首次候选直接通过的有效 Run 数，分母为进入 Engineer 且收到完整模型响应的有效 Run 数；用户取消、明确的上游 Provider 不可用不混入代码生成质量指标，但需单独统计。验收以每个已上线 Adapter 连续至少 100 个有效 Run 为窗口；样本不足时只能报告当前样本结果，不能宣称已经达到 90%。
+
+这里的 90% 是首次候选质量目标，不包含 Repair 后成功。Repair 成功率和最终交付成功率应另行统计，否则会把低质量首轮输出隐藏在多次重试之后。
+
+### 优先整改顺序
+
+为先解决“不要失败”，实施顺序应固定为：
+
+1. 固定 Runtime 管理外壳，模型不得修改 `DOCTYPE/html/head/body` 等 Adapter 管理结构；Web Engineer 只返回受控源码文件或受控文件 Patch。
+2. 模型输出先落入隔离候选区，依次执行 Contract、路径与 Hash、文件引用闭包、Adapter 输入、Build/Test/Runtime 校验；全部通过后才原子替换当前版本。
+3. 失败时保留最后可用版本和原始失败证据，并允许基于同一候选做局部 Repair；不得从头完整重生成整个项目。
+4. 修复 Provider 结构纠错路径，使解析失败成为可恢复的 Contract 错误，而不是 Worker 崩溃。
+5. 按项目类型选择 Adapter；没有 Adapter 的项目仍保存源码、文档和版本，只标记“不支持在线预览”，不得强制转成 Web 项目。
+
+流式输出只能改善等待过程，不能提高一次通过率，因此不属于本项可靠性整改的核心手段。
+
 ### 修复与验收要求
 
 1. 修复 Provider 在 JSON 提取失败时引用未初始化变量的问题，并覆盖 Ollama、DeepSeek 两条结构纠错路径。
@@ -101,5 +129,6 @@ Run `f697...` 最终不是正常的校验失败，而是 `another_atom/agent/pro
 3. 通用 SourceBundle 不再由 HTML/CSS/JavaScript 三个字符串定义；项目类型、入口、测试入口、文件清单和 Adapter 绑定成为显式 Contract。
 4. Repair 使用绑定失败证据和候选 revision 的有界文件变更，不再无上限完整重生成；任何修复结果都重新经过相同门禁。
 5. 验收至少覆盖：一个 `web-static-v1` Web 项目成功 Build/Test/Preview；一个测试引用缺失文件的项目在 Executor 前失败并给出准确路径；一个无 Preview Adapter 的非 Web 项目仍可保存源码、文档和版本；一次非法模型 JSON 能稳定纠错或可解释失败而不产生 `WORKER_FAILED`。
+6. 增加按 Adapter 记录的一次通过率、Repair 后通过率、最终交付成功率和 Provider 内部失败率；在连续至少 100 个有效 Run 的窗口中，一次通过率达到 90% 以上后才能关闭本项可靠性发现。
 
 以上实现和部署证据补齐前，本 Review 继续保持`待办`。
