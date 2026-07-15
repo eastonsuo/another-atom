@@ -509,11 +509,15 @@ def _existing_image_context(
     ).all()
     for candidate in candidates:
         observations = (candidate.payload or {}).get("observations") or []
-        if candidate.status == "completed" and {
-            str(observation.get("attachment_id"))
-            for observation in observations
-            if isinstance(observation, dict)
-        } == expected_ids:
+        if (
+            candidate.status == "completed"
+            and {
+                str(observation.get("attachment_id"))
+                for observation in observations
+                if isinstance(observation, dict)
+            }
+            == expected_ids
+        ):
             return candidate
     return None
 
@@ -566,9 +570,12 @@ def _analyze_message_images(
         "vision_model": str(getattr(provider, "vision_model", "mock-vision")),
         "prompt_version": "image-context-v1",
     }
-    context_hash = "sha256:" + hashlib.sha256(
-        json.dumps(unsigned_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    context_hash = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(unsigned_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+    )
     payload = ImageContextPayload(**unsigned_payload, content_hash=context_hash)
     context = ImageContext(
         user_id=user_id,
@@ -773,9 +780,10 @@ def models() -> ModelsView:
             provider="ollama",
             fallback_provider="deepseek" if settings.deepseek_api_key else None,
             sandbox_available=sandbox_available,
-            vision_enabled=bool(settings.ollama_vision_model and (
-                settings.ollama_vision_api_key or settings.ollama_api_key
-            )),
+            vision_enabled=bool(
+                settings.ollama_vision_model
+                and (settings.ollama_vision_api_key or settings.ollama_api_key)
+            ),
             default_model=settings.ollama_model,
             models=[
                 ModelOption(id="deepseek-v4-pro", label="DeepSeek V4 Pro", usage="extra_high"),
@@ -1702,6 +1710,72 @@ def _project_message_view(message: ProjectMessage) -> ProjectMessageView:
     )
 
 
+_FINAL_PROJECT_LEAD_TYPES = {
+    "answer": ProjectLeadIntent.ANSWER,
+    "clarification": ProjectLeadIntent.CLARIFY,
+    "change_proposal": ProjectLeadIntent.PROPOSE_CHANGE,
+}
+
+
+def _project_request_by_client_id(
+    db: Session,
+    *,
+    project_id: str,
+    user_id: str,
+    client_message_id: str | None,
+) -> ProjectMessage | None:
+    if not client_message_id:
+        return None
+    return db.scalar(
+        select(ProjectMessage)
+        .where(
+            ProjectMessage.project_id == project_id,
+            ProjectMessage.user_id == user_id,
+            ProjectMessage.role == "user",
+            ProjectMessage.message_type == "request",
+            ProjectMessage.payload["client_message_id"].as_string() == client_message_id,
+        )
+        .order_by(ProjectMessage.created_at.desc(), ProjectMessage.id.desc())
+        .limit(1)
+    )
+
+
+def _completed_project_message_result(
+    db: Session,
+    user_message: ProjectMessage,
+) -> ProjectMessageResult | None:
+    lead_message = db.scalar(
+        select(ProjectMessage)
+        .where(
+            ProjectMessage.project_id == user_message.project_id,
+            ProjectMessage.session_id == user_message.session_id,
+            ProjectMessage.user_id == user_message.user_id,
+            ProjectMessage.role == "lead",
+            ProjectMessage.message_type.in_(tuple(_FINAL_PROJECT_LEAD_TYPES)),
+        )
+        .order_by(ProjectMessage.created_at.desc(), ProjectMessage.id.desc())
+        .limit(1)
+    )
+    if lead_message is None:
+        return None
+    payload = dict(lead_message.payload or {})
+    intent = _FINAL_PROJECT_LEAD_TYPES[lead_message.message_type]
+    return ProjectMessageResult(
+        intent=intent,
+        user_message=_project_message_view(user_message),
+        lead_message=_project_message_view(lead_message),
+        proposal_id=lead_message.id if intent == ProjectLeadIntent.PROPOSE_CHANGE else None,
+        model=str(
+            payload.get("model")
+            or (user_message.payload or {}).get("model")
+            or models().default_model
+        ),
+        fallback_provider=(
+            str(payload["fallback_provider"]) if payload.get("fallback_provider") else None
+        ),
+    )
+
+
 def _release_project_turn(db: Session, project_id: str, turn_id: str) -> None:
     try:
         db.execute(
@@ -2160,6 +2234,10 @@ def _project_context_snapshot(
                 "content": message.content,
             }
             for message in project_messages
+            if not (
+                message.message_type == "agent_update"
+                and (message.payload or {}).get("status") == "streaming"
+            )
         ],
         "selected_files": selected_files,
         "image_context": image_context.model_dump(mode="json") if image_context else None,
@@ -2220,6 +2298,27 @@ def send_project_message(
     user: User = Depends(get_current_user),
 ) -> ProjectMessageResult:
     project = _owned_project(db, project_id, user.id)
+    existing_user_message = _project_request_by_client_id(
+        db,
+        project_id=project.id,
+        user_id=user.id,
+        client_message_id=request.client_message_id,
+    )
+    if existing_user_message is not None:
+        existing_payload = dict(existing_user_message.payload or {})
+        if (
+            existing_user_message.content != request.message
+            or list(existing_payload.get("attachment_ids") or []) != request.attachment_ids
+            or (request.model and existing_payload.get("model") != request.model)
+        ):
+            raise AppError(
+                "CLIENT_MESSAGE_ID_REUSED",
+                "The client message id is already bound to different content",
+                409,
+            )
+        completed_result = _completed_project_message_result(db, existing_user_message)
+        if completed_result is not None:
+            return completed_result
     terminal_statuses = {
         RunStatus.COMPLETED.value,
         RunStatus.COMPLETED_DEGRADED.value,
@@ -2291,40 +2390,87 @@ def send_project_message(
     db.commit()
     reserved = provider.reservation_units + (1 if attachments else 0)
     db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(quota_reserved=User.quota_reserved + reserved)
+        update(User).where(User.id == user.id).values(quota_reserved=User.quota_reserved + reserved)
     )
     db.commit()
     try:
-        project_session = ProjectSession(
-            project_id=project.id,
-            user_id=user.id,
-            title="Project conversation",
-        )
-        db.add(project_session)
-        db.flush()
-        user_message = ProjectMessage(
-            project_id=project.id,
-            session_id=project_session.id,
-            user_id=user.id,
-            run_id=None,
-            role="user",
-            message_type="request",
-            content=request.message,
-            payload={
-                "selected_files": request.selected_files,
+        if existing_user_message is None:
+            project_session = ProjectSession(
+                project_id=project.id,
+                user_id=user.id,
+                title="Project conversation",
+            )
+            db.add(project_session)
+            db.flush()
+            user_message = ProjectMessage(
+                project_id=project.id,
+                session_id=project_session.id,
+                user_id=user.id,
+                run_id=None,
+                role="user",
+                message_type="request",
+                content=request.message,
+                payload={
+                    "selected_files": request.selected_files,
+                    "model": selected_model,
+                    "client_message_id": request.client_message_id,
+                    "attachment_ids": request.attachment_ids,
+                    "attachments": [
+                        _attachment_view(attachment).model_dump(mode="json")
+                        for attachment in attachments
+                    ],
+                },
+            )
+            db.add(user_message)
+            db.flush()
+            lead_message = None
+        else:
+            user_message = existing_user_message
+            project_session = db.get(ProjectSession, user_message.session_id)
+            if project_session is None:
+                raise AppError(
+                    "PROJECT_MESSAGE_SESSION_MISSING",
+                    "The persisted Project message session was not found",
+                    409,
+                )
+            lead_message = db.scalar(
+                select(ProjectMessage)
+                .where(
+                    ProjectMessage.project_id == project.id,
+                    ProjectMessage.session_id == project_session.id,
+                    ProjectMessage.user_id == user.id,
+                    ProjectMessage.role == "lead",
+                )
+                .order_by(ProjectMessage.created_at.desc(), ProjectMessage.id.desc())
+                .limit(1)
+            )
+        if lead_message is None:
+            lead_message = ProjectMessage(
+                project_id=project.id,
+                session_id=project_session.id,
+                user_id=user.id,
+                run_id=None,
+                role="lead",
+                message_type="agent_update",
+                content="正在解析图片参考…" if attachments else "正在准备项目上下文…",
+                payload={
+                    "status": "streaming",
+                    "stage": "image_analysis" if attachments else "context_preparation",
+                    "model": selected_model,
+                    "model_output": "",
+                },
+            )
+            db.add(lead_message)
+            db.flush()
+        else:
+            lead_message.message_type = "agent_update"
+            lead_message.content = "正在重新解析图片参考…" if attachments else "正在重试项目对话…"
+            lead_message.payload = {
+                "status": "streaming",
+                "stage": "image_analysis" if attachments else "context_preparation",
                 "model": selected_model,
-                "client_message_id": request.client_message_id,
-                "attachment_ids": request.attachment_ids,
-                "attachments": [
-                    _attachment_view(attachment).model_dump(mode="json")
-                    for attachment in attachments
-                ],
-            },
-        )
-        db.add(user_message)
-        db.flush()
+                "model_output": "",
+            }
         db.commit()
         try:
             image_context, _ = _analyze_message_images(
@@ -2336,7 +2482,16 @@ def send_project_message(
                 project_id=project.id,
             )
         except LLMProviderError as exc:
-            _release_project_turn(db, project.id, turn_id)
+            lead_message.message_type = "error"
+            lead_message.content = "图片解析失败，请检查视觉模型配置后重试。"
+            lead_message.payload = {
+                **dict(lead_message.payload or {}),
+                "status": "failed",
+                "stage": "image_analysis",
+                "error_code": "VISION_MODEL_UNAVAILABLE",
+                "reason": str(exc),
+            }
+            db.commit()
             raise AppError("VISION_MODEL_UNAVAILABLE", str(exc), 502) from exc
         user_message.payload = {
             **user_message.payload,
@@ -2350,22 +2505,12 @@ def send_project_message(
             request.selected_files,
             image_context,
         )
-        lead_message = ProjectMessage(
-            project_id=project.id,
-            session_id=project_session.id,
-            user_id=user.id,
-            run_id=None,
-            role="lead",
-            message_type="agent_update",
-            content="",
-            payload={
-                "status": "streaming",
-                "model": selected_model,
-                "model_output": "",
-            },
-        )
-        db.add(lead_message)
-        db.flush()
+        lead_message.content = ""
+        lead_message.payload = {
+            **dict(lead_message.payload or {}),
+            "status": "streaming",
+            "stage": "project_lead",
+        }
         db.commit()
     except Exception:
         db.rollback()
@@ -2433,16 +2578,15 @@ def send_project_message(
     except (LLMProviderError, ValueError) as exc:
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
-        error_message = ProjectMessage(
-            project_id=project.id,
-            session_id=project_session.id,
-            user_id=user.id,
-            role="system",
-            message_type="error",
-            content="项目对话处理失败，请重试。",
-            payload={"error_code": "PROJECT_LEAD_FAILED"},
-        )
-        db.add(error_message)
+        lead_message.message_type = "error"
+        lead_message.content = "项目对话处理失败，请重试。"
+        lead_message.payload = {
+            **dict(lead_message.payload or {}),
+            "status": "failed",
+            "stage": "project_lead",
+            "error_code": "PROJECT_LEAD_FAILED",
+            "reason": str(exc),
+        }
         db.commit()
         _release_project_turn(db, project.id, turn_id)
         raise AppError("PROJECT_LEAD_FAILED", str(exc), 502) from exc
@@ -2453,17 +2597,14 @@ def send_project_message(
         )
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
-        db.add(
-            ProjectMessage(
-                project_id=project.id,
-                session_id=project_session.id,
-                user_id=user.id,
-                role="system",
-                message_type="error",
-                content="项目对话处理失败，请重试。",
-                payload={"error_code": "PROJECT_LEAD_PLATFORM_FAILED"},
-            )
-        )
+        lead_message.message_type = "error"
+        lead_message.content = "项目对话处理失败，请重试。"
+        lead_message.payload = {
+            **dict(lead_message.payload or {}),
+            "status": "failed",
+            "stage": "project_lead",
+            "error_code": "PROJECT_LEAD_PLATFORM_FAILED",
+        }
         db.commit()
         _release_project_turn(db, project.id, turn_id)
         raise AppError(
@@ -2483,6 +2624,7 @@ def send_project_message(
     payload = {
         "reason": decision.reason,
         "model": selected_model,
+        "fallback_provider": usage.fallback_provider,
         **context_manifest,
     }
     if decision.intent == ProjectLeadIntent.PROPOSE_CHANGE:
