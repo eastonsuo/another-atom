@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     ollama_api_key: str | None = None
     ollama_host: str = "https://ollama.com"
     ollama_model: str = "deepseek-v4-pro"
+    ollama_vision_model: str | None = None
+    ollama_vision_host: str | None = None
+    ollama_vision_api_key: str | None = None
+    vision_timeout_seconds: float = 120
     ollama_timeout_seconds: float = 300
     ollama_lead_timeout_seconds: float = 60
     ollama_failover_timeout_seconds: float = 30
@@ -35,6 +39,7 @@ class Settings(BaseSettings):
     admin_password: str = "admin12345"
     admin_display_name: str = "Another Atom Admin"
     project_repository_root: Path = Path("data/project-repositories")
+    attachment_storage_root: Path = Path("data/attachments")
     max_source_chars: int = 120_000
     max_source_change_bytes: int = 240_000
     sandbox_host_url: str | None = None

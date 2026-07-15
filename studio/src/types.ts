@@ -8,6 +8,18 @@ export interface AttachmentMeta {
   content_type: string;
 }
 
+export interface AttachmentView {
+  id: string;
+  name: string;
+  media_type: "image/png" | "image/jpeg" | "image/webp";
+  byte_size: number;
+  width: number;
+  height: number;
+  content_hash: string;
+  status: "ready" | "bound" | "analyzed" | "analysis_failed";
+  content_url: string;
+}
+
 export interface Blueprint {
   schema_version: "1.0";
   project_name: string;
@@ -269,6 +281,7 @@ export interface ModelsView {
   provider: string;
   fallback_provider: string | null;
   sandbox_available: boolean;
+  vision_enabled: boolean;
   default_model: string;
   models: { id: string; label: string; usage: "medium" | "extra_high" | "local" }[];
 }
@@ -288,6 +301,12 @@ export interface LeadDecisionView {
   clarification_questions: LeadClarificationQuestion[];
   model: string;
   fallback_provider: string | null;
+  attachments: AttachmentView[];
+  image_context: {
+    combined_summary: string;
+    observations: { attachment_id: string; summary: string; ocr_text: string[]; regions: string[]; visual_cues: string[]; uncertainties: string[] }[];
+    content_hash: string;
+  } | null;
 }
 
 export interface LeadClarificationQuestion {

@@ -4,21 +4,24 @@ import json
 import re
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    File,
     Header,
     Query,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -39,6 +42,7 @@ from another_atom.contracts.schemas import (
     ArchitectureDesign,
     ArchitectureSpec,
     ArtifactType,
+    AttachmentView,
     AuthCredentials,
     Blueprint,
     BlueprintApproval,
@@ -56,6 +60,8 @@ from another_atom.contracts.schemas import (
     HumanTaskResponse,
     HumanTaskStatus,
     HumanTaskView,
+    ImageContextPayload,
+    ImageContextReference,
     LeadDecisionView,
     LeadMessageRequest,
     Mode,
@@ -102,6 +108,13 @@ from another_atom.domain.auth import (
 )
 from another_atom.domain.errors import AppError
 from another_atom.domain.events import record_event
+from another_atom.domain.images import (
+    MAX_IMAGE_BYTES,
+    attachment_path,
+    image_content_hash,
+    inspect_image,
+    store_image,
+)
 from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
@@ -128,17 +141,18 @@ from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
     Approval,
     Artifact,
-    Attachment,
     AuthSession,
     BuildJob,
     Deployment,
     FileSaveOperation,
     HumanTask,
+    ImageContext,
     LeadMessage,
     Project,
     ProjectMessage,
     ProjectSession,
     ProjectVersion,
+    ReferenceAttachment,
     Run,
     RunEvent,
     SandboxSession,
@@ -433,6 +447,215 @@ def quota(user: User = Depends(get_current_user)) -> QuotaView:
     )
 
 
+def _attachment_view(attachment: ReferenceAttachment) -> AttachmentView:
+    return AttachmentView(
+        id=attachment.id,
+        name=attachment.name,
+        media_type=attachment.media_type,
+        byte_size=attachment.byte_size,
+        width=attachment.width,
+        height=attachment.height,
+        content_hash=attachment.content_hash,
+        status=attachment.status,
+        content_url=f"/api/attachments/{attachment.id}/content",
+    )
+
+
+def _owned_attachment(db: Session, attachment_id: str, user_id: str) -> ReferenceAttachment:
+    attachment = db.get(ReferenceAttachment, attachment_id)
+    if attachment is None or attachment.user_id != user_id:
+        raise AppError("ATTACHMENT_NOT_FOUND", "Attachment was not found", 404)
+    return attachment
+
+
+def _message_attachments(
+    db: Session,
+    attachment_ids: list[str],
+    user_id: str,
+) -> list[ReferenceAttachment]:
+    if len(set(attachment_ids)) != len(attachment_ids):
+        raise AppError("ATTACHMENT_DUPLICATE", "An attachment was included more than once", 422)
+    attachments = [
+        _owned_attachment(db, attachment_id, user_id) for attachment_id in attachment_ids
+    ]
+    unavailable = [
+        attachment.id
+        for attachment in attachments
+        if attachment.status not in {"ready", "analyzed", "analysis_failed"}
+    ]
+    if unavailable:
+        raise AppError(
+            "ATTACHMENT_NOT_READY",
+            "All images must finish uploading before the message is sent",
+            409,
+        )
+    return attachments
+
+
+def _existing_image_context(
+    db: Session,
+    attachments: list[ReferenceAttachment],
+) -> ImageContext | None:
+    expected_ids = {attachment.id for attachment in attachments}
+    message_ids = {attachment.lead_message_id for attachment in attachments}
+    project_message_ids = {attachment.project_message_id for attachment in attachments}
+    candidates = db.scalars(
+        select(ImageContext).where(
+            or_(
+                ImageContext.lead_message_id.in_(message_ids - {None}),
+                ImageContext.project_message_id.in_(project_message_ids - {None}),
+            )
+        )
+    ).all()
+    for candidate in candidates:
+        observations = (candidate.payload or {}).get("observations") or []
+        if candidate.status == "completed" and {
+            str(observation.get("attachment_id"))
+            for observation in observations
+            if isinstance(observation, dict)
+        } == expected_ids:
+            return candidate
+    return None
+
+
+def _analyze_message_images(
+    db: Session,
+    *,
+    user_id: str,
+    attachments: list[ReferenceAttachment],
+    provider: object,
+    lead_message_id: str | None = None,
+    project_message_id: str | None = None,
+    project_id: str | None = None,
+) -> tuple[ImageContextPayload | None, ImageContext | None]:
+    if not attachments:
+        return None, None
+    existing = _existing_image_context(db, attachments)
+    if existing is not None:
+        payload = ImageContextPayload.model_validate(existing.payload)
+        return payload, existing
+    for attachment in attachments:
+        if lead_message_id:
+            attachment.lead_message_id = lead_message_id
+        if project_message_id:
+            attachment.project_message_id = project_message_id
+        if project_id:
+            attachment.project_id = project_id
+        attachment.status = "bound"
+    db.commit()
+    images = [
+        {
+            "attachment_id": attachment.id,
+            "source_hash": attachment.content_hash,
+            "name": attachment.name,
+            "content": attachment_path(attachment.storage_key).read_bytes(),
+        }
+        for attachment in attachments
+    ]
+    try:
+        result = provider.analyze_images(images)  # type: ignore[attr-defined]
+    except Exception:
+        for attachment in attachments:
+            attachment.status = "analysis_failed"
+        db.commit()
+        raise
+    unsigned_payload = {
+        "schema_version": "1.0",
+        **result.model_dump(mode="json"),
+        "vision_provider": str(getattr(provider, "name", "unknown")),
+        "vision_model": str(getattr(provider, "vision_model", "mock-vision")),
+        "prompt_version": "image-context-v1",
+    }
+    context_hash = "sha256:" + hashlib.sha256(
+        json.dumps(unsigned_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    payload = ImageContextPayload(**unsigned_payload, content_hash=context_hash)
+    context = ImageContext(
+        user_id=user_id,
+        project_id=project_id,
+        lead_message_id=lead_message_id,
+        project_message_id=project_message_id,
+        status="completed",
+        content_hash=context_hash,
+        payload=payload.model_dump(mode="json"),
+    )
+    db.add(context)
+    for attachment in attachments:
+        attachment.status = "analyzed"
+    db.commit()
+    db.refresh(context)
+    return payload, context
+
+
+@router.post("/attachments", response_model=AttachmentView, status_code=status.HTTP_201_CREATED)
+async def upload_attachment(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AttachmentView:
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    info = inspect_image(data)
+    attachment = ReferenceAttachment(
+        user_id=user.id,
+        name=Path(file.filename or "clipboard-image").name[:255] or "clipboard-image",
+        byte_size=len(data),
+        media_type=info.media_type,
+        width=info.width,
+        height=info.height,
+        content_hash=image_content_hash(data),
+        storage_key="pending",
+        status="ready",
+    )
+    db.add(attachment)
+    db.flush()
+    try:
+        attachment.storage_key = store_image(user.id, attachment.id, data, info.media_type)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(attachment)
+    return _attachment_view(attachment)
+
+
+@router.get("/attachments/{attachment_id}", response_model=AttachmentView)
+def get_attachment(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AttachmentView:
+    return _attachment_view(_owned_attachment(db, attachment_id, user.id))
+
+
+@router.get("/attachments/{attachment_id}/content")
+def get_attachment_content(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FileResponse:
+    attachment = _owned_attachment(db, attachment_id, user.id)
+    path = attachment_path(attachment.storage_key)
+    if not path.is_file():
+        raise AppError("ATTACHMENT_NOT_FOUND", "Attachment content was not found", 404)
+    return FileResponse(path, media_type=attachment.media_type, filename=None)
+
+
+@router.delete("/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_attachment(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    attachment = _owned_attachment(db, attachment_id, user.id)
+    if attachment.lead_message_id or attachment.project_message_id:
+        raise AppError("ATTACHMENT_ALREADY_BOUND", "A sent attachment cannot be deleted", 409)
+    path = attachment_path(attachment.storage_key)
+    db.delete(attachment)
+    db.commit()
+    path.unlink(missing_ok=True)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/lead/messages", response_model=LeadDecisionView)
 def route_lead_message(
     request: LeadMessageRequest,
@@ -444,8 +667,20 @@ def route_lead_message(
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
     provider = get_llm_provider(model=selected_model)
+    attachments = _message_attachments(db, request.attachment_ids, user.id)
+    lead_message = LeadMessage(
+        user_id=user.id,
+        content=request.message,
+        route="processing",
+        response="",
+        reason="Image context and Lead routing are being prepared.",
+        model=selected_model,
+    )
+    db.add(lead_message)
+    db.flush()
+    db.commit()
     logger.info("lead_request_started", extra={"provider": provider.name})
-    reserved = provider.reservation_units
+    reserved = provider.reservation_units + (1 if attachments else 0)
     claimed = db.execute(
         update(User)
         .where(User.id == user.id)
@@ -457,68 +692,62 @@ def route_lead_message(
         raise AppError("USER_NOT_FOUND", "User does not exist", 404)
     db.commit()
     try:
-        decision = provider.route_message(request.message, request.force_team)
+        image_context, _ = _analyze_message_images(
+            db,
+            user_id=user.id,
+            attachments=attachments,
+            provider=provider,
+            lead_message_id=lead_message.id,
+        )
+        decision = provider.route_message(
+            request.message,
+            request.force_team,
+            image_context.model_dump(mode="json") if image_context else None,
+        )
         usage = provider.take_usage()
     except LLMProviderError as exc:
         logger.warning("lead_request_failed", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
-        db.add(
-            LeadMessage(
-                user_id=user.id,
-                content=request.message,
-                route="failed",
-                response="Lead request failed",
-                reason=str(exc)[:300],
-                model=selected_model,
-                request_count=usage.request_count,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-            )
-        )
+        lead_message.route = "failed"
+        lead_message.response = "Lead request failed"
+        lead_message.reason = str(exc)[:300]
+        lead_message.request_count = usage.request_count
+        lead_message.input_tokens = usage.input_tokens
+        lead_message.output_tokens = usage.output_tokens
         db.commit()
-        raise AppError("LEAD_FAILED", str(exc), 502) from exc
+        code = "VISION_MODEL_UNAVAILABLE" if attachments else "LEAD_FAILED"
+        raise AppError(code, str(exc), 502) from exc
     except Exception as exc:
         logger.exception("lead_request_platform_failure", extra={"provider": provider.name})
         usage = provider.take_usage()
         _settle_lead_quota(db, user.id, reserved, usage.request_count)
-        db.add(
-            LeadMessage(
-                user_id=user.id,
-                content=request.message,
-                route="failed",
-                response="Lead request failed",
-                reason=str(exc)[:300],
-                model=selected_model,
-                request_count=usage.request_count,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-            )
-        )
+        lead_message.route = "failed"
+        lead_message.response = "Lead request failed"
+        lead_message.reason = str(exc)[:300]
+        lead_message.request_count = usage.request_count
+        lead_message.input_tokens = usage.input_tokens
+        lead_message.output_tokens = usage.output_tokens
         db.commit()
         raise AppError("LEAD_PLATFORM_FAILED", "Lead execution failed", 502) from exc
-    lead_message = LeadMessage(
-        user_id=user.id,
-        content=request.message,
-        route=decision.route.value,
-        response=decision.response,
-        reason=decision.reason,
-        model=selected_model,
-        request_count=usage.request_count,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-    )
+    lead_message.route = decision.route.value
+    lead_message.response = decision.response
+    lead_message.reason = decision.reason
+    lead_message.request_count = usage.request_count
+    lead_message.input_tokens = usage.input_tokens
+    lead_message.output_tokens = usage.output_tokens
     logger.info(
         "lead_request_completed",
         extra={"provider": provider.name, "status": decision.route.value},
     )
-    db.add(lead_message)
     _settle_lead_quota(db, user.id, reserved, usage.request_count)
     db.commit()
     return LeadDecisionView(
         message_id=lead_message.id,
         model=selected_model,
         fallback_provider=usage.fallback_provider,
+        attachments=[_attachment_view(attachment) for attachment in attachments],
+        image_context=image_context,
         **decision.model_dump(),
     )
 
@@ -544,6 +773,9 @@ def models() -> ModelsView:
             provider="ollama",
             fallback_provider="deepseek" if settings.deepseek_api_key else None,
             sandbox_available=sandbox_available,
+            vision_enabled=bool(settings.ollama_vision_model and (
+                settings.ollama_vision_api_key or settings.ollama_api_key
+            )),
             default_model=settings.ollama_model,
             models=[
                 ModelOption(id="deepseek-v4-pro", label="DeepSeek V4 Pro", usage="extra_high"),
@@ -554,6 +786,7 @@ def models() -> ModelsView:
         provider="mock",
         fallback_provider=None,
         sandbox_available=sandbox_available,
+        vision_enabled=True,
         default_model="mock",
         models=[ModelOption(id="mock", label="Mock LLM", usage="local")],
     )
@@ -571,6 +804,22 @@ def create_run(
     selected_model = request.model or model_config.default_model
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
+    attachments = _message_attachments(db, request.attachment_ids, user.id)
+    image_context_record = _existing_image_context(db, attachments) if attachments else None
+    if attachments:
+        lead_message = db.get(LeadMessage, request.lead_message_id)
+        if lead_message is None or lead_message.user_id != user.id:
+            raise AppError(
+                "ATTACHMENT_CONTEXT_INVALID",
+                "The image references do not belong to this Lead decision",
+                409,
+            )
+        if image_context_record is None:
+            raise AppError(
+                "ATTACHMENT_NOT_ANALYZED",
+                "The image references have not completed visual analysis",
+                409,
+            )
     project = Project(
         user_id=user.id,
         name="Untitled project",
@@ -614,18 +863,29 @@ def create_run(
             role="user",
             message_type="request",
             content=request.prompt,
-            payload={"request_type": "initial_build"},
+            payload={
+                "request_type": "initial_build",
+                "attachment_ids": request.attachment_ids,
+                "image_context": (
+                    image_context_record.payload if image_context_record is not None else None
+                ),
+            },
         )
     )
-    for attachment in request.attachments:
-        db.add(
-            Attachment(
-                project_id=project.id,
-                name=attachment.name,
-                size=attachment.size,
-                media_type=attachment.content_type,
-            )
+    if image_context_record is not None:
+        image_context_record.project_id = project.id
+        image_context_record.run_id = run.id
+        save_artifact(
+            db,
+            run.id,
+            ArtifactType.IMAGE_CONTEXT,
+            ImageContextReference(
+                image_context_id=image_context_record.id,
+                content_hash=image_context_record.content_hash,
+            ),
         )
+        for attachment in attachments:
+            attachment.project_id = project.id
     db.commit()
     logger.info(
         "run_created",
@@ -1804,6 +2064,7 @@ def _project_context_snapshot(
     project: Project,
     request_message: str,
     selected_files: list[str],
+    image_context: ImageContextPayload | None = None,
 ) -> dict:
     base_version = (
         db.get(ProjectVersion, project.latest_version_id) if project.latest_version_id else None
@@ -1901,6 +2162,7 @@ def _project_context_snapshot(
             for message in project_messages
         ],
         "selected_files": selected_files,
+        "image_context": image_context.model_dump(mode="json") if image_context else None,
         "latest_failure": (
             {
                 "run_id": latest_failed_run.id,
@@ -1923,6 +2185,7 @@ def _project_context_snapshot(
 
 def _project_context_manifest(snapshot: dict) -> dict:
     source_context = snapshot.get("source_context") or {}
+    image_context = snapshot.get("image_context") or {}
     return {
         "context_hash": snapshot["context_hash"],
         "document_contracts": [
@@ -1941,6 +2204,8 @@ def _project_context_manifest(snapshot: dict) -> dict:
         "omitted_files": source_context.get("omitted_files", []),
         "trimming_applied": source_context.get("trimming_applied", False),
         "source_context_error": snapshot.get("source_context_error"),
+        "image_context_hash": image_context.get("content_hash"),
+        "image_count": len(image_context.get("observations") or []),
     }
 
 
@@ -1997,6 +2262,8 @@ def send_project_message(
     selected_model = request.model or (base_run.model if base_run else model_config.default_model)
     if selected_model not in {option.id for option in model_config.models}:
         raise AppError("MODEL_NOT_ALLOWED", "Selected model is not available", 422)
+    provider = get_llm_provider(model=selected_model)
+    attachments = _message_attachments(db, request.attachment_ids, user.id)
     turn_id = str(uuid4())
     stale_before = now_utc() - timedelta(
         seconds=max(get_settings().agent_stage_timeout_seconds + 60, 600)
@@ -2022,6 +2289,13 @@ def send_project_message(
             409,
         )
     db.commit()
+    reserved = provider.reservation_units + (1 if attachments else 0)
+    db.execute(
+        update(User)
+        .where(User.id == user.id)
+        .values(quota_reserved=User.quota_reserved + reserved)
+    )
+    db.commit()
     try:
         project_session = ProjectSession(
             project_id=project.id,
@@ -2042,16 +2316,39 @@ def send_project_message(
                 "selected_files": request.selected_files,
                 "model": selected_model,
                 "client_message_id": request.client_message_id,
+                "attachment_ids": request.attachment_ids,
+                "attachments": [
+                    _attachment_view(attachment).model_dump(mode="json")
+                    for attachment in attachments
+                ],
             },
         )
         db.add(user_message)
         db.flush()
+        db.commit()
+        try:
+            image_context, _ = _analyze_message_images(
+                db,
+                user_id=user.id,
+                attachments=attachments,
+                provider=provider,
+                project_message_id=user_message.id,
+                project_id=project.id,
+            )
+        except LLMProviderError as exc:
+            _release_project_turn(db, project.id, turn_id)
+            raise AppError("VISION_MODEL_UNAVAILABLE", str(exc), 502) from exc
+        user_message.payload = {
+            **user_message.payload,
+            "image_context": image_context.model_dump(mode="json") if image_context else None,
+        }
         db.commit()
         context = _project_context_snapshot(
             db,
             project,
             request.message,
             request.selected_files,
+            image_context,
         )
         lead_message = ProjectMessage(
             project_id=project.id,
@@ -2070,16 +2367,11 @@ def send_project_message(
         db.add(lead_message)
         db.flush()
         db.commit()
-        provider = get_llm_provider(model=selected_model)
-        reserved = provider.reservation_units
-        db.execute(
-            update(User)
-            .where(User.id == user.id)
-            .values(quota_reserved=User.quota_reserved + reserved)
-        )
-        db.commit()
     except Exception:
         db.rollback()
+        usage = provider.take_usage()
+        _settle_lead_quota(db, user.id, reserved, usage.request_count)
+        db.commit()
         _release_project_turn(db, project.id, turn_id)
         raise
 
@@ -2313,6 +2605,24 @@ def approve_project_change_proposal(
     )
     db.add(run)
     db.flush()
+    image_context_record = db.scalar(
+        select(ImageContext).where(
+            ImageContext.project_message_id == request_message.id,
+            ImageContext.user_id == user.id,
+            ImageContext.status == "completed",
+        )
+    )
+    if image_context_record is not None:
+        image_context_record.run_id = run.id
+        save_artifact(
+            db,
+            run.id,
+            ArtifactType.IMAGE_CONTEXT,
+            ImageContextReference(
+                image_context_id=image_context_record.id,
+                content_hash=image_context_record.content_hash,
+            ),
+        )
     claim_filters = [
         Project.id == project.id,
         Project.user_id == user.id,

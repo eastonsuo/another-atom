@@ -17,6 +17,7 @@ def _test_client(tmp_path, monkeypatch, *, process_jobs: bool):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("PROJECT_REPOSITORY_ROOT", str(tmp_path / "repositories"))
+    monkeypatch.setenv("ATTACHMENT_STORAGE_ROOT", str(tmp_path / "attachments"))
     get_settings.cache_clear()
     database_path = tmp_path / "test.db"
     engine = create_database_engine(f"sqlite:///{database_path}")

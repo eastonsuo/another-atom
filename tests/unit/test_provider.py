@@ -190,6 +190,62 @@ def test_ollama_lead_disables_thinking(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_ollama_vision_sends_real_image_bytes_and_validates_identity(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    monkeypatch.setenv("OLLAMA_VISION_MODEL", "vision-test-model")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "attachment_id": "attachment-1",
+                                    "source_hash": "sha256:source",
+                                    "summary": "A compact interface screenshot",
+                                    "ocr_text": ["Translate"],
+                                    "regions": ["main panel"],
+                                    "visual_cues": ["blue accent"],
+                                    "uncertainties": [],
+                                }
+                            ],
+                            "combined_summary": "A translation interface reference",
+                        }
+                    )
+                },
+                "prompt_eval_count": 12,
+                "eval_count": 7,
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    result = OllamaCloudProvider(model="deepseek-v4-pro").analyze_images(
+        [
+            {
+                "attachment_id": "attachment-1",
+                "source_hash": "sha256:source",
+                "name": "reference.png",
+                "content": b"real-image-bytes",
+            }
+        ]
+    )
+
+    assert captured["model"] == "vision-test-model"
+    assert captured["messages"][1]["images"] == ["cmVhbC1pbWFnZS1ieXRlcw=="]
+    assert result.observations[0].attachment_id == "attachment-1"
+    get_settings.cache_clear()
+
+
 def test_ollama_timeout_falls_back_to_deepseek_official(monkeypatch) -> None:
     monkeypatch.setenv("OLLAMA_API_KEY", "ollama-test-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")

@@ -90,6 +90,7 @@ class DeliveryOutcome(StrEnum):
 
 
 class ArtifactType(StrEnum):
+    IMAGE_CONTEXT = "image_context"
     CHANGE_BRIEF = "change_brief"
     REQUIREMENT_DELTA = "requirement_delta"
     BASE_SOURCE_SNAPSHOT = "base_source_snapshot"
@@ -134,6 +135,49 @@ class AttachmentMeta(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     size: int = Field(ge=0, le=10_000_000)
     content_type: str = Field(default="application/octet-stream", max_length=100)
+
+
+class AttachmentView(BaseModel):
+    id: str
+    name: str
+    media_type: Literal["image/png", "image/jpeg", "image/webp"]
+    byte_size: int
+    width: int
+    height: int
+    content_hash: str
+    status: Literal["ready", "bound", "analyzed", "analysis_failed"]
+    content_url: str
+
+
+class ImageObservation(BaseModel):
+    attachment_id: str
+    source_hash: str
+    summary: str = Field(min_length=1, max_length=1200)
+    ocr_text: list[str] = Field(default_factory=list, max_length=80)
+    regions: list[str] = Field(default_factory=list, max_length=40)
+    visual_cues: list[str] = Field(default_factory=list, max_length=40)
+    uncertainties: list[str] = Field(default_factory=list, max_length=40)
+
+
+class VisionAnalysisResult(BaseModel):
+    observations: list[ImageObservation] = Field(min_length=1, max_length=5)
+    combined_summary: str = Field(min_length=1, max_length=2400)
+
+
+class ImageContextPayload(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    observations: list[ImageObservation] = Field(min_length=1, max_length=5)
+    combined_summary: str = Field(min_length=1, max_length=2400)
+    vision_provider: str
+    vision_model: str
+    prompt_version: Literal["image-context-v1"] = "image-context-v1"
+    content_hash: str
+
+
+class ImageContextReference(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    image_context_id: str
+    content_hash: str
 
 
 class Blueprint(BaseModel):
@@ -770,7 +814,8 @@ class RunCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     mode: Mode = Mode.TEAM
     model: str | None = Field(default=None, min_length=1, max_length=100)
-    attachments: list[AttachmentMeta] = Field(default_factory=list, max_length=5)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+    lead_message_id: str | None = None
 
     @field_validator("prompt")
     @classmethod
@@ -972,6 +1017,7 @@ class ProjectMessageRequest(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=100)
     selected_files: list[str] = Field(default_factory=list, max_length=20)
     client_message_id: str | None = Field(default=None, min_length=1, max_length=80)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("message")
     @classmethod
@@ -1057,6 +1103,7 @@ class ModelsView(BaseModel):
     provider: str
     fallback_provider: str | None = None
     sandbox_available: bool = False
+    vision_enabled: bool = False
     default_model: str
     models: list[ModelOption]
 
@@ -1146,6 +1193,7 @@ class LeadMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     force_team: bool = False
     model: str | None = Field(default=None, min_length=1, max_length=100)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("message")
     @classmethod
@@ -1218,6 +1266,8 @@ class LeadDecisionView(LeadDecision):
     message_id: str
     model: str
     fallback_provider: str | None = None
+    attachments: list[AttachmentView] = Field(default_factory=list, max_length=5)
+    image_context: ImageContextPayload | None = None
 
 
 class SandboxSessionView(BaseModel):

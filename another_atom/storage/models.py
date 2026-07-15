@@ -311,6 +311,57 @@ class Attachment(Base, TimestampMixin):
     storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class ReferenceAttachment(Base, TimestampMixin):
+    __tablename__ = "reference_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    lead_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("lead_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    media_type: Mapped[str] = mapped_column(String(40))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(71), index=True)
+    storage_key: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(24), default="ready", index=True)
+
+
+class ImageContext(Base, TimestampMixin):
+    __tablename__ = "image_contexts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    lead_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("lead_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="completed", index=True)
+    content_hash: Mapped[str] = mapped_column(String(71), index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
 class UsageLedger(Base):
     __tablename__ = "usage_ledger"
 

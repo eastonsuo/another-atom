@@ -4,7 +4,7 @@ import type {
   AdminProjectList,
   AdminUserList,
   AdminUserView,
-  AttachmentMeta,
+  AttachmentView,
   Blueprint,
   DeploymentView,
   Mode,
@@ -77,15 +77,27 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
-  leadMessage: (message: string, model: string, forceTeam = false) =>
+  uploadAttachment: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch("/api/attachments", { method: "POST", body: form });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText }));
+      throw new ApiError(error.code ?? "UPLOAD_FAILED", error.message ?? "Upload failed", response.status);
+    }
+    return response.json() as Promise<AttachmentView>;
+  },
+  deleteAttachment: (attachmentId: string) =>
+    request<void>(`/api/attachments/${attachmentId}`, { method: "DELETE" }),
+  leadMessage: (message: string, model: string, forceTeam = false, attachmentIds: string[] = []) =>
     request<LeadDecisionView>("/api/lead/messages", {
       method: "POST",
-      body: JSON.stringify({ message, model, force_team: forceTeam }),
+      body: JSON.stringify({ message, model, force_team: forceTeam, attachment_ids: attachmentIds }),
     }),
-  createRun: (prompt: string, mode: Mode, model: string, attachments: AttachmentMeta[]) =>
+  createRun: (prompt: string, mode: Mode, model: string, attachmentIds: string[], leadMessageId?: string) =>
     request<RunView>("/api/runs", {
       method: "POST",
-      body: JSON.stringify({ prompt, mode, model, attachments }),
+      body: JSON.stringify({ prompt, mode, model, attachment_ids: attachmentIds, lead_message_id: leadMessageId }),
     }),
   getRun: (runId: string) => request<RunView>(`/api/runs/${runId}`),
   retryRun: (runId: string) =>
@@ -93,10 +105,10 @@ export const api = {
   latestRun: (projectId: string) => request<RunView>(`/api/projects/${projectId}/runs/latest`),
   projectMessages: (projectId: string) =>
     request<ProjectMessageView[]>(`/api/projects/${projectId}/messages`),
-  sendProjectMessage: (projectId: string, message: string, model: string, clientMessageId?: string) =>
+  sendProjectMessage: (projectId: string, message: string, model: string, clientMessageId?: string, attachmentIds: string[] = []) =>
     request<ProjectMessageResult>(`/api/projects/${projectId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ message, model, client_message_id: clientMessageId }),
+      body: JSON.stringify({ message, model, client_message_id: clientMessageId, attachment_ids: attachmentIds }),
     }),
   approveProjectChange: (projectId: string, proposalId: string) =>
     request<RunView>(`/api/projects/${projectId}/change-proposals/${proposalId}/approve`, {

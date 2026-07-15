@@ -3,10 +3,11 @@
 [toc]
 
 - 文档状态：V1 已实现基线；Railway 独立执行服务部署验收待完成
-- 更新日期：2026-07-15
+- 更新日期：2026-07-16
 - 产品设计：[Another Atom V1 核心产品需求与交互](../产品设计/01-核心产品需求与交互.md)
 - 工程设计：[Another Atom V1 系统架构](./03-[工程]-系统架构.md)
 - 执行服务：[Another Atom V1 共享独立执行服务](./08-[工程][TODO]-共享独立执行服务.md)
+- 图片输入：[Another Atom V1 图片上传与视觉 Context](./13-[工程][TODO]-图片上传与视觉Context.md)
 - 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md)
 - 整体产品：[Another Atom 整体产品目标与定位](../../整体/01-[产品]-整体产品目标与定位.md)
 - 问题整理：[多角色 Agent 设计问题整理](../../../review/归档/10-[Agent]-2026-07-13-多角色Agent设计问题整理.md)
@@ -430,10 +431,10 @@ Stage Context
 
 | 阶段 | 目标传入 Context | 不得传入 |
 | --- | --- | --- |
-| 团队负责人（Lead） | 当前 `message`；`force_team=true` 时运行系统（Runtime）直接覆盖路由 | 无关源码、密钥（Secret）、其他项目（Project）内容 |
-| 产品经理（Product Manager） | 当前需求、必要对话、平台能力边界；修改场景还包含有效产品规格（ProductSpec）和变更范围 | 未筛选日志、密钥、其他项目事实 |
-| 架构师（Architect） | 已批准产品规格（ProductSpec）摘要和完整 Markdown、同代次产品蓝图（Blueprint）索引、运行时适配器（Runtime Adapter）能力清单 | 未批准文档、完整聊天、源码、后续阶段内容 |
-| 工程师（Engineer） | 已批准产品规格（ProductSpec）、当前架构设计（ArchitectureDesign）、运行时适配器（Runtime Adapter）边界；修改场景还包含基线源码包（SourceBundle）和变更要求 | 宿主文件、密钥（Secret）、其他项目（Project）、未批准阶段产物（Artifact） |
+| 团队负责人（Lead） | 当前 `message`；存在参考图时包含已解析 `ImageContext.combined_summary`；`force_team=true` 时运行系统（Runtime）直接覆盖路由 | 原始图片字节、无关源码、密钥（Secret）、其他项目（Project）内容 |
+| 产品经理（Product Manager） | 当前需求、必要对话、平台能力边界和同一消息的完整 `ImageContext`；修改场景还包含有效产品规格（ProductSpec）和变更范围 | 未筛选日志、密钥、其他项目事实 |
+| 架构师（Architect） | 已批准产品规格（ProductSpec）摘要和完整 Markdown、同代次产品蓝图（Blueprint）索引、运行时适配器（Runtime Adapter）能力清单及有效 `ImageContext` | 未批准文档、完整聊天、源码、后续阶段内容 |
+| 工程师（Engineer） | 已批准产品规格（ProductSpec）、当前架构设计（ArchitectureDesign）、运行时适配器（Runtime Adapter）边界及有效 `ImageContext`；修改场景还包含基线源码包（SourceBundle）和变更要求 | 原始图片字节、宿主文件、密钥（Secret）、其他项目（Project）、未批准阶段产物（Artifact） |
 | 工程师修复（Engineer Repair） | 上述全部有效契约（Contract）、当前应用规格（AppSpec）与源码包（SourceBundle）、执行报告（ExecutionReport）、校验报告（ValidationReport）中的可修复证据 | 完整原始日志、平台故障、不可修复失败、发布权限 |
 
 数据分析师（Data Analyst）和质量评审员（Reviewer）在 V1 新运行中没有上下文（Context）组装，因为代码不再调用这两个角色。现有模式（Schema）与旧方法仅用于历史数据兼容，不进入新运行的阶段交接（Handoff）。
@@ -442,6 +443,7 @@ Stage Context
 
 - Session 保存用户可恢复的交互边界；Run 保存一次构建/修改任务；StageRun 保存一次角色调用。
 - Artifact 使用不可变 ID、版本和 hash 引用，下一阶段不依赖内存对象。
+- 参考图片先形成绑定消息、原图指纹、视觉模型和 Prompt 版本的不可变 `ImageContext` 记录；进入团队后由 Run Artifact 引用，下游角色不重复调用视觉模型。具体 Contract 与失败路径由[图片上传与视觉 Context](./13-[工程][TODO]-图片上传与视觉Context.md)定义。
 - 当前单实例实现以每类唯一 Artifact 作为阶段恢复检查点；成功输出与该次 Provider usage 在同一事务提交，Worker 重启后直接复用已提交 Artifact。
 - 错误上下文只保留错误码、失败 check、evidence ref 和截断摘要，不把无限日志送入模型。
 - 每次调用记录 `model`、`prompt_version`、`input_artifact_refs`、`output_artifact_id`、usage 和 attempt。

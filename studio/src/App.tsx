@@ -31,7 +31,7 @@ import { RepositoryPanel } from "./components/RepositoryPanel";
 import { AtomLogo, ROLE_META, RoleAvatar, type RoleKey } from "./components/BrandAssets";
 import { api, ApiError } from "./lib/api";
 import type {
-  AttachmentMeta,
+  AttachmentView,
   Blueprint,
   LeadDecisionView,
   Mode,
@@ -406,6 +406,116 @@ type ActivityEntry = {
   tone: "pending" | "success" | "error";
 };
 
+type AttachmentDraft = {
+  localId: string;
+  file: File;
+  previewUrl: string;
+  status: "uploading" | "ready" | "failed";
+  remote: AttachmentView | null;
+  error: string;
+};
+
+function useImageAttachments(language: Language) {
+  const [items, setItems] = useState<AttachmentDraft[]>([]);
+  const [notice, setNotice] = useState("");
+  const itemsRef = useRef(items);
+  const previewUrls = useRef(new Set<string>());
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => () => {
+    previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  const upload = useCallback(async (localId: string, file: File) => {
+    try {
+      const remote = await api.uploadAttachment(file);
+      setItems((current) => current.map((item) => item.localId === localId
+        ? { ...item, status: "ready", remote, error: "" }
+        : item));
+    } catch (reason) {
+      setItems((current) => current.map((item) => item.localId === localId
+        ? { ...item, status: "failed", error: reason instanceof Error ? reason.message : ui(language, "Upload failed") }
+        : item));
+    }
+  }, [language]);
+
+  const addFiles = useCallback((files: File[]) => {
+    setNotice("");
+    const supported = new Set(["image/png", "image/jpeg", "image/webp"]);
+    const existing = itemsRef.current;
+    const available = Math.max(0, 5 - existing.length);
+    if (files.length > available) {
+      setNotice(language === "zh" ? "每条消息最多添加 5 张图片" : "Each message supports up to 5 images");
+    }
+    const accepted: AttachmentDraft[] = [];
+    for (const file of files.slice(0, available)) {
+      if (!supported.has(file.type)) {
+        setNotice(language === "zh" ? "仅支持 PNG、JPEG 和静态 WebP 图片" : "Only PNG, JPEG, and static WebP images are supported");
+        continue;
+      }
+      if (file.size > 10_000_000) {
+        setNotice(language === "zh" ? `${file.name} 超过 10 MB` : `${file.name} exceeds 10 MB`);
+        continue;
+      }
+      if (existing.some((item) => item.file.name === file.name && item.file.size === file.size)) {
+        setNotice(language === "zh" ? "这张图片已经添加" : "This image is already attached");
+        continue;
+      }
+      const previewUrl = URL.createObjectURL(file);
+      previewUrls.current.add(previewUrl);
+      accepted.push({
+        localId: crypto.randomUUID(),
+        file,
+        previewUrl,
+        status: "uploading",
+        remote: null,
+        error: "",
+      });
+    }
+    if (!accepted.length) return;
+    setItems((current) => [...current, ...accepted]);
+    accepted.forEach((item) => { void upload(item.localId, item.file); });
+  }, [language, upload]);
+
+  const remove = useCallback((localId: string) => {
+    const item = itemsRef.current.find((candidate) => candidate.localId === localId);
+    if (!item) return;
+    setItems((current) => current.filter((candidate) => candidate.localId !== localId));
+    previewUrls.current.delete(item.previewUrl);
+    URL.revokeObjectURL(item.previewUrl);
+    if (item.remote) void api.deleteAttachment(item.remote.id).catch(() => undefined);
+  }, []);
+
+  const retry = useCallback((localId: string) => {
+    const item = itemsRef.current.find((candidate) => candidate.localId === localId);
+    if (!item) return;
+    setItems((current) => current.map((candidate) => candidate.localId === localId
+      ? { ...candidate, status: "uploading", error: "" }
+      : candidate));
+    void upload(localId, item.file);
+  }, [upload]);
+
+  const clear = useCallback(() => {
+    itemsRef.current.forEach((item) => {
+      previewUrls.current.delete(item.previewUrl);
+      URL.revokeObjectURL(item.previewUrl);
+    });
+    setItems([]);
+    setNotice("");
+  }, []);
+
+  return {
+    items,
+    notice,
+    addFiles,
+    remove,
+    retry,
+    clear,
+    readyIds: items.flatMap((item) => item.status === "ready" && item.remote ? [item.remote.id] : []),
+    hasPending: items.some((item) => item.status === "uploading"),
+    hasFailed: items.some((item) => item.status === "failed"),
+  };
+}
+
 function ui(language: Language, text: string): string {
   return language === "zh" ? ZH[text] ?? text : text;
 }
@@ -684,7 +794,7 @@ function Studio() {
   const [user, setUser] = useState<UserView | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [attachments, setAttachments] = useState<AttachmentMeta[]>([]);
+  const imageAttachments = useImageAttachments(language);
   const [run, setRun] = useState<RunView | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -695,6 +805,10 @@ function Studio() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [leadDecision, setLeadDecision] = useState<LeadDecisionView | null>(null);
+  const [lastLeadUserMessage, setLastLeadUserMessage] = useState<{
+    content: string;
+    attachments: AttachmentView[];
+  } | null>(null);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [leadElapsed, setLeadElapsed] = useState(0);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
@@ -815,8 +929,16 @@ function Studio() {
   const sendToLead = async (forceTeam = false, messageOverride?: string) => {
     const effectivePrompt = messageOverride?.trim() || prompt.trim();
     if (!effectivePrompt || submitting) return;
+    const attachmentIds =
+      forceTeam && imageAttachments.readyIds.length === 0 && leadDecision?.attachments.length
+        ? leadDecision.attachments.map((attachment) => attachment.id)
+        : imageAttachments.readyIds;
     setSubmitting(true);
     setError("");
+    setLastLeadUserMessage({
+      content: effectivePrompt,
+      attachments: imageAttachments.items.flatMap((item) => item.remote ? [item.remote] : []),
+    });
     setActivityLog([
       {
         id: `${Date.now()}-lead-started`,
@@ -833,7 +955,7 @@ function Studio() {
       setActivityLog((current) => [...current, { id: `${Date.now()}-${current.length}`, message, tone }]);
     };
     try {
-      const decision = await api.leadMessage(effectivePrompt, model, forceTeam);
+      const decision = await api.leadMessage(effectivePrompt, model, forceTeam, attachmentIds);
       window.clearInterval(leadTimer);
       setLeadDecision(decision);
       if (decision.fallback_provider) {
@@ -854,7 +976,13 @@ function Studio() {
         return;
       }
       appendActivity(ui(language, "Creating Project and Build Run."), "pending");
-      const created = await api.createRun(effectivePrompt, "team", model, attachments);
+      const created = await api.createRun(
+        effectivePrompt,
+        "team",
+        model,
+        attachmentIds,
+        decision.message_id,
+      );
       setRun(created);
       appendActivity(ui(language, "Run created. Opening build event stream."), "success");
       setEvents(await api.events(created.run_id));
@@ -887,9 +1015,10 @@ function Studio() {
     setEvents([]);
     setVersions([]);
     setPrompt("");
-    setAttachments([]);
+    imageAttachments.clear();
     setError("");
     setLeadDecision(null);
+    setLastLeadUserMessage(null);
     setActivityLog([]);
   };
 
@@ -933,11 +1062,11 @@ function Studio() {
             model={model}
             setModel={setModel}
             models={models}
-            attachments={attachments}
-            setAttachments={setAttachments}
+            imageAttachments={imageAttachments}
             submitting={submitting}
             error={error}
             leadDecision={leadDecision}
+            lastLeadUserMessage={lastLeadUserMessage}
             activityLog={activityLog}
             leadElapsed={leadElapsed}
             language={language}
@@ -1037,11 +1166,11 @@ function Composer({
   model,
   setModel,
   models,
-  attachments,
-  setAttachments,
+  imageAttachments,
   submitting,
   error,
   leadDecision,
+  lastLeadUserMessage,
   activityLog,
   leadElapsed,
   language,
@@ -1052,11 +1181,11 @@ function Composer({
   model: string;
   setModel: (model: string) => void;
   models: ModelsView | null;
-  attachments: AttachmentMeta[];
-  setAttachments: (items: AttachmentMeta[]) => void;
+  imageAttachments: ReturnType<typeof useImageAttachments>;
   submitting: boolean;
   error: string;
   leadDecision: LeadDecisionView | null;
+  lastLeadUserMessage: { content: string; attachments: AttachmentView[] } | null;
   activityLog: ActivityEntry[];
   leadElapsed: number;
   language: Language;
@@ -1079,12 +1208,13 @@ function Composer({
       },
     }));
   };
+  const attachmentBlockReason = imageAttachments.hasPending
+    ? (language === "zh" ? "图片正在上传" : "Images are uploading")
+    : imageAttachments.hasFailed
+      ? (language === "zh" ? "请移除或重试上传失败的图片" : "Remove or retry failed images")
+      : "";
   const addFiles = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).slice(0, 5 - attachments.length);
-    setAttachments([
-      ...attachments,
-      ...files.map((file) => ({ name: file.name, size: file.size, content_type: file.type || "application/octet-stream" })),
-    ]);
+    imageAttachments.addFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
   return (
@@ -1110,31 +1240,46 @@ function Composer({
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
+              onPaste={(event) => {
+                const images = Array.from(event.clipboardData.items)
+                  .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                  .flatMap((item) => item.getAsFile() ? [item.getAsFile() as File] : []);
+                if (images.length) imageAttachments.addFiles(images);
+              }}
               placeholder={ui(language, "Describe the application, behavior, interactions, and visual direction…")}
               maxLength={4000}
               autoFocus
             />
-            {attachments.length > 0 && (
-              <div className="attachment-row">
-                {attachments.map((attachment) => (
-                  <span key={attachment.name}><Paperclip size={13} /> {attachment.name}<button aria-label={`${ui(language, "Remove attachment")} ${attachment.name}`} title={ui(language, "Remove attachment")} onClick={() => setAttachments(attachments.filter((item) => item !== attachment))}><X size={13} /></button></span>
+            {imageAttachments.items.length > 0 && (
+              <div className="attachment-row image-attachment-row">
+                {imageAttachments.items.map((attachment) => (
+                  <span className={`image-attachment-card ${attachment.status}`} key={attachment.localId}>
+                    <img src={attachment.previewUrl} alt="" />
+                    <span><b>{attachment.file.name}</b><small>{attachment.status === "uploading" ? (language === "zh" ? "正在上传…" : "Uploading…") : attachment.status === "ready" ? (language === "zh" ? "已就绪" : "Ready") : attachment.error}</small></span>
+                    {attachment.status === "failed" && <button type="button" onClick={() => imageAttachments.retry(attachment.localId)}>{language === "zh" ? "重试" : "Retry"}</button>}
+                    <button type="button" aria-label={`${ui(language, "Remove attachment")} ${attachment.file.name}`} title={ui(language, "Remove attachment")} onClick={() => imageAttachments.remove(attachment.localId)}><X size={13} /></button>
+                  </span>
                 ))}
               </div>
             )}
+            {imageAttachments.notice && <small className="attachment-notice">{imageAttachments.notice}</small>}
+            {imageAttachments.items.length > 0 && models && !models.vision_enabled && <small className="attachment-notice error">{language === "zh" ? "当前部署未配置视觉模型，不能发送图片" : "This deployment has no vision model configured"}</small>}
             <div className="composer-actions">
-              <label className="attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={17} /><input type="file" multiple onChange={addFiles} /></label>
+              <label className="attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={17} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={addFiles} disabled={Boolean(models && !models.vision_enabled)} /></label>
               <label className="model-select">
                 <Sparkles size={14} />
                 <select value={model} onChange={(event) => setModel(event.target.value)} aria-label={ui(language, "Language model")}>
                   {(models?.models ?? []).map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
                 </select>
               </label>
-              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting} onClick={() => sendToLead()} aria-label={ui(language, "Send message")} title={ui(language, "Send message")}>
+              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting || Boolean(attachmentBlockReason) || Boolean(imageAttachments.items.length && models && !models.vision_enabled)} onClick={() => sendToLead()} aria-label={ui(language, "Send message")} title={attachmentBlockReason || ui(language, "Send message")}>
                 {submitting ? <LoaderCircle className="spin" size={19} /> : <ArrowUp size={19} />}
               </button>
             </div>
           </div>
           {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
+          {lastLeadUserMessage && <div className="lead-user-message"><b>{language === "zh" ? "你" : "You"}</b><p>{lastLeadUserMessage.content}</p>{lastLeadUserMessage.attachments.length > 0 && <div className="message-attachments">{lastLeadUserMessage.attachments.map((attachment) => <a key={attachment.id} href={attachment.content_url} target="_blank" rel="noreferrer"><img src={attachment.content_url} alt={attachment.name} /><span>{attachment.name}</span></a>)}</div>}</div>}
+          {leadDecision?.image_context && <details className="lead-image-context image-context-detail"><summary>{language === "zh" ? "图片理解结果" : "Image understanding"}</summary><p>{leadDecision.image_context.combined_summary}</p>{leadDecision.image_context.observations.map((observation) => <div key={observation.attachment_id}><strong>{observation.summary}</strong>{observation.ocr_text.length > 0 && <small>{language === "zh" ? "识别文字：" : "OCR: "}{observation.ocr_text.join(" · ")}</small>}{observation.uncertainties.length > 0 && <small>{language === "zh" ? "不确定项：" : "Uncertainties: "}{observation.uncertainties.join(" · ")}</small>}</div>)}</details>}
           {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
           {leadDecision?.route === "clarify" && (() => {
             const questions = leadDecision.clarification_questions;
@@ -1790,6 +1935,7 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
   const [projectMessages, setProjectMessages] = useState<ProjectMessageView[]>([]);
   const [messagesError, setMessagesError] = useState("");
   const [approvingProposalId, setApprovingProposalId] = useState("");
+  const imageAttachments = useImageAttachments(language);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const isClarification = run.status === "needs_input" && run.pending_human_task?.kind === "input_request";
   const isProductSpecRevision = run.status === "awaiting_approval" && run.pending_human_task?.kind === "approval" && Boolean(run.product_spec);
@@ -1833,7 +1979,7 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
   }, [changeSubmitting, language, run.project_id]);
   const submitChange = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!changeMessage.trim() || changeSubmitting || !canSend) return;
+    if (!changeMessage.trim() || changeSubmitting || !canSend || imageAttachments.hasPending || imageAttachments.hasFailed) return;
     const submittedMessage = changeMessage.trim();
     const optimisticMessageId = `optimistic-${Date.now()}`;
     const optimisticMessage: ProjectMessageView | null = !isClarification && !isProductSpecRevision ? {
@@ -1843,7 +1989,11 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
       role: "user",
       message_type: "request",
       content: submittedMessage,
-      payload: { status: "sending" },
+      payload: {
+        status: "sending",
+        attachment_ids: imageAttachments.readyIds,
+        attachments: imageAttachments.items.flatMap((item) => item.remote ? [item.remote] : []),
+      },
       created_at: new Date().toISOString(),
     } : null;
     setChangeSubmitting(true);
@@ -1866,12 +2016,19 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
         await refreshShell();
         return;
       }
-      const result: ProjectMessageResult = await api.sendProjectMessage(run.project_id, submittedMessage, run.model, optimisticMessageId);
+      const result: ProjectMessageResult = await api.sendProjectMessage(
+        run.project_id,
+        submittedMessage,
+        run.model,
+        optimisticMessageId,
+        imageAttachments.readyIds,
+      );
       setProjectMessages((current) => [
         ...current.filter((message) => message.id !== optimisticMessageId && message.id !== result.user_message.id && message.id !== result.lead_message.id),
         result.user_message,
         result.lead_message,
       ]);
+      imageAttachments.clear();
     } catch (reason) {
       if (reason instanceof ApiError && reason.code === "BASE_VERSION_CHANGED") {
         await refreshRun(run.run_id);
@@ -1927,11 +2084,16 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, lan
     : isProductSpecRevision
       ? (language === "zh" ? "提交方案修改" : "Revise ProductSpec")
       : (language === "zh" ? "发送" : "Send");
+  const attachmentBlockReason = imageAttachments.hasPending
+    ? (language === "zh" ? "图片正在上传" : "Images are uploading")
+    : imageAttachments.hasFailed
+      ? (language === "zh" ? "请移除或重试上传失败的图片" : "Remove or retry failed images")
+      : "";
   return <section className="project-chat-panel">
     <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
     {projectMessages.length > 0 && <div className="project-chat-history" ref={historyRef}>{projectMessages.slice(-30).map((message) => <ProjectChatMessageRow key={message.id} message={message} language={language} roleName={roleName} approvingProposalId={approvingProposalId} onApproveProposal={approveProposal} />)}</div>}
-    <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} rows={2} placeholder={inputHint} /><small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend} title={!canSend ? inputHint : `${submitLabel}（Shift + Enter）`}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} <span>{submitLabel}</span><kbd>Shift + Enter</kbd></button></form>
+    <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} onPaste={(event) => { if (isClarification || isProductSpecRevision) return; const images = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).flatMap((item) => item.getAsFile() ? [item.getAsFile() as File] : []); if (images.length) imageAttachments.addFiles(images); }} onKeyDown={(event) => { if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} rows={2} placeholder={inputHint} />{imageAttachments.items.length > 0 && <div className="attachment-row image-attachment-row">{imageAttachments.items.map((attachment) => <span className={`image-attachment-card ${attachment.status}`} key={attachment.localId}><img src={attachment.previewUrl} alt="" /><span><b>{attachment.file.name}</b><small>{attachment.status === "uploading" ? (language === "zh" ? "正在上传…" : "Uploading…") : attachment.status === "ready" ? (language === "zh" ? "已就绪" : "Ready") : attachment.error}</small></span>{attachment.status === "failed" && <button type="button" onClick={() => imageAttachments.retry(attachment.localId)}>{language === "zh" ? "重试" : "Retry"}</button>}<button type="button" onClick={() => imageAttachments.remove(attachment.localId)} aria-label={ui(language, "Remove attachment")}><X size={13} /></button></span>)}</div>}{!isClarification && !isProductSpecRevision && <label className="attach-button project-attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={15} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { imageAttachments.addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} /></label>}{(imageAttachments.notice || attachmentBlockReason) && <small className="attachment-notice">{attachmentBlockReason || imageAttachments.notice}</small>}<small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend || Boolean(attachmentBlockReason)} title={!canSend ? inputHint : attachmentBlockReason || `${submitLabel}（Shift + Enter）`}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} <span>{submitLabel}</span><kbd>Shift + Enter</kbd></button></form>
   </section>;
 }
 
@@ -1939,6 +2101,12 @@ function ProjectChatMessageRow({ message, language, roleName, approvingProposalI
   const status = typeof message.payload.status === "string" ? message.payload.status : "";
   const modelOutput = typeof message.payload.model_output === "string" ? message.payload.model_output : "";
   const streaming = status === "streaming";
+  const messageAttachments = Array.isArray(message.payload.attachments)
+    ? (message.payload.attachments as AttachmentView[])
+    : [];
+  const imageContext = message.payload.image_context && typeof message.payload.image_context === "object"
+    ? message.payload.image_context as { combined_summary?: string; observations?: { attachment_id?: string; summary?: string; ocr_text?: string[]; regions?: string[]; uncertainties?: string[] }[] }
+    : null;
   const [outputOpen, setOutputOpen] = useState(streaming);
   const [animatedOutput, setAnimatedOutput] = useState(() => streaming ? "" : modelOutput);
   const outputRef = useRef<HTMLPreElement | null>(null);
@@ -1969,6 +2137,8 @@ function ProjectChatMessageRow({ message, language, roleName, approvingProposalI
   return <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`}>
     <b>{roleName(message.role)}</b>
     <span>{message.content || (streaming ? (language === "zh" ? "正在生成可验证的结果…" : "Generating a verifiable result…") : "")}{streaming && message.content ? <i className="streaming-cursor" /> : null}</span>
+    {messageAttachments.length > 0 && <div className="message-attachments">{messageAttachments.map((attachment) => <a key={attachment.id} href={attachment.content_url} target="_blank" rel="noreferrer"><img src={attachment.content_url} alt={attachment.name} /><span>{attachment.name}</span></a>)}</div>}
+    {imageContext?.combined_summary && <details className="image-context-detail"><summary>{language === "zh" ? "图片理解结果" : "Image understanding"}</summary><p>{imageContext.combined_summary}</p>{imageContext.observations?.map((observation, index) => <div key={observation.attachment_id ?? index}><strong>{observation.summary}</strong>{Boolean(observation.ocr_text?.length) && <small>{language === "zh" ? "识别文字：" : "OCR: "}{observation.ocr_text?.join(" · ")}</small>}{Boolean(observation.regions?.length) && <small>{language === "zh" ? "区域：" : "Regions: "}{observation.regions?.join(" · ")}</small>}{Boolean(observation.uncertainties?.length) && <small>{language === "zh" ? "不确定项：" : "Uncertainties: "}{observation.uncertainties?.join(" · ")}</small>}</div>)}</details>}
     {showModelOutput && <div className={`agent-stream-detail${outputOpen ? " expanded" : ""}`}>
       <button className="agent-stream-toggle" type="button" onClick={() => setOutputOpen((current) => !current)} aria-expanded={outputOpen}>
         <ChevronRight size={13} /><span>{outputLabel}</span><small>{outputSize}</small>
