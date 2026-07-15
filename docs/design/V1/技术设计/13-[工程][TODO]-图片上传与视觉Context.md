@@ -168,13 +168,13 @@ DELETE /api/attachments/{attachment_id}  仅限尚未绑定消息的附件
 | `OLLAMA_VISION_API_KEY` | 可选；同一 Ollama 账户时复用现有 Key，分离账户时单独配置 |
 | `VISION_TIMEOUT_SECONDS` | 图片解析独立超时，不占用 Pro 阶段超时 |
 
-候选模型可以是 Ollama 提供的 `qwen3-vl`、`gemma3` 或其他明确标注 Text/Image 输入的模型。部署配置必须使用 Railway 环境实际可调用的模型标识，文档不把某个候选名称硬编码成产品 Contract。
+候选模型必须以 Ollama Cloud 当日 `/api/tags` 返回且明确标注 Text/Image 输入的模型为准。2026-07-16 的 Railway 生产配置采用 `qwen3.5:397b`；已退役的 `qwen3-vl:235b` 不得继续使用。模型名称是部署选择，不硬编码进产品 Contract，模型退役时应先查询可用列表再更新环境变量。
 
 同一 Ollama Cloud 账户只增加一次视觉模型调用，不需要部署第二套服务。自建 Ollama 时可以在同一个实例加载视觉模型；是否需要额外 GPU/内存取决于实际模型，不由 Another Atom 隐藏。
 
 ### 5.2 请求与输出
 
-同一条消息中的图片优先作为一个批次传给视觉模型，REST 请求使用 Ollama `messages[].images`。Provider 要求结构化输出，失败时只进行一次针对 Contract 的格式修正，不重新执行整个 Agent 流水线。
+同一条消息中的图片优先作为一个批次传给视觉模型，REST 请求使用 Ollama `messages[].images`。自建 Ollama 通过 `format` 强制 Structured Outputs；Ollama Cloud 当前不支持该参数，因此 Cloud 请求只在 Prompt 中提供 JSON Schema，返回后由本地 Pydantic 校验。两种路径首次校验失败时都只进行一次针对 Contract 的格式修正，不重新执行整个 Agent 流水线。
 
 每条图片产生一个 `ImageObservation`：
 

@@ -242,7 +242,58 @@ def test_ollama_vision_sends_real_image_bytes_and_validates_identity(monkeypatch
 
     assert captured["model"] == "vision-test-model"
     assert captured["messages"][1]["images"] == ["cmVhbC1pbWFnZS1ieXRlcw=="]
+    assert "format" not in captured
     assert result.observations[0].attachment_id == "attachment-1"
+    get_settings.cache_clear()
+
+
+def test_self_hosted_ollama_vision_requests_structured_format(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    monkeypatch.setenv("OLLAMA_VISION_MODEL", "vision-test-model")
+    monkeypatch.setenv("OLLAMA_VISION_HOST", "http://localhost:11434")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "observations": [
+                                {
+                                    "attachment_id": "attachment-1",
+                                    "source_hash": "sha256:source",
+                                    "summary": "A compact interface screenshot",
+                                }
+                            ],
+                            "combined_summary": "A translation interface reference",
+                        }
+                    )
+                }
+            }
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs.get("json", {}))
+        return Response()
+
+    monkeypatch.setattr("another_atom.agent.provider.httpx.post", fake_post)
+    OllamaCloudProvider(model="deepseek-v4-pro").analyze_images(
+        [
+            {
+                "attachment_id": "attachment-1",
+                "source_hash": "sha256:source",
+                "name": "reference.png",
+                "content": b"real-image-bytes",
+            }
+        ]
+    )
+
+    assert isinstance(captured.get("format"), dict)
+    assert captured["format"]["type"] == "object"
     get_settings.cache_clear()
 
 
