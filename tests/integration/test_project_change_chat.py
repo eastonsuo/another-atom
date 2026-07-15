@@ -44,16 +44,12 @@ def _build_project(client: TestClient) -> dict:
 
 def _project_write_counts(client: TestClient, project_id: str) -> tuple[int, int, int]:
     with client.app.state.testing_session() as db:
-        run_count = db.scalar(
-            select(func.count(Run.id)).where(Run.project_id == project_id)
-        )
+        run_count = db.scalar(select(func.count(Run.id)).where(Run.project_id == project_id))
         job_count = db.scalar(
             select(func.count(BuildJob.id)).where(BuildJob.project_id == project_id)
         )
         version_count = db.scalar(
-            select(func.count(ProjectVersion.id)).where(
-                ProjectVersion.project_id == project_id
-            )
+            select(func.count(ProjectVersion.id)).where(ProjectVersion.project_id == project_id)
         )
     return int(run_count or 0), int(job_count or 0), int(version_count or 0)
 
@@ -75,9 +71,7 @@ def _propose_change(client: TestClient, project_id: str, message: str) -> dict:
 
 
 def _approve_change(client: TestClient, project_id: str, proposal_id: str) -> dict:
-    response = client.post(
-        f"/api/projects/{project_id}/change-proposals/{proposal_id}/approve"
-    )
+    response = client.post(f"/api/projects/{project_id}/change-proposals/{proposal_id}/approve")
     assert response.status_code == 202, response.text
     return response.json()
 
@@ -101,7 +95,7 @@ def test_project_chat_proposes_then_modifies_existing_code(
     proposal = _propose_change(
         client,
         project_id,
-        '把标题改成“夜间扫雷”，保留计时和插旗逻辑',
+        "把标题改成“夜间扫雷”，保留计时和插旗逻辑",
     )
 
     assert _project_write_counts(client, project_id) == before
@@ -116,6 +110,11 @@ def test_project_chat_proposes_then_modifies_existing_code(
     assert run["base_version_id"] == initial["version_id"]
     assert run["version_id"] != initial["version_id"]
     assert run["app_spec"]["hero_title"] == "夜间扫雷"
+    changed_index = next(
+        item["content"] for item in run["source_bundle"]["files"] if item["path"] == "index.html"
+    )
+    assert changed_index.casefold().startswith("<!doctype html>")
+    assert "夜间扫雷" in changed_index
     counts_after_approval = _project_write_counts(client, project_id)
     duplicate = _approve_change(client, project_id, proposal["proposal_id"])
     assert duplicate["run_id"] == run["run_id"]
@@ -142,12 +141,10 @@ def test_project_chat_proposes_then_modifies_existing_code(
     assert messages[2]["payload"]["base_version_id"] == initial["version_id"]
 
     public_app = client.get(f"/api/public/{deployment['public_id']}").json()
-    assert public_app["hero_title"] != "夜间扫雷"
+    assert public_app["app_spec"]["hero_title"] != "夜间扫雷"
     with client.app.state.testing_session() as db:
         artifacts = set(
-            db.scalars(
-                select(Artifact.artifact_type).where(Artifact.run_id == run["run_id"])
-            ).all()
+            db.scalars(select(Artifact.artifact_type).where(Artifact.run_id == run["run_id"])).all()
         )
         source_context = db.scalar(
             select(Artifact).where(
@@ -179,10 +176,7 @@ def test_project_chat_proposes_then_modifies_existing_code(
     } <= artifacts
     assert source_context is not None
     assert architecture_design is not None
-    assert any(
-        "夜间扫雷" in item
-        for item in architecture_design.payload["interactions"]
-    )
+    assert any("夜间扫雷" in item for item in architecture_design.payload["interactions"])
     assert source_context.payload["trimming_applied"] is False
     assert {item["path"] for item in source_context.payload["included_files"]} == {
         "index.html",
@@ -205,6 +199,46 @@ def test_project_chat_proposes_then_modifies_existing_code(
     assert "source.diff_created" in event_types
 
 
+def test_source_only_project_change_patches_existing_source_without_fake_runtime(
+    client: TestClient,
+) -> None:
+    created = client.post(
+        "/api/runs",
+        json={"prompt": "构建一个命令行工具，用来整理文本文件", "mode": "team"},
+    ).json()
+    initial = client.get(f"/api/runs/{created['run_id']}").json()
+    approved = client.post(
+        f"/api/runs/{created['run_id']}/approve",
+        json={"blueprint": initial["blueprint"]},
+    )
+    assert approved.status_code == 202, approved.text
+    initial = client.get(f"/api/runs/{created['run_id']}").json()
+    assert initial["status"] == "completed_degraded"
+
+    proposal = _propose_change(
+        client,
+        initial["project_id"],
+        "增加一个按文件扩展名分组的选项",
+    )
+    changed = _approve_change(
+        client,
+        initial["project_id"],
+        proposal["proposal_id"],
+    )
+
+    assert changed["status"] == "completed_degraded"
+    assert changed["source_bundle"]["runtime_binding"] is None
+    assert changed["execution_report"] is None
+    assert all(item["path"] != "index.html" for item in changed["source_bundle"]["files"])
+    assert any(
+        "增加一个按文件扩展名分组的选项" in item["content"]
+        for item in changed["source_bundle"]["files"]
+        if item["role"] in {"source", "documentation"}
+    )
+    version = client.get(f"/api/projects/{initial['project_id']}/versions").json()[0]
+    assert version["delivery_outcome"] == "source_ready"
+
+
 def test_project_chat_clarifies_before_creating_a_run(client: TestClient) -> None:
     initial = _build_project(client)
     project_id = initial["project_id"]
@@ -224,7 +258,7 @@ def test_project_chat_clarifies_before_creating_a_run(client: TestClient) -> Non
     proposal = _propose_change(
         client,
         project_id,
-        '把标题改成“澄清后的扫雷”，其他功能保持不变',
+        "把标题改成“澄清后的扫雷”，其他功能保持不变",
     )
     run = _approve_change(client, project_id, proposal["proposal_id"])
     assert run["status"] == "completed"
@@ -453,12 +487,8 @@ def test_failed_run_retry_creates_new_run_without_change_proposal(
     after = _project_write_counts(client, original["project_id"])
     assert after == (before[0] + 1, before[1], before[2])
 
-    messages = client.get(
-        f"/api/projects/{original['project_id']}/messages"
-    ).json()
-    retry_request = next(
-        message for message in messages if message["run_id"] == retried["run_id"]
-    )
+    messages = client.get(f"/api/projects/{original['project_id']}/messages").json()
+    retry_request = next(message for message in messages if message["run_id"] == retried["run_id"])
     assert retry_request["message_type"] == "request"
     assert retry_request["payload"]["request_type"] == "retry_build"
     assert retry_request["payload"]["retry_of_run_id"] == original["run_id"]
@@ -498,8 +528,7 @@ def test_pending_proposal_becomes_stale_when_base_version_changes(
     assert current["status"] == "completed"
 
     stale = client.post(
-        f"/api/projects/{project_id}/change-proposals/"
-        f"{stale_proposal['proposal_id']}/approve"
+        f"/api/projects/{project_id}/change-proposals/{stale_proposal['proposal_id']}/approve"
     )
     assert stale.status_code == 409
     assert stale.json()["code"] == "BASE_VERSION_CHANGED"
@@ -606,7 +635,7 @@ def test_failed_change_preserves_base_version_and_releases_project_lock(
     continued_proposal = _propose_change(
         client,
         project_id,
-        '继续，把标题改成“恢复后的扫雷”',
+        "继续，把标题改成“恢复后的扫雷”",
     )
     continued = _approve_change(client, project_id, continued_proposal["proposal_id"])
     assert continued["status"] == "completed"
@@ -620,9 +649,7 @@ def test_failed_change_preserves_base_version_and_releases_project_lock(
         )
     assert brief is not None
     previous_failure = brief.payload["previous_failure"]
-    assert {
-        key: value for key, value in previous_failure.items() if key != "artifact_types"
-    } == {
+    assert {key: value for key, value in previous_failure.items() if key != "artifact_types"} == {
         "run_id": failed["run_id"],
         "stage": "engineer",
         "error_code": "CHANGE_PIPELINE_FAILED",
@@ -651,17 +678,13 @@ def test_invalid_source_change_fails_without_creating_a_version(
     def tampered_change(self, *args, **kwargs):
         change_set = original(self, *args, **kwargs)
         first = change_set.changes[0].model_copy(update={"before_hash": "0" * 64})
-        return change_set.model_copy(
-            update={"changes": [first, *change_set.changes[1:]]}
-        )
+        return change_set.model_copy(update={"changes": [first, *change_set.changes[1:]]})
 
-    monkeypatch.setattr(
-        MockLLMProvider, "create_source_file_change_set", tampered_change
-    )
+    monkeypatch.setattr(MockLLMProvider, "create_source_file_change_set", tampered_change)
     proposal = _propose_change(
         client,
         project_id,
-        '把标题改成“不会提交的版本”',
+        "把标题改成“不会提交的版本”",
     )
     failed = _approve_change(client, project_id, proposal["proposal_id"])
 
@@ -674,9 +697,7 @@ def test_invalid_source_change_fails_without_creating_a_version(
         project = db.get(Project, project_id)
         artifacts = set(
             db.scalars(
-                select(Artifact.artifact_type).where(
-                    Artifact.run_id == failed["run_id"]
-                )
+                select(Artifact.artifact_type).where(Artifact.run_id == failed["run_id"])
             ).all()
         )
     assert project is not None
@@ -690,15 +711,15 @@ def test_invalid_source_change_fails_without_creating_a_version(
 def test_project_message_history_is_owner_scoped(client: TestClient) -> None:
     initial = _build_project(client)
     assert client.post("/api/auth/logout").status_code == 204
-    assert client.post(
-        "/api/auth/signup",
-        json={
-            "username": "projectintruder",
-            "password": "strong-password-123",
-            "display_name": "Project Intruder",
-        },
-    ).status_code == 201
     assert (
-        client.get(f"/api/projects/{initial['project_id']}/messages").status_code
-        == 404
+        client.post(
+            "/api/auth/signup",
+            json={
+                "username": "projectintruder",
+                "password": "strong-password-123",
+                "display_name": "Project Intruder",
+            },
+        ).status_code
+        == 201
     )
+    assert client.get(f"/api/projects/{initial['project_id']}/messages").status_code == 404

@@ -69,6 +69,7 @@ class BuildStatus(StrEnum):
     TESTING = "testing"
     VALIDATING = "validating"
     SUCCEEDED = "succeeded"
+    SOURCE_READY = "source_ready"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -79,6 +80,13 @@ class ProjectStatus(StrEnum):
     READY = "ready"
     LIVE = "live"
     PAUSED = "paused"
+
+
+class DeliveryOutcome(StrEnum):
+    VALID = "valid"
+    SOURCE_READY = "source_ready"
+    CANDIDATE_REJECTED = "candidate_rejected"
+    EXECUTION_BLOCKED = "execution_blocked"
 
 
 class ArtifactType(StrEnum):
@@ -137,7 +145,7 @@ class Blueprint(BaseModel):
     mapped_requirements: list[str] = Field(default_factory=list, max_length=12)
     omitted_requirements: list[str] = Field(default_factory=list, max_length=12)
     rewrite_suggestion: str | None = Field(default=None, max_length=500)
-    capability_policy_version: Literal["catalog-v1", "web-v1"] = "web-v1"
+    capability_policy_version: Literal["catalog-v1", "web-v1", "source-v1"] = "web-v1"
     pages: list[str] = Field(min_length=1, max_length=12)
     modules: list[str] = Field(min_length=1, max_length=20)
     visual_direction: str = Field(min_length=1, max_length=240)
@@ -274,8 +282,9 @@ class AppSpec(BaseModel):
 
 class SourceFileDraft(BaseModel):
     path: str = Field(min_length=1, max_length=240)
-    role: Literal["source", "test", "config"]
-    content: str = Field(max_length=120_000)
+    role: Literal["source", "test", "config", "documentation", "asset"]
+    encoding: Literal["utf-8"] = "utf-8"
+    content: str = Field(max_length=256_000)
 
     @field_validator("path")
     @classmethod
@@ -287,6 +296,7 @@ class SourceFileDraft(BaseModel):
             or normalized.startswith("/")
             or "\\" in normalized
             or any(part in {"", ".", ".."} for part in parts)
+            or parts[0] == ".git"
         ):
             raise ValueError("Source file path must be a normalized relative POSIX path")
         return normalized
@@ -296,10 +306,58 @@ class SourceFile(SourceFileDraft):
     content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class SourceEntrypoint(BaseModel):
+    kind: Literal["application", "test"]
+    path: str = Field(min_length=1, max_length=240)
+
+    @field_validator("path")
+    @classmethod
+    def path_is_relative_and_bounded(cls, value: str) -> str:
+        return SourceFileDraft.path_is_relative_and_bounded(value)
+
+
+class RuntimeBinding(BaseModel):
+    contract_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    contract_version: str = Field(min_length=1, max_length=20)
+    contract_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class RuntimeCapabilities(BaseModel):
+    build: bool = False
+    test: bool = False
+    preview: bool = False
+    publish: bool = False
+
+
+class RuntimeContract(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    contract_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    version: str = Field(min_length=1, max_length=20)
+    contract_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    lifecycle: Literal["active", "legacy_read_only"] = "active"
+    supported_project_types: list[str] = Field(min_length=1, max_length=20)
+    document_semantics: Literal["fragment", "document", "not_applicable"]
+    required_files: list[str] = Field(default_factory=list, max_length=20)
+    required_entrypoint_kinds: list[Literal["application", "test"]] = Field(
+        default_factory=list, max_length=2
+    )
+    tests_required: bool = False
+    allowed_manifest_files: list[str] = Field(default_factory=list, max_length=20)
+    dependency_installation: Literal["forbidden", "preinstalled_only"] = "forbidden"
+    network_policy: Literal["public_https_only", "none"] = "none"
+    capabilities: RuntimeCapabilities
+    execution_plan: Literal["web-static-v1", "web-static-document"]
+    max_files: int = Field(ge=1, le=256)
+    max_file_bytes: int = Field(ge=1, le=1_000_000)
+    max_total_bytes: int = Field(ge=1, le=5_000_000)
+
+
 class EngineerOutput(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     app_spec: AppSpec
     unit_tests: list[SourceFileDraft] = Field(min_length=1, max_length=8)
+    source_files: list[SourceFileDraft] = Field(default_factory=list, max_length=128)
+    entrypoints: list[SourceEntrypoint] = Field(default_factory=list, max_length=16)
 
     @field_validator("unit_tests")
     @classmethod
@@ -308,31 +366,56 @@ class EngineerOutput(BaseModel):
         for item in value:
             if item.role != "test" or not item.path.startswith("tests/"):
                 raise ValueError("Engineer unit tests must use role=test under tests/")
-            if not item.path.endswith(".test.js"):
-                raise ValueError("web-static-v1 tests must end with .test.js")
             if item.path in paths:
                 raise ValueError("Engineer unit test paths must be unique")
             paths.add(item.path)
         return value
 
-
-class SourceBundle(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
-    adapter_id: Literal["web-static-v1"] = "web-static-v1"
-    project_type: str = Field(min_length=1, max_length=80)
-    entrypoint: Literal["index.html"] = "index.html"
-    files: list[SourceFile] = Field(min_length=5, max_length=24)
-    manifest_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-
-    @field_validator("files")
+    @field_validator("source_files")
     @classmethod
-    def file_paths_are_unique(cls, value: list[SourceFile]) -> list[SourceFile]:
+    def source_paths_are_unique(cls, value: list[SourceFileDraft]) -> list[SourceFileDraft]:
         paths = [item.path for item in value]
         if len(paths) != len(set(paths)):
-            raise ValueError("SourceBundle file paths must be unique")
-        if "index.html" not in paths or not any(item.role == "test" for item in value):
-            raise ValueError("SourceBundle requires index.html and at least one test")
+            raise ValueError("Engineer source file paths must be unique")
+        if any(item.role == "test" for item in value):
+            raise ValueError("Engineer source_files must not duplicate unit_tests")
         return value
+
+
+class SourceBundle(BaseModel):
+    schema_version: Literal["1.0", "2.0"] = "1.0"
+    adapter_id: str | None = "web-static-v1"
+    project_type: str = Field(min_length=1, max_length=80)
+    entrypoint: str | None = "index.html"
+    entrypoints: list[SourceEntrypoint] = Field(default_factory=list, max_length=16)
+    runtime_binding: RuntimeBinding | None = None
+    files: list[SourceFile] = Field(min_length=1, max_length=128)
+    manifest_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def source_contract_is_consistent(self) -> SourceBundle:
+        paths = [item.path for item in self.files]
+        if len(paths) != len(set(paths)):
+            raise ValueError("SourceBundle file paths must be unique")
+        if self.schema_version == "1.0":
+            if "index.html" not in paths or not any(item.role == "test" for item in self.files):
+                raise ValueError("SourceBundle 1.0 requires index.html and at least one test")
+            return self
+        if self.entrypoint is not None:
+            raise ValueError("SourceBundle 2.0 uses entrypoints instead of legacy entrypoint")
+        entrypoint_paths = [item.path for item in self.entrypoints]
+        if len(entrypoint_paths) != len(set(entrypoint_paths)):
+            raise ValueError("SourceBundle entrypoint paths must be unique")
+        missing = sorted(set(entrypoint_paths) - set(paths))
+        if missing:
+            raise ValueError(
+                f"SourceBundle entrypoints reference missing files: {', '.join(missing)}"
+            )
+        if self.runtime_binding is None and self.adapter_id is not None:
+            raise ValueError("SourceBundle 2.0 without RuntimeBinding cannot declare adapter_id")
+        if self.runtime_binding is not None and self.adapter_id != self.runtime_binding.contract_id:
+            raise ValueError("SourceBundle adapter_id must match RuntimeBinding contract_id")
+        return self
 
 
 class PreviousFailureContext(BaseModel):
@@ -400,7 +483,7 @@ class SourceFileChange(BaseModel):
     path: str = Field(min_length=1, max_length=240)
     operation: Literal["modify", "add", "delete"]
     before_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    replacement_content: str | None = Field(default=None, max_length=120_000)
+    replacement_content: str | None = Field(default=None, max_length=256_000)
 
     @field_validator("path")
     @classmethod
@@ -443,9 +526,7 @@ class SourceFileChangeSet(BaseModel):
 
     @field_validator("changes")
     @classmethod
-    def change_paths_are_unique(
-        cls, value: list[SourceFileChange]
-    ) -> list[SourceFileChange]:
+    def change_paths_are_unique(cls, value: list[SourceFileChange]) -> list[SourceFileChange]:
         paths = [item.path for item in value]
         if len(paths) != len(set(paths)):
             raise ValueError("SourceFileChangeSet paths must be unique")
@@ -539,7 +620,9 @@ class ValidationCheck(BaseModel):
     check_id: str
     label: str
     status: Literal["pass", "fail", "warning"]
-    root_cause: Literal["app_spec", "renderer", "platform", "unknown"] = "unknown"
+    root_cause: Literal[
+        "app_spec", "source", "runtime", "security", "renderer", "platform", "unknown"
+    ] = "unknown"
     resolvable: bool = False
     detail: str | None = None
 
@@ -555,7 +638,8 @@ class ExecutionRequest(BaseModel):
     execution_id: str = Field(min_length=1, max_length=80)
     run_id: str = Field(min_length=1, max_length=80)
     attempt: int = Field(ge=1)
-    adapter_id: Literal["web-static-v1"] = "web-static-v1"
+    adapter_id: str = Field(min_length=1, max_length=80)
+    runtime_binding: RuntimeBinding | None = None
     request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     product_spec_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     architecture_design_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -618,14 +702,14 @@ class ExecutionReport(BaseModel):
 
 class BuildArtifactFile(BaseModel):
     path: str = Field(min_length=1, max_length=240)
-    content: str = Field(max_length=120_000)
+    content: str = Field(max_length=256_000)
     size_bytes: int = Field(ge=0)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class BuildArtifact(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
-    files: list[BuildArtifactFile] = Field(default_factory=list, max_length=20)
+    files: list[BuildArtifactFile] = Field(default_factory=list, max_length=128)
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -636,6 +720,7 @@ class ExecutionResult(BaseModel):
     adapter_id: str
     source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: Literal["passed", "failed", "cancelled"]
+    outcome: DeliveryOutcome = DeliveryOutcome.VALID
     build_artifact: BuildArtifact | None = None
     execution_report: ExecutionReport
     validation_report: ValidationReport
@@ -846,8 +931,18 @@ class VersionView(BaseModel):
     source: VersionSource
     summary: str
     app_spec: AppSpec
+    delivery_outcome: DeliveryOutcome = DeliveryOutcome.VALID
+    runtime_binding: RuntimeBinding | None = None
+    runtime_capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
     created_at: datetime
     git_commit: str | None = None
+
+
+class PreviewView(BaseModel):
+    app_spec: AppSpec
+    source_bundle: SourceBundle | None = None
+    delivery_outcome: DeliveryOutcome = DeliveryOutcome.VALID
+    runtime_capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
 
 
 class DeploymentView(BaseModel):

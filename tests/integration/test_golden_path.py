@@ -1,8 +1,11 @@
+import hashlib
 from time import perf_counter
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from another_atom.contracts.schemas import SourceBundle
+from another_atom.runtime.contracts import source_manifest_hash
 from another_atom.storage.models import Deployment, Project, ProjectVersion, UsageLedger
 
 PROMPT = (
@@ -66,7 +69,7 @@ def test_team_mode_golden_path_to_public_url(client: TestClient) -> None:
 
     preview = client.get(f"/api/previews/{run['version_id']}")
     assert preview.status_code == 200
-    assert preview.json()["project_name"] == "Mono Market"
+    assert preview.json()["app_spec"]["project_name"] == "Mono Market"
 
     published = client.post(
         f"/api/projects/{run['project_id']}/publish",
@@ -130,9 +133,7 @@ def test_restore_last_usable_skips_failed_history_and_keeps_public_version(
         edited_version.validation_report = failed_report
         db.commit()
 
-    restored = client.post(
-        f"/api/projects/{run['project_id']}/restore-last-usable"
-    )
+    restored = client.post(f"/api/projects/{run['project_id']}/restore-last-usable")
     assert restored.status_code == 200, restored.text
     payload = restored.json()
     assert payload["number"] == 3
@@ -143,9 +144,7 @@ def test_restore_last_usable_skips_failed_history_and_keeps_public_version(
 
     with client.app.state.testing_session() as db:
         project = db.get(Project, run["project_id"])
-        deployment = db.scalar(
-            select(Deployment).where(Deployment.project_id == run["project_id"])
-        )
+        deployment = db.scalar(select(Deployment).where(Deployment.project_id == run["project_id"]))
         assert project is not None
         assert project.latest_version_id == payload["id"]
         assert project.active_write_run_id is None
@@ -160,9 +159,7 @@ def test_restore_rejects_an_active_project_writer(client: TestClient) -> None:
         project.active_write_run_id = "another-operation"
         db.commit()
 
-    response = client.post(
-        f"/api/projects/{run['project_id']}/restore-last-usable"
-    )
+    response = client.post(f"/api/projects/{run['project_id']}/restore-last-usable")
     assert response.status_code == 409
     assert response.json()["code"] == "PROJECT_WRITE_BUSY"
 
@@ -174,16 +171,25 @@ def test_restore_last_usable_releases_the_lock_when_revalidation_fails(
     with client.app.state.testing_session() as db:
         version = db.get(ProjectVersion, run["version_id"])
         assert version is not None
-        broken_app_spec = dict(version.app_spec)
-        broken_app_spec["pages"] = broken_app_spec["pages"][:1]
-        broken_app_spec["products"] = []
-        broken_app_spec["javascript"] = "eval('not allowed')"
-        version.app_spec = broken_app_spec
+        bundle = SourceBundle.model_validate(version.source_bundle)
+        files = []
+        for item in bundle.files:
+            if item.path == "app.js":
+                content = "const = ;\n"
+                item = item.model_copy(
+                    update={
+                        "content": content,
+                        "content_hash": "sha256:"
+                        + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    }
+                )
+            files.append(item)
+        bundle = bundle.model_copy(update={"files": files})
+        bundle = bundle.model_copy(update={"manifest_hash": source_manifest_hash(bundle)})
+        version.source_bundle = bundle.model_dump(mode="json")
         db.commit()
 
-    response = client.post(
-        f"/api/projects/{run['project_id']}/restore-last-usable"
-    )
+    response = client.post(f"/api/projects/{run['project_id']}/restore-last-usable")
     assert response.status_code == 409
     assert response.json()["code"] == "NO_USABLE_VERSION"
     assert len(client.get(f"/api/projects/{run['project_id']}/versions").json()) == 1

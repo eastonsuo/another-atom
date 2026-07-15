@@ -1,6 +1,7 @@
 import hashlib
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -26,7 +27,9 @@ from another_atom.contracts.schemas import (
     BuildArtifact,
     BuildStatus,
     ChangeBrief,
+    CommandExecution,
     DataProfile,
+    DeliveryOutcome,
     EngineerOutput,
     ExecutionReport,
     ExecutionRequest,
@@ -70,6 +73,13 @@ from another_atom.runtime.artifacts import (
     create_source_bundle_from_files,
 )
 from another_atom.runtime.client import RuntimeExecutorError, execute_request
+from another_atom.runtime.contracts import (
+    get_runtime_contract,
+    preflight_runtime,
+    resolve_runtime_binding,
+    select_runtime_contract,
+    validate_source_bundle,
+)
 from another_atom.storage.models import (
     Artifact,
     BuildJob,
@@ -266,9 +276,7 @@ class Orchestrator:
             current = self.db.get(Run, run_id)
             if current is None:
                 return
-            if event_type.startswith("agent.message.") or event_type.startswith(
-                "agent.output."
-            ):
+            if event_type.startswith("agent.message.") or event_type.startswith("agent.output."):
                 self._persist_agent_message_event(current, stage, event_type, payload)
             record_event(
                 self.db,
@@ -541,9 +549,7 @@ class Orchestrator:
                 self._fail_run(current, "BLUEPRINT_FAILED", str(exc))
             return None
 
-    def _create_blueprint_in_request_language(
-        self, run: Run, prompt: str, mode: Mode
-    ) -> Blueprint:
+    def _create_blueprint_in_request_language(self, run: Run, prompt: str, mode: Mode) -> Blueprint:
         blueprint = self._provider(run).create_blueprint(prompt, mode)
         if _contains_chinese(prompt):
             localized_fields = [
@@ -757,6 +763,62 @@ class Orchestrator:
             app_spec, source_bundle = self._run_engineer(
                 run, blueprint, product_spec, architecture_design
             )
+            if source_bundle.runtime_binding is None:
+                validation_report = validate_source_bundle(source_bundle)
+                if not validation_report.passed:
+                    self._fail_run(
+                        run,
+                        "SOURCE_CONTRACT_INVALID",
+                        "The generated source did not satisfy Source Contract 2.0",
+                    )
+                    return
+                compatibility_review = ReviewReport(
+                    summary=(
+                        "源码已通过通用 Source Contract；当前没有匹配的 Runtime Adapter，"
+                        "因此未执行在线 Build、Test、Preview 或 Publish。"
+                    ),
+                    engineering_checks=[check.label for check in validation_report.checks],
+                    warnings=["当前版本为 source_ready，仅交付和版本化源码。"],
+                    suggested_actions=["accept"],
+                    reviewer_mode="deterministic_only",
+                )
+                version = self._create_version(
+                    run,
+                    project,
+                    app_spec,
+                    None,
+                    validation_report.model_dump(mode="json"),
+                    compatibility_review.model_dump(mode="json"),
+                    VersionSource.BUILD,
+                    architecture_design=architecture_design,
+                    source_bundle=source_bundle,
+                )
+                build_job = self.db.scalar(
+                    select(BuildJob)
+                    .where(BuildJob.run_id == run.id)
+                    .order_by(BuildJob.created_at.desc())
+                    .limit(1)
+                )
+                if build_job is not None:
+                    build_job.status = BuildStatus.SOURCE_READY.value
+                run.status = RunStatus.COMPLETED_DEGRADED.value
+                run.current_stage = "complete"
+                project.status = ProjectStatus.READY.value
+                if project.active_write_run_id == run.id:
+                    project.active_write_run_id = None
+                self._record_event_once(
+                    run,
+                    "run.source_ready",
+                    "Project source is ready; no matching Runtime Adapter was available",
+                    "complete",
+                    {
+                        "version_id": version.id,
+                        "version_number": version.version_number,
+                        "outcome": DeliveryOutcome.SOURCE_READY.value,
+                    },
+                )
+                self.db.commit()
+                return
             execution_result, build_job = self._run_build(
                 run,
                 project,
@@ -807,16 +869,23 @@ class Orchestrator:
                 )
             if not validation_report.passed:
                 failed_check_ids = [
-                    check.check_id
-                    for check in validation_report.checks
-                    if check.status == "fail"
+                    check.check_id for check in validation_report.checks if check.status == "fail"
                 ]
                 build_job.status = BuildStatus.FAILED.value
                 build_job.error_message = "Deterministic validation failed"
+                outcome = execution_result.outcome
                 self._fail_run(
                     run,
-                    "BUILD_VALIDATION_FAILED",
-                    "Build validation failed after repair: "
+                    (
+                        "EXECUTION_BLOCKED"
+                        if outcome == DeliveryOutcome.EXECUTION_BLOCKED
+                        else "CANDIDATE_REJECTED"
+                    ),
+                    (
+                        "Execution was blocked by the Runtime Contract: "
+                        if outcome == DeliveryOutcome.EXECUTION_BLOCKED
+                        else "Candidate source was rejected after validation: "
+                    )
                     + ", ".join(failed_check_ids),
                 )
                 return
@@ -855,7 +924,11 @@ class Orchestrator:
                 "run.completed",
                 "Interactive preview is ready",
                 "complete",
-                {"version_id": version.id, "version_number": version.version_number},
+                {
+                    "version_id": version.id,
+                    "version_number": version.version_number,
+                    "outcome": DeliveryOutcome.VALID.value,
+                },
             )
             self.db.commit()
             logger.info(
@@ -946,6 +1019,18 @@ class Orchestrator:
             self.db.commit()
         blueprint = Blueprint.model_validate(blueprint_artifact.payload)
         base_app_spec = AppSpec.model_validate(base_version.app_spec)
+        base_source_bundle = (
+            SourceBundle.model_validate(base_version.source_bundle)
+            if base_version.source_bundle is not None
+            else None
+        )
+        base_runtime_contract = (
+            resolve_runtime_binding(base_source_bundle.runtime_binding)
+            if base_source_bundle is not None and base_source_bundle.runtime_binding is not None
+            else get_runtime_contract("web-static-v1", "1.0")
+            if base_source_bundle is not None and base_source_bundle.adapter_id == "web-static-v1"
+            else None
+        )
         source_architecture = get_artifact(
             self.db, base_version.run_id, ArtifactType.ARCHITECTURE_SPEC
         )
@@ -971,18 +1056,14 @@ class Orchestrator:
 
         try:
             project.status = ProjectStatus.BUILDING.value
-            snapshot_artifact = get_artifact(
-                self.db, run.id, ArtifactType.BASE_SOURCE_SNAPSHOT
-            )
+            snapshot_artifact = get_artifact(self.db, run.id, ArtifactType.BASE_SOURCE_SNAPSHOT)
             if snapshot_artifact:
                 source_snapshot = BaseSourceSnapshot.model_validate(snapshot_artifact.payload)
             else:
                 source_snapshot = build_source_snapshot(
                     project.id, base_version.id, base_version.git_commit
                 )
-                save_artifact(
-                    self.db, run.id, ArtifactType.BASE_SOURCE_SNAPSHOT, source_snapshot
-                )
+                save_artifact(self.db, run.id, ArtifactType.BASE_SOURCE_SNAPSHOT, source_snapshot)
                 self.db.commit()
             run.status = RunStatus.PRODUCT_RUNNING.value
             run.current_stage = "team_leader"
@@ -1098,9 +1179,7 @@ class Orchestrator:
                 architecture_draft = self._run_unpersisted_agent_stage(
                     run,
                     "architect_design_migration",
-                    lambda: self._provider(run).create_architecture_design(
-                        product_spec, blueprint
-                    ),
+                    lambda: self._provider(run).create_architecture_design(product_spec, blueprint),
                 )
             architecture_draft = architecture_draft.model_copy(
                 update={"visual_tokens": architecture_spec}
@@ -1124,9 +1203,7 @@ class Orchestrator:
             )
             self.db.commit()
 
-            source_context_artifact = get_artifact(
-                self.db, run.id, ArtifactType.SOURCE_CONTEXT
-            )
+            source_context_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_CONTEXT)
             if source_context_artifact:
                 source_context = SourceContext.model_validate(source_context_artifact.payload)
             else:
@@ -1163,9 +1240,7 @@ class Orchestrator:
                 "Engineer is modifying the current Project source",
                 "engineer",
             )
-            legacy_patch_artifact = get_artifact(
-                self.db, run.id, ArtifactType.SOURCE_PATCH_SET
-            )
+            legacy_patch_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_PATCH_SET)
             if legacy_patch_artifact is not None:
                 raise AppError(
                     "LEGACY_SOURCE_PATCH_RUN_UNSUPPORTED",
@@ -1173,9 +1248,7 @@ class Orchestrator:
                     "resume through SourceFileChangeSet",
                     409,
                 )
-            change_artifact = get_artifact(
-                self.db, run.id, ArtifactType.SOURCE_FILE_CHANGE_SET
-            )
+            change_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_FILE_CHANGE_SET)
             if change_artifact is not None:
                 change_set = SourceFileChangeSet.model_validate(change_artifact.payload)
             else:
@@ -1195,6 +1268,7 @@ class Orchestrator:
                         change_brief,
                         requirement_delta,
                         base_app_spec,
+                        base_runtime_contract,
                     ),
                 )
             if change_set.run_id != run.id:
@@ -1222,14 +1296,17 @@ class Orchestrator:
             )
             self.db.commit()
             try:
-                app_spec, candidate_files, apply_report = (
-                    materialize_source_file_change_set(
-                        source_snapshot,
-                        source_context,
-                        change_set,
-                        base_app_spec,
-                        architecture_spec,
-                    )
+                app_spec, candidate_files, apply_report = materialize_source_file_change_set(
+                    source_snapshot,
+                    source_context,
+                    change_set,
+                    base_app_spec,
+                    architecture_spec,
+                    (
+                        base_runtime_contract.contract_id
+                        if base_runtime_contract is not None
+                        else "source-only"
+                    ),
                 )
             except SourceChangeError as exc:
                 self._record_event_once(
@@ -1242,15 +1319,14 @@ class Orchestrator:
                 self.db.commit()
                 raise AppError(exc.code, str(exc), 422) from exc
             source_bundle = create_source_bundle_from_files(
-                candidate_files, blueprint.product_type
+                candidate_files,
+                blueprint.product_type,
+                base_runtime_contract,
+                base_source_bundle.entrypoints if base_source_bundle is not None else None,
             )
-            source_diff = calculate_source_diff_from_files(
-                source_snapshot, candidate_files
-            )
+            source_diff = calculate_source_diff_from_files(source_snapshot, candidate_files)
             save_artifact(self.db, run.id, ArtifactType.APP_SPEC, app_spec)
-            save_artifact(
-                self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle
-            )
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
             save_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF, source_diff)
             apply_artifact = save_artifact(
                 self.db,
@@ -1270,9 +1346,7 @@ class Orchestrator:
                 },
             )
             if not (
-                source_diff.changed_files
-                or source_diff.added_files
-                or source_diff.removed_files
+                source_diff.changed_files or source_diff.added_files or source_diff.removed_files
             ):
                 raise AppError(
                     "EMPTY_CHANGE",
@@ -1306,6 +1380,83 @@ class Orchestrator:
             )
             self.db.commit()
 
+            if source_bundle.runtime_binding is None:
+                validation_report = validate_source_bundle(source_bundle)
+                if not validation_report.passed:
+                    self._fail_run(
+                        run,
+                        "SOURCE_CONTRACT_INVALID",
+                        "The modified source did not satisfy Source Contract 2.0",
+                    )
+                    return
+                self.db.refresh(project)
+                if (
+                    project.active_write_run_id != run.id
+                    or project.latest_version_id != run.base_version_id
+                ):
+                    raise AppError(
+                        "BASE_VERSION_CHANGED",
+                        "The Project changed while this modification was running",
+                        409,
+                    )
+                compatibility_review = ReviewReport(
+                    summary=(
+                        "源码修改已通过通用 Source Contract；当前没有匹配的 Runtime Adapter，"
+                        "因此没有在线执行或伪 Preview。"
+                    ),
+                    engineering_checks=[check.label for check in validation_report.checks],
+                    warnings=["当前版本为 source_ready，仅交付和版本化源码。"],
+                    suggested_actions=["accept"],
+                    reviewer_mode="deterministic_only",
+                )
+                version = self._create_version(
+                    run,
+                    project,
+                    app_spec,
+                    None,
+                    validation_report.model_dump(mode="json"),
+                    compatibility_review.model_dump(mode="json"),
+                    VersionSource.AI_EDIT,
+                    architecture_design=architecture_design,
+                    source_bundle=source_bundle,
+                )
+                build_job = self.db.scalar(
+                    select(BuildJob)
+                    .where(BuildJob.run_id == run.id)
+                    .order_by(BuildJob.created_at.desc())
+                    .limit(1)
+                )
+                if build_job is not None:
+                    build_job.status = BuildStatus.SOURCE_READY.value
+                run.status = RunStatus.COMPLETED_DEGRADED.value
+                run.current_stage = "complete"
+                project.status = ProjectStatus.READY.value
+                project.active_write_run_id = None
+                self._record_event_once(
+                    run,
+                    "run.source_ready",
+                    "Modified Project source is ready without a matching Runtime Adapter",
+                    "complete",
+                    {
+                        "version_id": version.id,
+                        "version_number": version.version_number,
+                        "outcome": DeliveryOutcome.SOURCE_READY.value,
+                    },
+                )
+                self._record_project_message_once(
+                    run,
+                    "system",
+                    "result",
+                    f"源码修改已完成并生成版本 v{version.version_number}；当前不支持在线预览。",
+                    {
+                        "version_id": version.id,
+                        "version_number": version.version_number,
+                        "outcome": DeliveryOutcome.SOURCE_READY.value,
+                    },
+                )
+                self.db.commit()
+                return
+
             execution_result, build_job = self._run_build(
                 run,
                 project,
@@ -1321,8 +1472,12 @@ class Orchestrator:
                 build_job.status = BuildStatus.FAILED.value
                 self._fail_run(
                     run,
-                    "BUILD_VALIDATION_FAILED",
-                    "The Web source validator rejected the materialized SourceFileChangeSet",
+                    (
+                        "EXECUTION_BLOCKED"
+                        if execution_result.outcome == DeliveryOutcome.EXECUTION_BLOCKED
+                        else "CANDIDATE_REJECTED"
+                    ),
+                    "The Runtime Contract rejected the materialized SourceFileChangeSet",
                 )
                 return
             compatibility_review = ReviewReport(
@@ -1397,6 +1552,7 @@ class Orchestrator:
         blueprint: Blueprint,
         product_spec: ProductSpec,
     ) -> ArchitectureDesign | None:
+        selected = select_runtime_contract(blueprint.product_type)
         run.status = RunStatus.ARCHITECT_RUNNING.value
         run.current_stage = "architect"
         self._record_event_once(
@@ -1413,20 +1569,17 @@ class Orchestrator:
             draft = self._run_unpersisted_agent_stage(
                 run,
                 "architect",
-                lambda: self._provider(run).create_architecture_design(
-                    product_spec, blueprint
-                ),
+                lambda: self._provider(run).create_architecture_design(product_spec, blueprint),
             )
             draft = ArchitectureDesignDraft.model_validate(draft).model_copy(
                 update={
-                    "visual_tokens": normalize_architecture_visual_tokens(
-                        draft.visual_tokens
-                    )
+                    "runtime_adapter": (
+                        selected.contract_id if selected is not None else "source-only"
+                    ),
+                    "visual_tokens": normalize_architecture_visual_tokens(draft.visual_tokens),
                 }
             )
-            architecture_design = create_architecture_design(
-                draft, product_spec.content_hash
-            )
+            architecture_design = create_architecture_design(draft, product_spec.content_hash)
             write_architecture_design(run.project_id, architecture_design.content)
             artifact = save_artifact(
                 self.db,
@@ -1448,9 +1601,7 @@ class Orchestrator:
             {
                 "artifact_id": artifact.id,
                 "path": architecture_design.path,
-                "requires_product_reapproval": (
-                    architecture_design.requires_product_reapproval
-                ),
+                "requires_product_reapproval": (architecture_design.requires_product_reapproval),
             },
         )
         self.db.commit()
@@ -1479,6 +1630,7 @@ class Orchestrator:
         product_spec: ProductSpec,
         architecture_design: ArchitectureDesign,
     ) -> tuple[AppSpec, SourceBundle]:
+        runtime_contract = select_runtime_contract(blueprint.product_type)
         run.status = RunStatus.ENGINEER_RUNNING.value
         run.current_stage = "engineer"
         self._record_event_once(
@@ -1492,7 +1644,27 @@ class Orchestrator:
             "engineer.context.prepared",
             "Engineer context is ready from ProductSpec and ArchitectureDesign",
             "engineer",
-            {"inputs": ["product_spec", "architecture_design", "blueprint", "request"]},
+            {
+                "inputs": [
+                    "product_spec",
+                    "architecture_design",
+                    "blueprint",
+                    "request",
+                    "runtime_contract",
+                ],
+                "runtime_contract": (
+                    {
+                        "contract_id": runtime_contract.contract_id,
+                        "version": runtime_contract.version,
+                        "contract_hash": runtime_contract.contract_hash,
+                    }
+                    if runtime_contract is not None
+                    else None
+                ),
+                "delivery_mode": (
+                    "runtime_bound" if runtime_contract is not None else "source_only"
+                ),
+            },
         )
         app_artifact = get_artifact(self.db, run.id, ArtifactType.APP_SPEC)
         source_artifact = get_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE)
@@ -1509,14 +1681,23 @@ class Orchestrator:
                     architecture_design,
                     blueprint,
                     run.prompt,
+                    runtime_contract,
                 ),
             )
             output = EngineerOutput.model_validate(output)
+            if not output.source_files:
+                raise ValueError(
+                    "EngineerOutput must include authoritative source_files for new runs"
+                )
             app_spec = self._align_app_spec_visual_tokens(
                 output.app_spec, architecture_design.visual_tokens
             )
             output = output.model_copy(update={"app_spec": app_spec})
-            source_bundle = create_source_bundle(output, blueprint.product_type)
+            source_bundle = create_source_bundle(
+                output,
+                blueprint.product_type,
+                runtime_contract,
+            )
             artifact = save_artifact(self.db, run.id, ArtifactType.APP_SPEC, app_spec)
             save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, source_bundle)
         self._record_event_once(
@@ -1527,9 +1708,12 @@ class Orchestrator:
             {
                 "artifact_id": artifact.id,
                 "source_manifest_hash": source_bundle.manifest_hash,
-                "test_files": [
-                    item.path for item in source_bundle.files if item.role == "test"
-                ],
+                "runtime_binding": (
+                    source_bundle.runtime_binding.model_dump(mode="json")
+                    if source_bundle.runtime_binding is not None
+                    else None
+                ),
+                "test_files": [item.path for item in source_bundle.files if item.role == "test"],
             },
         )
         self.db.commit()
@@ -1580,6 +1764,12 @@ class Orchestrator:
                 for item in source_bundle.files
                 if item.role == "test"
             ],
+            source_files=[
+                item.model_dump(mode="python", exclude={"content_hash"})
+                for item in source_bundle.files
+                if item.role != "test" and item.path != "app-spec.json"
+            ],
+            entrypoints=source_bundle.entrypoints,
         )
         repaired_output, artifact, _ = self._run_agent_stage(
             run,
@@ -1598,9 +1788,16 @@ class Orchestrator:
             ),
         )
         repaired_app_spec = repaired_output.app_spec
+        if not repaired_output.source_files:
+            raise ValueError("Engineer repair must retain authoritative source_files")
         repaired_source_bundle = create_source_bundle(
             repaired_output,
             blueprint.product_type,
+            (
+                resolve_runtime_binding(source_bundle.runtime_binding)
+                if source_bundle.runtime_binding is not None
+                else None
+            ),
         )
         app_artifact = save_artifact(
             self.db,
@@ -1687,6 +1884,11 @@ class Orchestrator:
             "run_id": run.id,
             "attempt": attempt,
             "adapter_id": source_bundle.adapter_id,
+            "runtime_binding": (
+                source_bundle.runtime_binding.model_dump(mode="json")
+                if source_bundle.runtime_binding is not None
+                else None
+            ),
             "product_spec_hash": product_spec.content_hash,
             "architecture_design_hash": architecture_design.content_hash,
             "source_manifest_hash": source_bundle.manifest_hash,
@@ -1710,7 +1912,59 @@ class Orchestrator:
             **request_payload,
             request_hash=request_hash,
         )
-        events, execution_result = execute_request(execution_request)
+        contract, preflight = preflight_runtime(source_bundle)
+        self._record_event_once(
+            run,
+            "runtime.preflight_completed",
+            "SourceBundle was checked against the bound Runtime Contract",
+            "build",
+            {
+                "contract_id": contract.contract_id,
+                "contract_version": contract.version,
+                "contract_hash": contract.contract_hash,
+                "passed": preflight.passed,
+            },
+        )
+        if preflight.passed:
+            events, execution_result = execute_request(execution_request)
+        else:
+            now = datetime.now(UTC)
+            blocked = any(
+                check.status == "fail" and check.root_cause == "security"
+                for check in preflight.checks
+            )
+            error_code = "EXECUTION_BLOCKED" if blocked else "RUNTIME_PREFLIGHT_REJECTED"
+            command = CommandExecution(status="not_run", duration_ms=0)
+            report = ExecutionReport(
+                execution_id=execution_request.execution_id,
+                adapter_id=execution_request.adapter_id,
+                source_manifest_hash=source_bundle.manifest_hash.removeprefix("sha256:"),
+                status="failed",
+                build=command,
+                test=command,
+                tests_collected=0,
+                tests_passed=0,
+                tests_failed=0,
+                started_at=now,
+                finished_at=now,
+                error_code=error_code,
+                error_message="Runtime Contract preflight did not pass; no code was executed.",
+            )
+            execution_result = ExecutionResult(
+                execution_id=execution_request.execution_id,
+                request_hash=execution_request.request_hash,
+                adapter_id=execution_request.adapter_id,
+                source_manifest_hash=source_bundle.manifest_hash.removeprefix("sha256:"),
+                status="failed",
+                outcome=(
+                    DeliveryOutcome.EXECUTION_BLOCKED
+                    if blocked
+                    else DeliveryOutcome.CANDIDATE_REJECTED
+                ),
+                execution_report=report,
+                validation_report=preflight,
+            )
+            events = []
         for execution_event in events:
             status_map = {
                 "source.materializing": BuildStatus.MATERIALIZING.value,
@@ -1923,19 +2177,13 @@ class Orchestrator:
                 else None
             ),
             source_bundle=(
-                source_bundle.model_dump(mode="json")
-                if source_bundle is not None
-                else None
+                source_bundle.model_dump(mode="json") if source_bundle is not None else None
             ),
             execution_report=(
-                execution_report.model_dump(mode="json")
-                if execution_report is not None
-                else None
+                execution_report.model_dump(mode="json") if execution_report is not None else None
             ),
             build_artifact=(
-                build_artifact.model_dump(mode="json")
-                if build_artifact is not None
-                else None
+                build_artifact.model_dump(mode="json") if build_artifact is not None else None
             ),
             data_profile=data_profile,
             validation_report=validation_report,

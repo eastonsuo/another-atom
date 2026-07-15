@@ -37,9 +37,7 @@ def renew_job_lease(
             .where(
                 BuildJob.id == job_id,
                 BuildJob.lease_owner == lease_owner,
-                BuildJob.status.in_(
-                    [BuildStatus.BUILDING.value, BuildStatus.VALIDATING.value]
-                ),
+                BuildJob.status.in_([BuildStatus.BUILDING.value, BuildStatus.VALIDATING.value]),
             )
             .values(lease_expires_at=now_utc() + timedelta(seconds=lease_seconds))
         )
@@ -130,7 +128,11 @@ def claim_next_job(
                 RunStatus.NEEDS_INPUT.value,
             }:
                 job.status = (
-                    BuildStatus.SUCCEEDED.value
+                    BuildStatus.SOURCE_READY.value
+                    if run
+                    and run.status == RunStatus.COMPLETED_DEGRADED.value
+                    and job.status == BuildStatus.SOURCE_READY.value
+                    else BuildStatus.SUCCEEDED.value
                     if run
                     and run.status
                     in {RunStatus.COMPLETED.value, RunStatus.COMPLETED_DEGRADED.value}
@@ -194,7 +196,8 @@ def execute_claimed_job(
             RunStatus.COMPLETED.value,
             RunStatus.COMPLETED_DEGRADED.value,
         }:
-            job.status = BuildStatus.SUCCEEDED.value
+            if job.status != BuildStatus.SOURCE_READY.value:
+                job.status = BuildStatus.SUCCEEDED.value
         elif run.status == RunStatus.NEEDS_INPUT.value:
             job.status = BuildStatus.WAITING_INPUT.value
         job.lease_owner = None

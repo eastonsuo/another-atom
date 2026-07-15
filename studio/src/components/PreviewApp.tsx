@@ -1,7 +1,41 @@
 import { ArrowLeft, ArrowRight, Menu, ShoppingBag, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
-import type { AppSpec, ProductItem } from "../types";
+import type { AppSpec, PreviewView, ProductItem, SourceFile } from "../types";
+
+const networkGuard = `(() => {
+  const blocked = (value) => {
+    try {
+      const raw = typeof value === 'string' ? value : value && value.url;
+      const host = new URL(raw, window.location.href).hostname.toLowerCase();
+      return host === 'localhost' || host.endsWith('.localhost') ||
+        /^127(?:\\.[0-9]{1,3}){0,3}$/.test(host) ||
+        host === '[::1]' || host === '::1' || host === '0.0.0.0';
+    } catch (_) {
+      return false;
+    }
+  };
+  const deny = (value) => {
+    if (blocked(value)) throw new TypeError('Localhost and loopback network access is blocked');
+  };
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    try { deny(input); } catch (error) { return Promise.reject(error); }
+    return nativeFetch(input, init);
+  };
+  const nativeOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    deny(url);
+    return nativeOpen.call(this, method, url, ...rest);
+  };
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = class extends NativeWebSocket {
+    constructor(url, protocols) {
+      deny(url);
+      super(url, protocols);
+    }
+  };
+})();`;
 
 interface PreviewAppProps {
   spec: AppSpec;
@@ -79,44 +113,76 @@ function CodePreview({ spec }: { spec: AppSpec }) {
   const javascript = spec.javascript.replace(/<\/script/gi, "<\\/script");
   const css = spec.css.replace(/<\/style/gi, "<\\/style");
   const html = spec.html.replace(/<script[\s\S]*?<\/script\s*>/gi, "");
-  const networkGuard = `(() => {
-  const blocked = (value) => {
-    try {
-      const raw = typeof value === 'string' ? value : value && value.url;
-      const host = new URL(raw, window.location.href).hostname.toLowerCase();
-      return host === 'localhost' || host.endsWith('.localhost') ||
-        /^127(?:\\.[0-9]{1,3}){0,3}$/.test(host) ||
-        host === '[::1]' || host === '::1' || host === '0.0.0.0';
-    } catch (_) {
-      return false;
-    }
-  };
-  const deny = (value) => {
-    if (blocked(value)) throw new TypeError('Localhost and loopback network access is blocked');
-  };
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    try { deny(input); } catch (error) { return Promise.reject(error); }
-    return nativeFetch(input, init);
-  };
-  const nativeOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-    deny(url);
-    return nativeOpen.call(this, method, url, ...rest);
-  };
-  const NativeWebSocket = window.WebSocket;
-  window.WebSocket = class extends NativeWebSocket {
-    constructor(url, protocols) {
-      deny(url);
-      super(url, protocols);
-    }
-  };
-})();`;
   const srcDoc = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; connect-src http: https: ws: wss:; font-src 'none'; media-src data: blob:; form-action 'none'; base-uri 'none'">
 <style>${css}</style></head><body>${html}<script>${networkGuard}</script><script>${javascript}</script></body></html>`;
   return <iframe className="generated-code-preview" sandbox="allow-scripts" srcDoc={srcDoc} title={spec.project_name} />;
+}
+
+function localPath(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("//")) return null;
+  const normalized = trimmed.split(/[?#]/, 1)[0].replace(/^\.\//, "");
+  return normalized && !normalized.startsWith("/") && !normalized.split("/").includes("..") ? normalized : null;
+}
+
+function assetDataUrl(file: SourceFile): string | null {
+  if (file.path.endsWith(".svg")) return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(file.content)}`;
+  return null;
+}
+
+function buildDocumentPreview(files: SourceFile[]): string {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const index = byPath.get("index.html");
+  if (!index) throw new Error("Runtime-bound Preview is missing index.html");
+  const documentNode = new DOMParser().parseFromString(index.content, "text/html");
+  documentNode.querySelectorAll('meta[http-equiv="Content-Security-Policy" i]').forEach((node) => node.remove());
+  documentNode.querySelectorAll('link[rel="stylesheet"][href]').forEach((node) => {
+    const path = localPath(node.getAttribute("href") ?? "");
+    const file = path ? byPath.get(path) : undefined;
+    if (!file) return;
+    const style = documentNode.createElement("style");
+    style.textContent = file.content;
+    node.replaceWith(style);
+  });
+  documentNode.querySelectorAll("script[src]").forEach((node) => {
+    const path = localPath(node.getAttribute("src") ?? "");
+    const file = path ? byPath.get(path) : undefined;
+    if (!file) return;
+    const script = documentNode.createElement("script");
+    script.textContent = file.content.replace(/<\/script/gi, "<\\/script");
+    node.replaceWith(script);
+  });
+  documentNode.querySelectorAll("img[src]").forEach((node) => {
+    const path = localPath(node.getAttribute("src") ?? "");
+    const file = path ? byPath.get(path) : undefined;
+    const dataUrl = file ? assetDataUrl(file) : null;
+    if (dataUrl) node.setAttribute("src", dataUrl);
+  });
+  const policy = documentNode.createElement("meta");
+  policy.setAttribute("http-equiv", "Content-Security-Policy");
+  policy.setAttribute("content", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob: https:; connect-src https: wss:; media-src data: blob: https:; font-src data:; form-action 'none'; base-uri 'none'");
+  documentNode.head.prepend(policy);
+  const guard = documentNode.createElement("script");
+  guard.textContent = networkGuard;
+  documentNode.body.prepend(guard);
+  return `<!doctype html>\n${documentNode.documentElement.outerHTML}`;
+}
+
+function DocumentCodePreview({ preview }: { preview: PreviewView }) {
+  const prepared = useMemo(() => {
+    try {
+      return { srcDoc: buildDocumentPreview(preview.source_bundle?.files ?? []), error: "" };
+    } catch (reason) {
+      return {
+        srcDoc: "",
+        error: reason instanceof Error ? reason.message : "Preview source could not be prepared",
+      };
+    }
+  }, [preview.source_bundle]);
+  if (prepared.error) return <div className="generated-loading"><strong>Preview unavailable</strong><span>{prepared.error}</span></div>;
+  return <iframe className="generated-code-preview" sandbox="allow-scripts" srcDoc={prepared.srcDoc} title={preview.app_spec.project_name} />;
 }
 
 function Home({
@@ -238,13 +304,16 @@ function ProductDetail({
 }
 
 export function PreviewLoader({ kind, id }: { kind: "preview" | "public"; id: string }) {
-  const [spec, setSpec] = useState<AppSpec | null>(null);
+  const [preview, setPreview] = useState<PreviewView | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     const load = kind === "preview" ? api.preview(id) : api.publicApp(id);
-    load.then(setSpec).catch((reason: Error) => setError(reason.message));
+    load.then(setPreview).catch((reason: Error) => setError(reason.message));
   }, [id, kind]);
   if (error) return <div className="generated-loading"><strong>Preview unavailable</strong><span>{error}</span></div>;
-  if (!spec) return <div className="generated-loading"><span>Loading preview…</span></div>;
-  return <PreviewApp spec={spec} />;
+  if (!preview) return <div className="generated-loading"><span>Loading preview…</span></div>;
+  if (preview.source_bundle?.runtime_binding?.contract_id === "web-static-document") {
+    return <DocumentCodePreview preview={preview} />;
+  }
+  return <PreviewApp spec={preview.app_spec} />;
 }

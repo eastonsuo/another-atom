@@ -53,10 +53,7 @@ FRONTEND_STATUSES = {
 def _create_team_run(client: TestClient, prompt: str) -> dict:
     created = client.post("/api/runs", json={"prompt": prompt, "mode": "team"}).json()
     run = client.get(f"/api/runs/{created['run_id']}").json()
-    if (
-        run["status"] == "awaiting_approval"
-        and run["blueprint"]["support_level"] == "supported"
-    ):
+    if run["status"] == "awaiting_approval" and run["blueprint"]["support_level"] == "supported":
         approved = client.post(
             f"/api/runs/{run['run_id']}/approve",
             json={"blueprint": run["blueprint"]},
@@ -106,9 +103,7 @@ def test_supported_run_reaches_completed_with_frontend_mappable_stages(
     ):
         assert expected in stages, f"missing progress stage: {expected}"
 
-    engineer_events = [
-        event for event in events if event["payload"].get("stage") == "engineer"
-    ]
+    engineer_events = [event for event in events if event["payload"].get("stage") == "engineer"]
     engineer_event_types = [event["type"] for event in engineer_events]
     assert "engineer.context.prepared" in engineer_event_types
     assert "agent.attempt.started" in engineer_event_types
@@ -190,9 +185,7 @@ def test_provider_lifecycle_events_are_persisted_for_replay(
             {"provider": "ollama", "request_attempt": 1},
         )
 
-    events = queued_client.get(
-        f"/api/runs/{run['run_id']}/events/history"
-    ).json()
+    events = queued_client.get(f"/api/runs/{run['run_id']}/events/history").json()
     provider_events = [event for event in events if event["type"].startswith("provider.")]
 
     assert [event["type"] for event in provider_events[-2:]] == [
@@ -237,9 +230,7 @@ def test_visible_agent_message_is_persisted_and_replayable(
             {"message_id": message_id, "role": "Engineer（工程师）"},
         )
 
-    messages = queued_client.get(
-        f"/api/projects/{run['project_id']}/messages"
-    ).json()
+    messages = queued_client.get(f"/api/projects/{run['project_id']}/messages").json()
     visible = next(message for message in messages if message["id"] == message_id)
     assert visible["run_id"] == run["run_id"]
     assert visible["role"] == "engineer"
@@ -259,73 +250,49 @@ def test_visible_agent_message_is_persisted_and_replayable(
     assert output_events[-1]["payload"]["delta"] == '{"message":"正在生成","result":'
 
 
-def test_non_web_request_stops_at_needs_input_scope_review(client: TestClient) -> None:
-    """An out-of-scope request must settle on needs_input / scope_review.
-
-    Regression guard for the studio freeze bug: a request that requires a native
-    runtime used to leave the main
-    workspace stuck on the looping "Engineer is working" animation. The
-    frontend only switches to the ScopeStop / needs-input view when the run
-    settles on status ``needs_input`` at stage ``scope_review`` (a terminal
-    state the polling loop stops on), so we lock that contract here and confirm
-    a rewrite suggestion is surfaced for the user to act on.
-    """
+def test_non_web_request_reaches_approvable_source_delivery(client: TestClient) -> None:
     run = _create_team_run(client, "Build a native iOS camera app")
 
     assert run["status"] in FRONTEND_STATUSES
-    assert run["status"] == "needs_input"
-    assert run["current_stage"] in FRONTEND_TEAM_STAGES
-    assert run["current_stage"] == "scope_review"
-    # No build artifact/version is produced for an out-of-scope request.
+    assert run["status"] == "awaiting_approval"
+    assert run["current_stage"] == "blueprint_approval"
+    assert run["blueprint"]["product_type"] == "native_application"
+    assert run["blueprint"]["capability_policy_version"] == "source-v1"
     assert not run["version_id"]
 
-    events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
-    assert events
-    needs_input_events = [event for event in events if event["type"] == "run.needs_input"]
-    assert needs_input_events, "no run.needs_input event -> frontend can't render ScopeStop"
-    payload = needs_input_events[-1]["payload"]
-    assert payload.get("stage") == "scope_review"
-    assert isinstance(payload.get("message"), str) and payload["message"]
-    # The PM draft must preserve the camera goal while proposing a Web runtime.
-    assert isinstance(payload.get("rewrite_suggestion"), str) and payload["rewrite_suggestion"]
-    suggestion = payload["rewrite_suggestion"].lower()
-    assert "browser" in suggestion
-    assert "camera" in suggestion
-    assert "catalog" not in suggestion
+    approved = client.post(
+        f"/api/runs/{run['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+    )
+    assert approved.status_code == 202, approved.text
+    completed = client.get(f"/api/runs/{run['run_id']}").json()
+    assert completed["status"] == "completed_degraded"
+    assert completed["current_stage"] == "complete"
+    assert completed["source_bundle"]["runtime_binding"] is None
+    assert completed["execution_report"] is None
+    assert completed["version_id"]
 
 
-def test_confirmed_web_requirement_skips_second_product_manager_pass(
+def test_source_only_delivery_does_not_create_a_fake_runtime_execution(
     client: TestClient,
 ) -> None:
     source = _create_team_run(client, "Build a native iOS camera app")
-    assert source["status"] == "needs_input"
-    suggestion = source["blueprint"]["rewrite_suggestion"]
+    approved = client.post(
+        f"/api/runs/{source['run_id']}/approve",
+        json={"blueprint": source["blueprint"]},
+    )
+    assert approved.status_code == 202, approved.text
+    completed = client.get(f"/api/runs/{source['run_id']}").json()
 
-    response = client.post(
-        f"/api/runs/{source['run_id']}/confirm-alternative",
-        json={"prompt": suggestion},
-    )
-    assert response.status_code == 202
-    confirmed = response.json()
-    assert confirmed["run_id"] != source["run_id"]
-    assert confirmed["project_id"] == source["project_id"]
-    assert confirmed["blueprint"]["support_level"] == "supported"
-
-    events = client.get(f"/api/runs/{confirmed['run_id']}/events/history").json()
-    assert not any(
-        event["type"] == "stage.started"
-        and event["payload"].get("stage") == "product_manager"
-        for event in events
-    )
-    assert any(
-        event["type"] == "artifact.created"
-        and "without another Product Manager pass" in event["payload"]["message"]
-        for event in events
-    )
-    assert client.post(
-        f"/api/runs/{source['run_id']}/confirm-alternative",
-        json={"prompt": suggestion},
-    ).status_code == 409
+    assert completed["status"] == "completed_degraded"
+    assert completed["build_job_id"] is not None
+    assert completed["execution_report"] is None
+    events = client.get(f"/api/runs/{source['run_id']}/events/history").json()
+    assert any(event["type"] == "run.source_ready" for event in events)
+    assert not any(event["type"].startswith("executor.") for event in events)
+    preview = client.get(f"/api/previews/{completed['version_id']}")
+    assert preview.status_code == 409
+    assert preview.json()["code"] == "PREVIEW_NOT_SUPPORTED"
 
 
 def test_minesweeper_is_built_as_an_interactive_web_game(
@@ -335,19 +302,18 @@ def test_minesweeper_is_built_as_an_interactive_web_game(
     assert source["status"] in {"completed", "completed_degraded"}
     assert source["blueprint"]["product_type"] == "web_game"
     assert source["blueprint"]["support_level"] == "supported"
-    assert "minefield" in source["app_spec"]["html"]
-    assert "function reveal" in source["app_spec"]["javascript"]
+    generated = {item["path"]: item["content"] for item in source["source_bundle"]["files"]}
+    assert "minefield" in generated["index.html"]
+    assert "function reveal" in generated["app.js"]
     assert source["version_id"]
     files = client.get(
         f"/api/projects/{source['project_id']}/files?run_id={source['run_id']}"
     ).json()
     repository_paths = {item["path"] for item in files if item["source"] == "repository"}
-    assert {"index.html", "styles.css", "app.js", "app-spec.json"}.issubset(
-        repository_paths
-    )
+    assert {"index.html", "styles.css", "app.js", "app-spec.json"}.issubset(repository_paths)
 
 
-def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
+def test_non_web_request_is_not_forced_through_web_alternative_regeneration(
     client: TestClient,
 ) -> None:
     source = _create_team_run(client, "Build a native iOS camera app")
@@ -356,34 +322,6 @@ def test_user_can_ask_product_manager_to_regenerate_the_requirement_draft(
         json={"prompt": "做一个复古像素风扫雷游戏"},
     )
 
-    assert response.status_code == 202
-    regenerated = response.json()
-    assert regenerated["project_id"] == source["project_id"]
-    assert regenerated["run_id"] != source["run_id"]
-    regenerated = client.get(f"/api/runs/{regenerated['run_id']}").json()
-    assert regenerated["status"] == "needs_input"
-    assert regenerated["blueprint"]["support_level"] == "unsupported"
-    assert regenerated["blueprint"]["product_type"] == "web_game"
-    assert regenerated["build_job_id"] is None
-    suggestion = regenerated["blueprint"]["rewrite_suggestion"]
-    assert isinstance(suggestion, str) and suggestion
-    assert "web_game" in suggestion.lower() or "扫雷" in suggestion
-    assert "商品" not in suggestion
-
-    second_response = client.post(
-        f"/api/runs/{regenerated['run_id']}/regenerate-alternative",
-        json={"prompt": suggestion},
-    )
-    assert second_response.status_code == 202
-    second = client.get(f"/api/runs/{second_response.json()['run_id']}").json()
-    assert second["status"] == "needs_input"
-    assert second["build_job_id"] is None
-
-    confirmed = client.post(
-        f"/api/runs/{second['run_id']}/confirm-alternative",
-        json={"prompt": second["blueprint"]["rewrite_suggestion"]},
-    )
-    assert confirmed.status_code == 202
-    built = client.get(f"/api/runs/{confirmed.json()['run_id']}").json()
-    assert built["status"] in {"completed", "completed_degraded"}
-    assert "minefield" in built["app_spec"]["html"]
+    assert response.status_code == 409
+    assert source["status"] == "awaiting_approval"
+    assert source["blueprint"]["product_type"] == "native_application"

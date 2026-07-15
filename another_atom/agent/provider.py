@@ -37,7 +37,9 @@ from another_atom.contracts.schemas import (
     RequirementDelta,
     ReviewIssue,
     ReviewReport,
+    RuntimeContract,
     SourceContext,
+    SourceEntrypoint,
     SourceFileChange,
     SourceFileChangeSet,
     SourceFileDraft,
@@ -48,6 +50,7 @@ from another_atom.repository.service import (
     calculate_source_context_hash,
     render_version_files,
 )
+from another_atom.runtime.contracts import engineer_contract_context
 
 T = TypeVar("T", bound=BaseModel)
 ProviderEventHandler = Callable[[str, dict], None]
@@ -242,6 +245,7 @@ class LLMProvider(Protocol):
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
     ) -> SourceFileChangeSet: ...
 
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec: ...
@@ -260,6 +264,7 @@ class LLMProvider(Protocol):
         architecture_design: ArchitectureDesign,
         blueprint: Blueprint,
         prompt: str,
+        runtime_contract: RuntimeContract | None = None,
     ) -> EngineerOutput: ...
 
     def repair_engineer_output(
@@ -428,13 +433,15 @@ class MockLLMProvider:
         }
         if "颜色" in message or "color" in message.casefold():
             response = (
-                f'“{project_name}”当前版本使用主色 {colors.get("primary", "未记录")}、'
-                f'强调色 {colors.get("accent", "未记录")}、背景色 {colors.get("background", "未记录")}。'
+                f"“{project_name}”当前版本使用主色 {colors.get('primary', '未记录')}、"
+                f"强调色 {colors.get('accent', '未记录')}、背景色 {colors.get('background', '未记录')}。"
             )
         else:
             modules = "、".join(blueprint.get("modules") or []) or "未记录"
             omitted = "、".join(blueprint.get("omitted_requirements") or [])
-            response = f'当前讨论的是项目“{project_name}”。当前已实现或规划的核心模块包括：{modules}。'
+            response = (
+                f"当前讨论的是项目“{project_name}”。当前已实现或规划的核心模块包括：{modules}。"
+            )
             if omitted:
                 response += f" 当前能力边界包括：{omitted}。"
         return ProjectLeadDecision(
@@ -468,9 +475,22 @@ class MockLLMProvider:
         self._record_request()
         self._raise_if_requested(prompt, "llm")
         normalized = prompt.lower()
-        if any(term in normalized for term in self._unsupported_terms):
-            support_level = SupportLevel.UNSUPPORTED
-        elif any(term in normalized for term in self._adapted_terms):
+        non_web = any(
+            term in normalized
+            for term in (
+                "native ios",
+                "native android",
+                "原生 ios",
+                "原生安卓",
+                "命令行",
+                " cli",
+                "api service",
+                "api 服务",
+                "python package",
+                "python 包",
+            )
+        )
+        if non_web or any(term in normalized for term in self._adapted_terms):
             support_level = SupportLevel.ADAPTED
         else:
             support_level = SupportLevel.SUPPORTED
@@ -482,7 +502,17 @@ class MockLLMProvider:
             for term in ("catalog", "storefront", "shop", "store", "商品目录", "商品站", "商店")
         )
         product_type = (
-            "web_game" if is_game else "product_catalog" if is_catalog else "web_application"
+            "cli"
+            if any(term in normalized for term in ("命令行", " cli"))
+            else "api_service"
+            if any(term in normalized for term in ("api service", "api 服务"))
+            else "native_application"
+            if non_web
+            else "web_game"
+            if is_game
+            else "product_catalog"
+            if is_catalog
+            else "web_application"
         )
         omitted = (
             ["Server-side authentication, payment, and persistent backend writes are excluded"]
@@ -490,8 +520,7 @@ class MockLLMProvider:
             else []
         )
         local_service_requested = any(
-            term in normalized
-            for term in ("本地大模型", "本地模型", "local model", "localhost")
+            term in normalized for term in ("本地大模型", "本地模型", "local model", "localhost")
         )
         if local_service_requested:
             omitted = ["Calling localhost or an on-device model service is not supported"]
@@ -515,6 +544,13 @@ class MockLLMProvider:
             modules = ["Hero", "Featured products", "Catalog grid", "Product detail"]
             visual_direction = "Editorial commerce with crisp typography and restrained color"
             data_requirements = ["Controlled sample product data"]
+        elif non_web:
+            mapped = ["Requested source project", "Documented project entrypoint"]
+            pages = ["Source entrypoint"]
+            modules = ["Application source", "Configuration", "Tests"]
+            visual_direction = "Preserve the requested target platform and source structure"
+            data_requirements = ["Project source state"]
+            omitted = ["No matching online Runtime Adapter; source delivery only"]
         else:
             mapped = ["Browser-based interaction", "Responsive layout", "Local client-side state"]
             pages = ["Application"]
@@ -535,6 +571,13 @@ class MockLLMProvider:
                 modules = ["首屏", "精选商品", "商品列表", "商品详情"]
                 visual_direction = "排版清晰、配色克制的商品浏览界面"
                 data_requirements = ["受控的示例商品数据"]
+            elif non_web:
+                mapped = ["按原目标平台生成项目源码", "提供明确的项目入口说明"]
+                pages = ["源码入口"]
+                modules = ["应用源码", "配置", "测试"]
+                visual_direction = "保留用户要求的目标平台和源码结构"
+                data_requirements = ["项目源码状态"]
+                omitted = ["当前没有匹配的在线 Runtime Adapter，仅交付源码"]
             else:
                 mapped = ["浏览器内交互", "响应式布局", "客户端本地状态"]
                 pages = ["应用主界面"]
@@ -568,7 +611,7 @@ class MockLLMProvider:
             rewrite_suggestion=(
                 self._web_rewrite(prompt) if support_level == SupportLevel.UNSUPPORTED else None
             ),
-            capability_policy_version="web-v1",
+            capability_policy_version="source-v1" if non_web else "web-v1",
             pages=pages,
             modules=modules,
             visual_direction=visual_direction,
@@ -751,9 +794,91 @@ class MockLLMProvider:
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
     ) -> SourceFileChangeSet:
         self._record_request()
         self._raise_if_requested(change_brief.original_request, "engineer-change")
+        if runtime_contract is None:
+            target = next(
+                (
+                    item
+                    for item in source_context.included_files
+                    if item.path != "app-spec.json" and not item.path.startswith("tests/")
+                ),
+                None,
+            )
+            if target is None:
+                raise LLMProviderError("No editable source file is available in SourceContext")
+            replacement = (
+                target.content.rstrip() + "\n" + change_brief.original_request.strip() + "\n"
+            )
+            return SourceFileChangeSet(
+                project_id=source_snapshot.project_id,
+                run_id=run_id,
+                base_version_id=source_snapshot.base_version_id,
+                base_git_commit=source_snapshot.base_git_commit,
+                source_manifest_hash=source_snapshot.source_manifest_hash,
+                source_context_hash=calculate_source_context_hash(source_context),
+                summary=requirement_delta.change_summary,
+                app_spec_delta=AppSpecDelta(hero_body=change_brief.original_request[:300]),
+                changes=[
+                    SourceFileChange(
+                        path=target.path,
+                        operation="modify",
+                        before_hash=target.sha256,
+                        replacement_content=replacement,
+                    )
+                ],
+            )
+        if runtime_contract.contract_id == "web-static-document":
+            index = next(
+                (item for item in source_context.included_files if item.path == "index.html"),
+                None,
+            )
+            if index is None:
+                raise LLMProviderError("index.html is not available in SourceContext")
+            candidate = self._revised_app_spec_candidate(
+                architecture_spec,
+                app_spec,
+                change_brief,
+            )
+            replacement = index.content
+            if candidate.hero_title != app_spec.hero_title:
+                replacement = replacement.replace(
+                    app_spec.hero_title,
+                    candidate.hero_title,
+                )
+            else:
+                note = (
+                    '<p class="ai-change-note">'
+                    + html_lib.escape(change_brief.original_request.strip())
+                    + "</p>"
+                )
+                replacement = replacement.replace("</body>", f"{note}</body>", 1)
+            delta = AppSpecDelta(
+                hero_title=(
+                    candidate.hero_title if candidate.hero_title != app_spec.hero_title else None
+                ),
+                hero_body=change_brief.original_request[:300],
+            )
+            return SourceFileChangeSet(
+                project_id=source_snapshot.project_id,
+                run_id=run_id,
+                base_version_id=source_snapshot.base_version_id,
+                base_git_commit=source_snapshot.base_git_commit,
+                source_manifest_hash=source_snapshot.source_manifest_hash,
+                source_context_hash=calculate_source_context_hash(source_context),
+                summary=requirement_delta.change_summary,
+                app_spec_delta=delta,
+                changes=[
+                    SourceFileChange(
+                        path="index.html",
+                        operation="modify",
+                        before_hash=index.sha256,
+                        replacement_content=replacement,
+                    )
+                ],
+            )
         candidate = self._revised_app_spec_candidate(
             architecture_spec,
             app_spec,
@@ -857,13 +982,20 @@ class MockLLMProvider:
             f"产品规格“{requirement}”映射到 app.js 行为和 tests/app.test.js。"
             for requirement in (blueprint.mapped_requirements or blueprint.modules)[:12]
         ]
+        web_runtime = blueprint.product_type.casefold() in {
+            "product_catalog",
+            "tool",
+            "web_application",
+            "web_game",
+            "website",
+        }
         return ArchitectureDesignDraft(
             summary=(
                 f"{blueprint.project_name}采用无后端依赖的静态 Web 架构，"
                 "由浏览器状态驱动，并交给独立 Runtime（运行时）执行构建和单元测试。"
             ),
             target_platform="现代桌面与移动浏览器（Modern desktop and mobile browsers）",
-            runtime_adapter="web-static-v1",
+            runtime_adapter="web-static-document" if web_runtime else "source-only",
             capability_gaps=list(blueprint.omitted_requirements),
             components=components,
             state_and_data_flow=[
@@ -890,9 +1022,7 @@ class MockLLMProvider:
                 "使用 Node.js 内置测试运行器（node:test），不安装第三方依赖。",
                 "至少校验入口文件、核心页面内容、脚本语法和运行就绪标记。",
             ],
-            acceptance_mapping=acceptance or [
-                "产品规格摘要映射到页面源码和 tests/app.test.js。"
-            ],
+            acceptance_mapping=acceptance or ["产品规格摘要映射到页面源码和 tests/app.test.js。"],
             visual_tokens=visual_tokens,
             requires_product_reapproval=requires_reapproval,
             reapproval_reason=(
@@ -908,6 +1038,7 @@ class MockLLMProvider:
         architecture_design: ArchitectureDesign,
         blueprint: Blueprint,
         prompt: str,
+        runtime_contract: RuntimeContract | None = None,
     ) -> EngineerOutput:
         app_spec = self.create_app_spec(
             blueprint,
@@ -925,11 +1056,68 @@ class MockLLMProvider:
                 "  assert.equal(1, 2);\n"
                 "});\n"
             )
+        if runtime_contract is None:
+            app_spec = app_spec.model_copy(update={"html": "", "css": "", "javascript": ""})
+            source_files = [
+                SourceFileDraft(
+                    path="README.md",
+                    role="documentation",
+                    content=(
+                        f"# {blueprint.project_name}\n\n{product_spec.summary}\n\n"
+                        f"Project type: {blueprint.product_type}\n"
+                    ),
+                ),
+                SourceFileDraft(
+                    path="src/project.txt",
+                    role="source",
+                    content="\n".join(blueprint.mapped_requirements or blueprint.modules) + "\n",
+                ),
+            ]
+            test_source = (
+                "import test from 'node:test';\n"
+                "import assert from 'node:assert/strict';\n"
+                "import { readFile } from 'node:fs/promises';\n\n"
+                "test('source-only delivery contains project source', async () => {\n"
+                "  assert.ok((await readFile('src/project.txt', 'utf8')).trim());\n"
+                "});\n"
+            )
+        else:
+            rendered = render_version_files(app_spec)
+            source_files = [
+                SourceFileDraft(
+                    path=path,
+                    role="source",
+                    content=content,
+                )
+                for path, content in sorted(rendered.items())
+                if path != "app-spec.json"
+            ]
+            if any(
+                marker in prompt.casefold()
+                for marker in ("[repair:needed]", "[repair:still-fails]")
+            ):
+                source_files = [
+                    item.model_copy(update={"content": "const = ;\n"})
+                    if item.path == "app.js"
+                    else item
+                    for item in source_files
+                ]
+            app_spec = app_spec.model_copy(update={"html": "", "css": "", "javascript": ""})
+        entrypoints = (
+            [
+                SourceEntrypoint(kind="application", path="index.html"),
+                SourceEntrypoint(kind="test", path="tests/app.test.js"),
+            ]
+            if runtime_contract is not None
+            else []
+        )
         return EngineerOutput(
             app_spec=app_spec,
             unit_tests=[
                 SourceFileDraft(path="tests/app.test.js", role="test", content=test_source)
             ],
+            source_files=source_files,
+            entrypoints=entrypoints,
         )
 
     @staticmethod
@@ -1087,7 +1275,27 @@ class MockLLMProvider:
                     content=self._default_engineer_test_source(),
                 )
             ]
-        return EngineerOutput(app_spec=repaired_app_spec, unit_tests=unit_tests)
+        source_files = engineer_output.source_files
+        if any(item.path == "index.html" for item in source_files):
+            source_files = [
+                item.model_copy(update={"content": "window.__ANOTHER_ATOM_READY__ = true;\n"})
+                if item.path == "app.js"
+                and any(
+                    check.check_id == "runtime.javascript_syntax" and check.status == "fail"
+                    for check in validation_report.checks
+                )
+                else item
+                for item in source_files
+            ]
+            repaired_app_spec = repaired_app_spec.model_copy(
+                update={"html": "", "css": "", "javascript": ""}
+            )
+        return EngineerOutput(
+            app_spec=repaired_app_spec,
+            unit_tests=unit_tests,
+            source_files=source_files,
+            entrypoints=engineer_output.entrypoints,
+        )
 
     def analyze_data(
         self,
@@ -1461,18 +1669,22 @@ class OllamaCloudProvider:
             Blueprint,
             "Product Manager",
             (
-                "Turn the request into a Web application Blueprint without changing the user's "
-                "product goal. product_type is a concise free-form label such as web_game, tool, "
-                "dashboard, or product_catalog; never convert a game or tool into a catalog. "
-                "Use supported for self-contained browser behavior using HTML, CSS, and JavaScript. "
+                "Turn the request into a software Blueprint without changing the user's product type "
+                "or target platform. product_type is a concise free-form label such as web_game, cli, "
+                "api_service, native_application, tool, dashboard, or product_catalog. Never convert "
+                "a non-Web request into a Web application or catalog. Use supported when an active "
+                "online Runtime can build the requested project and adapted when valid source can be "
+                "delivered but online Build/Test/Preview is unavailable. A missing Runtime Adapter is "
+                "an explicit capability gap, not a reason to rewrite the product. "
                 "Public Internet APIs are allowed when the browser can call them directly; prefer "
                 "HTTPS and surface CORS or service failures. localhost, loopback addresses, and "
                 "services running on the user's device are not accessible. When a request depends "
                 "on a local model service, use adapted, put that call in omitted_requirements, and "
                 "never map or simulate it as completed. Use adapted when the visible Web experience "
                 "can be built but server-side auth, payments, persistent database writes, or local "
-                "device services must be omitted. Use unsupported only when the primary goal "
-                "cannot be represented as a Web application. Preserve the user's language and "
+                "device services must be omitted. Use unsupported only when coherent project source "
+                "cannot be delivered without an unresolved user decision; do not use it merely because "
+                "Preview is unavailable. Preserve the user's language and "
                 "expand concrete pages, interactions, states, error feedback, and visual direction. "
                 "Every user-facing string field MUST use the same language as the request. If the "
                 "request contains Chinese, project_name, reasons, pages, modules, requirements, "
@@ -1631,10 +1843,9 @@ class OllamaCloudProvider:
         change_brief: ChangeBrief,
         requirement_delta: RequirementDelta,
         app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
     ) -> SourceFileChangeSet:
-        app_spec_metadata = app_spec.model_dump(
-            mode="json", exclude={"html", "css", "javascript"}
-        )
+        app_spec_metadata = app_spec.model_dump(mode="json", exclude={"html", "css", "javascript"})
         return self._structured_chat(
             SourceFileChangeSet,
             "Engineer（工程师）",
@@ -1643,8 +1854,9 @@ class OllamaCloudProvider:
                 "不要返回完整 AppSpec、整个代码库或 unified diff。changes 中只列本轮真正变化的"
                 "文件；modify/add 必须在 replacement_content 中返回该文件的完整最终内容，delete "
                 "只返回 path、operation 和 before_hash。只能 modify/delete supplied_source_context."
-                "included_files 中完整提供的文件；不得猜测 omitted_files。禁止修改 app-spec.json、"
-                "Runtime 管理的 index.html 文档 shell 和 app.js network guard。只在 app_spec_delta "
+                "included_files 中完整提供的文件；不得猜测 omitted_files。禁止修改 app-spec.json。"
+                "SourceBundle 中的源码是权威内容；不要恢复、猜测或改写所谓 Runtime 文档外壳。"
+                "只在 app_spec_delta "
                 "中返回确实变化的非源码元数据；代码和颜色不得放入 Delta。保留需求未改变的源码、"
                 "交互和测试，不要复制未修改文件。"
                 "公共 HTTPS API 仅在已确认需求要求时允许；禁止 localhost、回环地址、动态 import、"
@@ -1668,6 +1880,7 @@ class OllamaCloudProvider:
                 "architecture_spec": architecture_spec.model_dump(mode="json"),
                 "change_brief": change_brief.model_dump(mode="json"),
                 "requirement_delta": requirement_delta.model_dump(mode="json"),
+                "runtime_contract": engineer_contract_context(runtime_contract),
             },
             stream=True,
         )
@@ -1699,7 +1912,9 @@ class OllamaCloudProvider:
                 "必须回答目标平台、Runtime Adapter（运行适配器）、能力缺口、页面与组件职责、"
                 "状态生命周期和数据流、关键交互的成功与失败反馈、接口和网络边界、目录规划、"
                 "单元测试策略，以及每条验收条件到模块和测试的映射。"
-                "当前适配器固定为 web-static-v1，不允许包安装、后端、Shell、动态 import 或 eval。"
+                "Web 项目当前可绑定 web-static-document；其 index.html 是完整 Document，不是 "
+                "body Fragment。非 Web 项目必须标记 source-only，并保留原目标平台，不能改写成 Web。"
+                "不允许模型提供包安装命令、Shell、动态 import 或 eval。"
                 "公共 HTTPS API 只有在已确认需求明确要求时才允许；禁止 localhost 和回环地址。"
                 "用户可见说明默认使用中文；出现纯英文技术术语时同时补充中文。"
                 "架构设计本身默认不需要用户确认。只有当设计必须改变已确认的产品范围、目标平台、"
@@ -1718,24 +1933,31 @@ class OllamaCloudProvider:
         architecture_design: ArchitectureDesign,
         blueprint: Blueprint,
         prompt: str,
+        runtime_contract: RuntimeContract | None = None,
     ) -> EngineerOutput:
+        runtime_context = engineer_contract_context(runtime_contract)
         return self._structured_chat(
             EngineerOutput,
             "Engineer（工程师）",
             (
-                "严格依据 ProductSpec（产品规格）和 ArchitectureDesign（架构设计）产出完整 AppSpec，"
-                "并同时产出至少一个真正可由 Node.js 内置 node:test 运行的单元测试文件。"
-                "html、css、javascript 必须完整且可独立运行；测试文件必须位于 tests/ 且以 "
-                ".test.js 结尾。测试只可使用 Node.js 内置模块，并验证实际生成源码的核心行为或"
-                "验收条件，不能写恒真断言。不要返回 Markdown 代码围栏。"
-                "禁止第三方依赖、包安装、后端调用、Shell、动态 import、eval、远程可执行资源、"
-                "localhost 或回环地址。视觉颜色必须与架构设计中的 visual_tokens 完全一致。"
+                "严格依据 ProductSpec（产品规格）、ArchitectureDesign（架构设计）和提供的 "
+                "Runtime Contract 生成项目。source_files 是权威业务源码，不得依赖 Runtime 补全或"
+                "重写。若 Runtime Contract 的 document_semantics 为 document，index.html 必须是"
+                "包含 DOCTYPE/html/head/body 的完整 Document；若 Runtime Contract 为空，保持用户"
+                "要求的项目类型，只生成源码，不得替换为 Web 项目。entrypoints 必须引用实际文件。"
+                "同时产出至少一个真正可运行的单元测试；测试文件位于 tests/，只使用平台允许的"
+                "预装工具。AppSpec 仅作为兼容交付元数据，html、css、javascript 留空，业务源码只"
+                "出现在 source_files。测试必须验证实际源码的核心行为或验收条件，不能写恒真断言。"
+                "不要返回 Markdown 代码围栏，不得提供 Shell 或安装命令。Runtime Contract 存在时"
+                "必须遵守其中的依赖、网络、文件和大小限制，不得访问 localhost 或回环地址。"
+                "视觉颜色必须与架构设计中的 visual_tokens 完全一致。"
             ),
             {
                 "request": prompt,
                 "product_spec": product_spec.model_dump(mode="json"),
                 "architecture_design": architecture_design.model_dump(mode="json"),
                 "blueprint": blueprint.model_dump(mode="json"),
+                "runtime_contract": runtime_context,
             },
             stream=True,
         )
@@ -1779,7 +2001,8 @@ class OllamaCloudProvider:
             "Engineer Repair",
             (
                 "Repair the supplied EngineerOutput using the deterministic ValidationReport. "
-                "Return the complete revised AppSpec and complete revised unit_tests. Address every "
+                "Return the complete revised metadata, authoritative source_files, entrypoints, and "
+                "unit_tests. Address every "
                 "failed check, including runtime.unit_tests failures and exact Blueprint screen names. "
                 "Use the reported test stdout/stderr as evidence; when a generated test is invalid or "
                 "does not match the generated source, repair that test instead of returning it unchanged. "
@@ -2250,6 +2473,7 @@ class OllamaCloudProvider:
                 )
                 output_sent = len(output)
                 output_last_emitted = now
+
         with httpx.stream(
             "POST",
             f"{self.host}/api/chat",
@@ -2274,8 +2498,7 @@ class OllamaCloudProvider:
                             "".join(content_parts)
                         )
                         if len(next_visible) > len(visible_content) and (
-                            len(next_visible) - len(visible_content) >= 24
-                            or message_complete
+                            len(next_visible) - len(visible_content) >= 24 or message_complete
                         ):
                             delta = next_visible[len(visible_content) :]
                             self._emit_provider_event(
@@ -2361,6 +2584,7 @@ class OllamaCloudProvider:
                 )
                 output_sent = len(output)
                 output_last_emitted = now
+
         request_body = {
             **request_body,
             "stream_options": {"include_usage": True},
@@ -2392,8 +2616,7 @@ class OllamaCloudProvider:
                             "".join(content_parts)
                         )
                         if len(next_visible) > len(visible_content) and (
-                            len(next_visible) - len(visible_content) >= 24
-                            or message_complete
+                            len(next_visible) - len(visible_content) >= 24 or message_complete
                         ):
                             delta_text = next_visible[len(visible_content) :]
                             self._emit_provider_event(

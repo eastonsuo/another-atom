@@ -1726,6 +1726,12 @@ function BuildingState({ run, events, language }: { run: RunView; events: RunEve
 
 function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, setTab, refreshShell, refreshRun, setError, language }: { run: RunView; versions: VersionView[]; setVersions: (v: VersionView[]) => void; device: "desktop" | "mobile"; setDevice: (v: "desktop" | "mobile") => void; tab: WorkspaceTab; setTab: (v: WorkspaceTab) => void; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (v: string) => void; language: Language }) {
   const current = versions.find((version) => version.id === run.version_id) ?? versions[0];
+  const structuredEditSupported = Boolean(
+    current && (
+      current.runtime_binding?.contract_id === "web-static-v1" ||
+      (!current.runtime_binding && current.delivery_outcome === "valid")
+    )
+  );
   const [title, setTitle] = useState(current?.app_spec.hero_title ?? "");
   const [body, setBody] = useState(current?.app_spec.hero_body ?? "");
   const [color, setColor] = useState(current?.app_spec.primary_color ?? "#151515");
@@ -1765,15 +1771,15 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   };
   return <div className="result-view">
     <div className="result-toolbar">
-      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button><button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button></div>
+      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button>{structuredEditSupported && <button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button>}</div>
       <div className="toolbar-actions">
         {tab === "preview" && <div className="device-switch"><button className={device === "desktop" ? "active" : ""} onClick={() => setDevice("desktop")} aria-label={ui(language, "Desktop preview")} title={ui(language, "Desktop preview")}><Monitor size={16} /></button><button className={device === "mobile" ? "active" : ""} onClick={() => setDevice("mobile")} aria-label={ui(language, "Mobile preview")} title={ui(language, "Mobile preview")}><Smartphone size={16} /></button></div>}
-        <button className="publish-button" onClick={publish} disabled={publishing}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
+        <button className="publish-button" onClick={publish} disabled={publishing || !current?.runtime_capabilities.publish} title={!current?.runtime_capabilities.publish ? (language === "zh" ? "当前源码版本没有支持发布的 Runtime Adapter" : "This source version has no publish-capable Runtime Adapter") : undefined}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
       </div>
     </div>
     {deploymentUrl && <div className="published-banner"><Check size={16} /><span>{ui(language, "Published successfully")}</span><a href={deploymentUrl} target="_blank" rel="noreferrer">{ui(language, "Open public app")} <ExternalLink size={14} /></a></div>}
-    {tab === "preview" && current && <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div>}
-    {tab === "edit" && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
+    {tab === "preview" && current && (current.runtime_capabilities.preview ? <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div> : <div className="center-state"><h1>{language === "zh" ? "源码版本已就绪" : "Source version ready"}</h1><p>{language === "zh" ? "当前项目没有匹配的 Runtime Adapter，因此不提供伪预览。你仍可在项目文件中查看、编辑和导出源码。" : "No matching Runtime Adapter is available, so no simulated Preview is shown. Source remains available in Project files."}</p><code>source_ready</code></div>)}
+    {tab === "edit" && structuredEditSupported && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
   </div>;
 }
 

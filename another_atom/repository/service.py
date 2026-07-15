@@ -125,13 +125,19 @@ def commit_version(
     generated_files = [".another-atom/version.json"]
     removed_files: list[str] = []
     if source_bundle is not None:
-        tracked_files = _git(path, "ls-files").splitlines()
-        controlled_files = {
-            relative_path
-            for relative_path in tracked_files
-            if relative_path in VERSION_SOURCE_FILES
-            or Path(relative_path).suffix.casefold() in CODE_SUFFIXES
-        }
+        previous_files = set(marker.get("files", [])) if marker_path.exists() else set()
+        if previous_files:
+            controlled_files = {
+                relative_path for relative_path in previous_files if isinstance(relative_path, str)
+            }
+        else:
+            tracked_files = _git(path, "ls-files").splitlines()
+            controlled_files = {
+                relative_path
+                for relative_path in tracked_files
+                if relative_path in VERSION_SOURCE_FILES
+                or Path(relative_path).suffix.casefold() in CODE_SUFFIXES
+            }
         removed_files = sorted(controlled_files - set(version_files))
         for relative_path in removed_files:
             _repository_text_path(project_id, relative_path).unlink(missing_ok=True)
@@ -146,6 +152,7 @@ def commit_version(
                 "version_id": version_id,
                 "version_number": version_number,
                 "source": source.value,
+                "files": sorted(version_files),
             },
             indent=2,
         )
@@ -167,14 +174,30 @@ def build_source_snapshot(
         raise RepositoryError("Project version does not have a valid Git commit")
     path = repository_path(project_id)
     tracked_files = _git(path, "ls-tree", "-r", "--name-only", git_commit).splitlines()
-    source_paths = sorted(
-        {
+    marker_path = ".another-atom/version.json"
+    source_paths: list[str]
+    if marker_path in tracked_files:
+        try:
+            marker = json.loads(_git_file_at_commit(path, git_commit, marker_path))
+        except (json.JSONDecodeError, RepositoryError):
+            marker = {}
+        declared_files = marker.get("files", [])
+        source_paths = sorted(
             relative_path
-            for relative_path in tracked_files
-            if relative_path in VERSION_SOURCE_FILES
-            or Path(relative_path).suffix.casefold() in CODE_SUFFIXES
-        }
-    )
+            for relative_path in declared_files
+            if isinstance(relative_path, str) and relative_path in tracked_files
+        )
+    else:
+        source_paths = []
+    if not source_paths:
+        source_paths = sorted(
+            {
+                relative_path
+                for relative_path in tracked_files
+                if relative_path in VERSION_SOURCE_FILES
+                or Path(relative_path).suffix.casefold() in CODE_SUFFIXES
+            }
+        )
     files: list[SourceSnapshotFile] = []
     for relative_path in source_paths:
         try:
@@ -215,9 +238,7 @@ def build_source_context(
     if max_source_chars <= 0:
         raise RepositoryError("MAX_SOURCE_CHARS must be greater than zero")
     files_by_path = {file.path: file for file in snapshot.files}
-    managed_paths = {
-        path for path in (runtime_managed_files or []) if path in files_by_path
-    }
+    managed_paths = {path for path in (runtime_managed_files or []) if path in files_by_path}
     ordered_paths: list[str] = []
 
     def add_path(relative_path: str) -> None:
@@ -327,6 +348,7 @@ def materialize_source_file_change_set(
     change_set: SourceFileChangeSet,
     base_app_spec: AppSpec,
     architecture_spec: ArchitectureSpec,
+    runtime_contract_id: str = "web-static-v1",
 ) -> tuple[AppSpec, dict[str, str], SourceChangeApplyReport]:
     context_hash = calculate_source_context_hash(context)
     expected_bindings = {
@@ -352,7 +374,14 @@ def materialize_source_file_change_set(
     snapshot_files = {item.path: item for item in snapshot.files}
     included_files = {item.path: item for item in context.included_files}
     managed_files = set(context.runtime_managed_files) | {"app-spec.json"}
-    required_files = {"index.html", "styles.css", "app.js"}
+    legacy_web = runtime_contract_id == "web-static-v1"
+    required_files = (
+        {"index.html", "styles.css", "app.js"}
+        if legacy_web
+        else {"index.html"}
+        if runtime_contract_id == "web-static-document"
+        else set()
+    )
     if not change_set.changes or len(change_set.changes) > 20:
         raise SourceChangeError(
             "SOURCE_CHANGE_CONTENT_INVALID",
@@ -454,7 +483,7 @@ def materialize_source_file_change_set(
                     "SOURCE_CHANGE_PATH_FORBIDDEN",
                     f"Added source change target already exists in the fixed baseline: {path}",
                 )
-            if Path(path).suffix.casefold() not in CODE_SUFFIXES:
+            if legacy_web and Path(path).suffix.casefold() not in CODE_SUFFIXES:
                 raise SourceChangeError(
                     "SOURCE_CHANGE_PATH_FORBIDDEN",
                     f"Added file type is not allowed by web-static-v1: {path}",
@@ -533,34 +562,54 @@ def materialize_source_file_change_set(
             "CANDIDATE_CONTRACT_INVALID",
             "Candidate source is missing a required web-static-v1 entry file",
         )
-    if not any(
-        path.startswith("tests/") and path.endswith(".test.js")
-        for path in candidate_files
+    if legacy_web and not any(
+        path.startswith("tests/") and path.endswith(".test.js") for path in candidate_files
     ):
         raise SourceChangeError(
             "CANDIDATE_CONTRACT_INVALID",
             "Candidate source must retain at least one tests/*.test.js file",
         )
 
-    app_spec = _rebuild_app_spec_from_candidate(
-        base_app_spec,
-        architecture_spec,
-        change_set.app_spec_delta,
-        candidate_files,
-    )
-    rendered = render_version_files(app_spec)
-    # index.html contains a Runtime-owned document shell. The Engineer proposes the
-    # application body; Runtime always writes the canonical shell so harmless
-    # formatting changes in model output cannot become source-contract failures.
-    candidate_files["index.html"] = rendered["index.html"]
-    for path in sorted(required_files):
-        if candidate_files[path] != rendered[path]:
-            raise SourceChangeError(
-                "CANDIDATE_CONTRACT_INVALID",
-                "Materialized source cannot be represented by the AppSpec compatibility "
-                f"contract: {path}",
-            )
-    candidate_files["app-spec.json"] = rendered["app-spec.json"]
+    if legacy_web:
+        app_spec = _rebuild_app_spec_from_candidate(
+            base_app_spec,
+            architecture_spec,
+            change_set.app_spec_delta,
+            candidate_files,
+        )
+        rendered = render_version_files(app_spec)
+        # Historical web-static-v1 versions own the Document shell. This branch is
+        # compatibility-only; web-static-document source remains authoritative.
+        candidate_files["index.html"] = rendered["index.html"]
+        for path in sorted(required_files):
+            if candidate_files[path] != rendered[path]:
+                raise SourceChangeError(
+                    "CANDIDATE_CONTRACT_INVALID",
+                    "Materialized source cannot be represented by the AppSpec compatibility "
+                    f"contract: {path}",
+                )
+        candidate_files["app-spec.json"] = rendered["app-spec.json"]
+        mode_checks = [
+            "runtime-document-shell-canonicalization",
+            "app-spec-source-consistency",
+        ]
+    else:
+        metadata = change_set.app_spec_delta.model_dump(exclude_none=True)
+        app_spec = base_app_spec.model_copy(
+            update={
+                **metadata,
+                "primary_color": architecture_spec.primary_color,
+                "accent_color": architecture_spec.accent_color,
+                "background_color": architecture_spec.background_color,
+                "html": "",
+                "css": "",
+                "javascript": "",
+            }
+        )
+        candidate_files["app-spec.json"] = (
+            json.dumps(app_spec.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n"
+        )
+        mode_checks = ["authoritative-source-preserved", "delivery-metadata-updated"]
     candidate_hash = _candidate_source_hash(candidate_files)
     report = SourceChangeApplyReport(
         source_context_hash=context_hash,
@@ -571,8 +620,7 @@ def materialize_source_file_change_set(
             "path-and-before-hash-policy",
             "isolated-file-materialization",
             "undeclared-files-unchanged",
-            "runtime-document-shell-canonicalization",
-            "app-spec-source-consistency",
+            *mode_checks,
         ],
     )
     return app_spec, candidate_files, report
@@ -603,9 +651,7 @@ def _rebuild_app_spec_from_candidate(
             "app.js changed the Runtime-managed network guard",
         )
     javascript = javascript_file[len(javascript_prefix) : -1]
-    metadata_updates = app_spec_delta.model_dump(
-        mode="python", exclude_none=True
-    )
+    metadata_updates = app_spec_delta.model_dump(mode="python", exclude_none=True)
     return base_app_spec.model_copy(
         update={
             **metadata_updates,
@@ -667,9 +713,7 @@ def _candidate_source_hash(candidate_files: dict[str, str]) -> str:
 
 def render_version_files(app_spec: AppSpec) -> dict[str, str]:
     files = {
-        "app-spec.json": json.dumps(
-            app_spec.model_dump(mode="json"), indent=2, ensure_ascii=False
-        )
+        "app-spec.json": json.dumps(app_spec.model_dump(mode="json"), indent=2, ensure_ascii=False)
         + "\n"
     }
     if app_spec.html:
@@ -690,7 +734,7 @@ def render_version_files(app_spec: AppSpec) -> dict[str, str]:
         fallback = app_spec.model_copy(
             update={
                 "html": (
-                    f'<main><header><h1>{app_spec.hero_title}</h1>'
+                    f"<main><header><h1>{app_spec.hero_title}</h1>"
                     f"<p>{app_spec.hero_body}</p></header>"
                     f'<section class="product-grid">{product_cards}</section></main>'
                 ),
@@ -727,11 +771,7 @@ def re_full_git_commit(value: str) -> bool:
 
 
 def _web_document(app_spec: AppSpec) -> str:
-    title = (
-        app_spec.project_name.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    title = app_spec.project_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return (
         "<!doctype html>\n"
         '<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n'

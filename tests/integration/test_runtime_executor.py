@@ -47,7 +47,8 @@ def _execution_request(
         "execution_id": execution_id,
         "run_id": run["run_id"],
         "attempt": 1,
-        "adapter_id": "web-static-v1",
+        "adapter_id": bundle["adapter_id"],
+        "runtime_binding": bundle.get("runtime_binding"),
         "product_spec_hash": run["product_spec"]["content_hash"],
         "architecture_design_hash": run["architecture_design"]["content_hash"],
         "source_manifest_hash": bundle["manifest_hash"],
@@ -76,6 +77,13 @@ def test_approved_build_produces_architecture_source_tests_and_execution_evidenc
     run = _approve(client, "Build a minimalist lighting catalog")
 
     assert run["status"] == "completed"
+    assert run["source_bundle"]["schema_version"] == "2.0"
+    assert run["source_bundle"]["runtime_binding"]["contract_id"] == "web-static-document"
+    assert run["app_spec"]["html"] == ""
+    index_source = next(
+        item["content"] for item in run["source_bundle"]["files"] if item["path"] == "index.html"
+    )
+    assert "<!doctype html>" in index_source.casefold()
     assert run["architecture_design"]["path"] == "docs/architecture-design.md"
     assert run["architecture_design"]["requires_product_reapproval"] is False
     assert "架构设计文档" in run["architecture_design"]["content"]
@@ -96,14 +104,44 @@ def test_approved_build_produces_architecture_source_tests_and_execution_evidenc
     assert "tests/app.test.js" in paths
 
     with client.app.state.testing_session() as db:
-        version = db.scalar(
-            select(ProjectVersion).where(ProjectVersion.id == run["version_id"])
-        )
+        version = db.scalar(select(ProjectVersion).where(ProjectVersion.id == run["version_id"]))
         assert version is not None
         assert version.architecture_design is not None
         assert version.source_bundle is not None
         assert version.execution_report["status"] == "passed"
-        assert version.build_artifact["files"]
+    assert version.build_artifact["files"]
+
+
+def test_non_web_project_is_delivered_as_source_ready_without_fake_preview(
+    client: TestClient,
+) -> None:
+    run = _approve(client, "构建一个命令行工具，用来整理文本文件")
+
+    assert run["status"] == "completed_degraded"
+    assert run["source_bundle"]["schema_version"] == "2.0"
+    assert run["source_bundle"]["runtime_binding"] is None
+    assert all(item["path"] != "index.html" for item in run["source_bundle"]["files"])
+    assert run["execution_report"] is None
+
+    versions = client.get(f"/api/projects/{run['project_id']}/versions")
+    assert versions.status_code == 200
+    version = versions.json()[0]
+    assert version["delivery_outcome"] == "source_ready"
+    assert version["runtime_capabilities"] == {
+        "build": False,
+        "test": False,
+        "preview": False,
+        "publish": False,
+    }
+    preview = client.get(f"/api/previews/{version['id']}")
+    assert preview.status_code == 409
+    assert preview.json()["code"] == "PREVIEW_NOT_SUPPORTED"
+    publish = client.post(
+        f"/api/projects/{run['project_id']}/publish",
+        json={"version_id": version["id"], "strategy": "specify_version"},
+    )
+    assert publish.status_code == 409
+    assert publish.json()["code"] == "PUBLISH_NOT_SUPPORTED"
 
 
 def test_architecture_only_returns_to_human_when_product_boundary_changes(

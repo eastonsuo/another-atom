@@ -17,7 +17,7 @@ export interface Blueprint {
   mapped_requirements: string[];
   omitted_requirements: string[];
   rewrite_suggestion: string | null;
-  capability_policy_version: "catalog-v1" | "web-v1";
+  capability_policy_version: "catalog-v1" | "web-v1" | "source-v1";
   pages: string[];
   modules: string[];
   visual_direction: string;
@@ -83,9 +83,12 @@ export interface RunView {
   } | null;
   app_spec: AppSpec | null;
   source_bundle: {
-    adapter_id: string;
+    schema_version: "1.0" | "2.0";
+    adapter_id: string | null;
     manifest_hash: string;
-    files: { path: string; role: "source" | "test" | "config"; content_hash: string }[];
+    runtime_binding: RuntimeBinding | null;
+    entrypoints: { kind: "application" | "test"; path: string }[];
+    files: SourceFile[];
   } | null;
   execution_report: {
     status: "passed" | "failed" | "cancelled";
@@ -161,8 +164,47 @@ export interface VersionView {
   source: string;
   summary: string;
   app_spec: AppSpec;
+  delivery_outcome: DeliveryOutcome;
+  runtime_binding: RuntimeBinding | null;
+  runtime_capabilities: RuntimeCapabilities;
   created_at: string;
   git_commit: string | null;
+}
+
+export type DeliveryOutcome = "valid" | "source_ready" | "candidate_rejected" | "execution_blocked";
+
+export interface RuntimeBinding {
+  contract_id: string;
+  contract_version: string;
+  contract_hash: string;
+}
+
+export interface RuntimeCapabilities {
+  build: boolean;
+  test: boolean;
+  preview: boolean;
+  publish: boolean;
+}
+
+export interface SourceFile {
+  path: string;
+  role: "source" | "test" | "config" | "documentation" | "asset";
+  encoding: "utf-8";
+  content: string;
+  content_hash: string;
+}
+
+export interface PreviewView {
+  app_spec: AppSpec;
+  source_bundle: {
+    schema_version: "1.0" | "2.0";
+    adapter_id: string | null;
+    runtime_binding: RuntimeBinding | null;
+    entrypoints: { kind: "application" | "test"; path: string }[];
+    files: SourceFile[];
+  } | null;
+  delivery_outcome: DeliveryOutcome;
+  runtime_capabilities: RuntimeCapabilities;
 }
 
 export interface DeploymentView {

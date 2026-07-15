@@ -5,17 +5,17 @@ import pytest
 from another_atom.agent.provider import MockLLMProvider
 from another_atom.config import get_settings
 from another_atom.contracts.schemas import (
-    EngineerOutput,
     Mode,
     ProductSpec,
+    SourceEntrypoint,
     SourceFileChange,
-    SourceFileDraft,
     VersionSource,
 )
 from another_atom.repository.service import (
     SourceChangeError,
     build_source_context,
     build_source_snapshot,
+    calculate_source_context_hash,
     calculate_source_diff_from_files,
     commit_version,
     initialize_repository,
@@ -26,6 +26,27 @@ from another_atom.runtime.artifacts import (
     create_source_bundle,
     create_source_bundle_from_files,
 )
+from another_atom.runtime.contracts import get_runtime_contract, preflight_runtime
+
+DOCUMENT_RUNTIME = get_runtime_contract("web-static-document", "1.0")
+DOCUMENT_ENTRYPOINTS = [
+    SourceEntrypoint(kind="application", path="index.html"),
+    SourceEntrypoint(kind="test", path="tests/app.test.js"),
+]
+
+
+def _create_change_set(provider, *args):
+    return provider.create_source_file_change_set(
+        *args,
+        runtime_contract=DOCUMENT_RUNTIME,
+    )
+
+
+def _materialize(*args):
+    return materialize_source_file_change_set(
+        *args,
+        runtime_contract_id=DOCUMENT_RUNTIME.contract_id,
+    )
 
 
 def _prepared_change(tmp_path, monkeypatch):
@@ -35,7 +56,6 @@ def _prepared_change(tmp_path, monkeypatch):
     prompt = "创建一个复古像素风扫雷游戏"
     blueprint = provider.create_blueprint(prompt, Mode.TEAM)
     architecture = provider.create_architecture_spec(blueprint)
-    app_spec = provider.create_app_spec(blueprint, architecture, prompt)
     content = "# 扫雷游戏\n"
     product_spec = ProductSpec(
         summary="扫雷游戏产品说明",
@@ -46,22 +66,18 @@ def _prepared_change(tmp_path, monkeypatch):
         provider.create_architecture_design(product_spec, blueprint),
         product_spec.content_hash,
     )
+    engineer_output = provider.create_engineer_output(
+        product_spec,
+        architecture_design,
+        blueprint,
+        prompt,
+        DOCUMENT_RUNTIME,
+    )
+    app_spec = engineer_output.app_spec
     source_bundle = create_source_bundle(
-        EngineerOutput(
-            app_spec=app_spec,
-            unit_tests=[
-                SourceFileDraft(
-                    path="tests/app.test.js",
-                    role="test",
-                    content=(
-                        "import test from 'node:test';\n"
-                        "import assert from 'node:assert/strict';\n"
-                        "test('source exists', () => assert.ok(true));\n"
-                    ),
-                )
-            ],
-        ),
+        engineer_output,
         blueprint.product_type,
+        DOCUMENT_RUNTIME,
     )
     project_id = "11111111-1111-1111-1111-111111111111"
     version_id = "22222222-2222-2222-2222-222222222222"
@@ -76,7 +92,7 @@ def _prepared_change(tmp_path, monkeypatch):
     )
     snapshot = build_source_snapshot(project_id, version_id, commit)
     brief = provider.create_change_brief(
-        '把标题改成“夜间扫雷”，其他游戏逻辑保持不变',
+        "把标题改成“夜间扫雷”，其他游戏逻辑保持不变",
         blueprint,
         app_spec,
     )
@@ -97,9 +113,7 @@ def _prepared_change(tmp_path, monkeypatch):
     )
 
 
-def test_static_source_change_round_trip_rebuilds_runtime_contract(
-    tmp_path, monkeypatch
-) -> None:
+def test_static_source_change_round_trip_rebuilds_runtime_contract(tmp_path, monkeypatch) -> None:
     (
         provider,
         blueprint,
@@ -118,7 +132,8 @@ def test_static_source_change_round_trip_rebuilds_runtime_contract(
         runtime_managed_files=["app-spec.json"],
     )
 
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -130,7 +145,7 @@ def test_static_source_change_round_trip_rebuilds_runtime_contract(
         requirements,
         app_spec,
     )
-    candidate_app, candidate_files, report = materialize_source_file_change_set(
+    candidate_app, candidate_files, report = _materialize(
         snapshot,
         context,
         change_set,
@@ -138,7 +153,10 @@ def test_static_source_change_round_trip_rebuilds_runtime_contract(
         architecture,
     )
     source_bundle = create_source_bundle_from_files(
-        candidate_files, blueprint.product_type
+        candidate_files,
+        blueprint.product_type,
+        DOCUMENT_RUNTIME,
+        DOCUMENT_ENTRYPOINTS,
     )
     source_diff = calculate_source_diff_from_files(snapshot, candidate_files)
 
@@ -157,7 +175,7 @@ def test_static_source_change_round_trip_rebuilds_runtime_contract(
     get_settings.cache_clear()
 
 
-def test_static_source_change_canonicalizes_runtime_owned_html_shell(
+def test_document_source_change_preserves_the_authoritative_html_document(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -177,7 +195,8 @@ def test_static_source_change_canonicalizes_runtime_owned_html_shell(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -209,20 +228,18 @@ def test_static_source_change_canonicalizes_runtime_owned_html_shell(
         }
     )
 
-    candidate_app, candidate_files, report = materialize_source_file_change_set(
+    candidate_app, candidate_files, report = _materialize(
         snapshot, context, change_set, app_spec, architecture
     )
 
     assert candidate_app.hero_title == "夜间扫雷"
-    assert candidate_files["index.html"].startswith("<!doctype html>\n")
-    assert '<script src="./app.js"></script>\n</body>\n</html>\n' in candidate_files[
-        "index.html"
-    ]
-    assert "runtime-document-shell-canonicalization" in report.checks
+    assert candidate_files["index.html"].startswith("<!DOCTYPE html>\n")
+    assert '<script src="app.js" ></script>' in candidate_files["index.html"]
+    assert "authoritative-source-preserved" in report.checks
     get_settings.cache_clear()
 
 
-def test_static_source_change_rejects_non_runtime_application_script(
+def test_document_source_change_allows_public_https_application_script(
     tmp_path, monkeypatch
 ) -> None:
     (
@@ -242,7 +259,8 @@ def test_static_source_change_rejects_non_runtime_application_script(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -260,7 +278,7 @@ def test_static_source_change_rejects_non_runtime_application_script(
                 item.model_copy(
                     update={
                         "replacement_content": item.replacement_content.replace(
-                            './app.js', 'https://example.com/app.js'
+                            "./app.js", "https://example.com/app.js"
                         )
                     }
                 )
@@ -271,18 +289,24 @@ def test_static_source_change_rejects_non_runtime_application_script(
         }
     )
 
-    with pytest.raises(SourceChangeError) as raised:
-        materialize_source_file_change_set(
-            snapshot, context, change_set, app_spec, architecture
-        )
+    candidate_app, candidate_files, report = _materialize(
+        snapshot, context, change_set, app_spec, architecture
+    )
+    source_bundle = create_source_bundle_from_files(
+        candidate_files,
+        blueprint.product_type,
+        DOCUMENT_RUNTIME,
+        DOCUMENT_ENTRYPOINTS,
+    )
+    _, validation = preflight_runtime(source_bundle)
 
-    assert raised.value.code == "CANDIDATE_CONTRACT_INVALID"
+    assert "https://example.com/app.js" in candidate_files["index.html"]
+    assert report.status == "passed"
+    assert validation.passed is True
     get_settings.cache_clear()
 
 
-def test_static_source_change_cannot_modify_omitted_baseline_file(
-    tmp_path, monkeypatch
-) -> None:
+def test_static_source_change_cannot_modify_omitted_baseline_file(tmp_path, monkeypatch) -> None:
     (
         provider,
         blueprint,
@@ -295,6 +319,12 @@ def test_static_source_change_cannot_modify_omitted_baseline_file(
         requirements,
     ) = _prepared_change(tmp_path, monkeypatch)
     styles = next(item for item in snapshot.files if item.path == "styles.css")
+    complete_context = build_source_context(
+        snapshot,
+        brief.original_request,
+        120_000,
+        runtime_managed_files=["app-spec.json"],
+    )
     context = build_source_context(
         snapshot,
         brief.original_request,
@@ -302,10 +332,11 @@ def test_static_source_change_cannot_modify_omitted_baseline_file(
         selected_files=["styles.css"],
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
-        context,
+        complete_context,
         product_spec,
         blueprint,
         architecture_design,
@@ -314,19 +345,18 @@ def test_static_source_change_cannot_modify_omitted_baseline_file(
         requirements,
         app_spec,
     )
+    change_set = change_set.model_copy(
+        update={"source_context_hash": calculate_source_context_hash(context)}
+    )
 
     with pytest.raises(SourceChangeError) as raised:
-        materialize_source_file_change_set(
-            snapshot, context, change_set, app_spec, architecture
-        )
+        _materialize(snapshot, context, change_set, app_spec, architecture)
 
     assert raised.value.code == "CONTEXT_INSUFFICIENT"
     get_settings.cache_clear()
 
 
-def test_static_source_change_rejects_before_hash_mismatch(
-    tmp_path, monkeypatch
-) -> None:
+def test_static_source_change_rejects_before_hash_mismatch(tmp_path, monkeypatch) -> None:
     (
         provider,
         blueprint,
@@ -344,7 +374,8 @@ def test_static_source_change_rejects_before_hash_mismatch(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -369,17 +400,13 @@ def test_static_source_change_rejects_before_hash_mismatch(
     )
 
     with pytest.raises(SourceChangeError) as raised:
-        materialize_source_file_change_set(
-            snapshot, context, change_set, app_spec, architecture
-        )
+        _materialize(snapshot, context, change_set, app_spec, architecture)
 
     assert raised.value.code == "SOURCE_CHANGE_HASH_MISMATCH"
     get_settings.cache_clear()
 
 
-def test_static_source_change_rejects_output_over_configured_limit(
-    tmp_path, monkeypatch
-) -> None:
+def test_static_source_change_rejects_output_over_configured_limit(tmp_path, monkeypatch) -> None:
     (
         provider,
         blueprint,
@@ -397,7 +424,8 @@ def test_static_source_change_rejects_output_over_configured_limit(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -413,9 +441,7 @@ def test_static_source_change_rejects_output_over_configured_limit(
     get_settings.cache_clear()
 
     with pytest.raises(SourceChangeError) as raised:
-        materialize_source_file_change_set(
-            snapshot, context, change_set, app_spec, architecture
-        )
+        _materialize(snapshot, context, change_set, app_spec, architecture)
 
     assert raised.value.code == "SOURCE_CHANGE_OUTPUT_TOO_LARGE"
     get_settings.cache_clear()
@@ -452,7 +478,8 @@ def test_static_source_change_rejects_runtime_managed_and_git_paths(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -473,17 +500,13 @@ def test_static_source_change_rejects_runtime_managed_and_git_paths(
     change_set = change_set.model_copy(update={"changes": [protected_change]})
 
     with pytest.raises(SourceChangeError) as raised:
-        materialize_source_file_change_set(
-            snapshot, context, change_set, app_spec, architecture
-        )
+        _materialize(snapshot, context, change_set, app_spec, architecture)
 
     assert raised.value.code == "SOURCE_CHANGE_PATH_FORBIDDEN"
     get_settings.cache_clear()
 
 
-def test_static_source_change_add_delete_survive_version_commit(
-    tmp_path, monkeypatch
-) -> None:
+def test_static_source_change_add_delete_survive_version_commit(tmp_path, monkeypatch) -> None:
     (
         provider,
         blueprint,
@@ -501,7 +524,8 @@ def test_static_source_change_add_delete_survive_version_commit(
         120_000,
         runtime_managed_files=["app-spec.json"],
     )
-    change_set = provider.create_source_file_change_set(
+    change_set = _create_change_set(
+        provider,
         "33333333-3333-3333-3333-333333333333",
         snapshot,
         context,
@@ -533,11 +557,18 @@ def test_static_source_change_add_delete_survive_version_commit(
         update={"changes": [*change_set.changes, delete_test, add_test]}
     )
 
-    candidate_app, candidate_files, _ = materialize_source_file_change_set(
+    candidate_app, candidate_files, _ = _materialize(
         snapshot, context, change_set, app_spec, architecture
     )
     source_bundle = create_source_bundle_from_files(
-        candidate_files, blueprint.product_type
+        candidate_files,
+        blueprint.product_type,
+        DOCUMENT_RUNTIME,
+        DOCUMENT_ENTRYPOINTS,
+    )
+    assert any(
+        item.kind == "test" and item.path == "tests/replacement.test.js"
+        for item in source_bundle.entrypoints
     )
     commit = commit_version(
         snapshot.project_id,

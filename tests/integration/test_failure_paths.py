@@ -31,10 +31,14 @@ def _create_run(
     return run
 
 
-def test_unsupported_request_stops_before_approval(client: TestClient) -> None:
+def test_non_web_request_preserves_project_type_before_source_delivery(
+    client: TestClient,
+) -> None:
     run = _create_run(client, {"prompt": "Build a native iOS camera app", "mode": "team"})
-    assert run["status"] == "needs_input"
-    assert run["blueprint"]["support_level"] == "unsupported"
+    assert run["status"] == "awaiting_approval"
+    assert run["blueprint"]["support_level"] == "adapted"
+    assert run["blueprint"]["product_type"] == "native_application"
+    assert run["blueprint"]["capability_policy_version"] == "source-v1"
     assert run["version_id"] is None
 
 
@@ -96,12 +100,10 @@ def test_build_usage_is_recorded_without_enforcing_the_configured_limit(
 def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> None:
     run = _create_run(client, {"prompt": "Build a catalog [fail:build]", "mode": "team"})
     assert run["status"] == "failed"
-    assert run["error_code"] == "BUILD_VALIDATION_FAILED"
+    assert run["error_code"] == "CANDIDATE_REJECTED"
     assert run["version_id"] is None
     assert client.get(f"/api/projects/{run['project_id']}/versions").json() == []
-    restore = client.post(
-        f"/api/projects/{run['project_id']}/restore-last-usable"
-    )
+    restore = client.post(f"/api/projects/{run['project_id']}/restore-last-usable")
     assert restore.status_code == 409
     assert restore.json()["code"] == "NO_USABLE_VERSION"
     events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
@@ -151,11 +153,7 @@ def test_runtime_unit_test_failure_is_repaired_with_revised_tests(
 
     assert run["status"] == "completed"
     assert run["validation_report"]["passed"] is True
-    repaired_tests = [
-        item
-        for item in run["source_bundle"]["files"]
-        if item["role"] == "test"
-    ]
+    repaired_tests = [item for item in run["source_bundle"]["files"] if item["role"] == "test"]
     assert repaired_tests
     assert all("assert.equal(1, 2)" not in item["content"] for item in repaired_tests)
 
@@ -171,7 +169,7 @@ def test_failed_repair_stops_after_one_round(client: TestClient) -> None:
     )
 
     assert run["status"] == "failed"
-    assert run["error_code"] == "BUILD_VALIDATION_FAILED"
+    assert run["error_code"] == "CANDIDATE_REJECTED"
     assert run["validation_report"]["passed"] is False
     assert run["version_id"] is None
 
@@ -322,12 +320,10 @@ def test_local_model_request_exposes_localhost_as_an_approval_gap(
     assert run["status"] == "awaiting_approval"
     assert run["blueprint"]["support_level"] == "adapted"
     assert any(
-        "localhost" in requirement
-        for requirement in run["blueprint"]["omitted_requirements"]
+        "localhost" in requirement for requirement in run["blueprint"]["omitted_requirements"]
     )
     assert all(
-        "本地大模型" not in requirement
-        for requirement in run["blueprint"]["mapped_requirements"]
+        "本地大模型" not in requirement for requirement in run["blueprint"]["mapped_requirements"]
     )
     assert "localhost" in run["product_spec"]["content"]
     assert "视觉方向" not in run["product_spec"]["content"]
@@ -340,8 +336,7 @@ def test_local_model_request_exposes_localhost_as_an_approval_gap(
         params={"run_id": run["run_id"]},
     ).json()
     assert any(
-        item["source"] == "repository" and item["path"] == "docs/product-spec.md"
-        for item in files
+        item["source"] == "repository" and item["path"] == "docs/product-spec.md" for item in files
     )
     document = queued_client.get(
         f"/api/projects/{run['project_id']}/files/content",
@@ -362,9 +357,7 @@ def test_local_model_request_exposes_localhost_as_an_approval_gap(
     regenerated = updated.json()
     assert regenerated["blueprint"]["modules"][0] in regenerated["product_spec"]["summary"]
     assert regenerated["product_spec"]["content_hash"] != run["product_spec"]["content_hash"]
-    messages = queued_client.get(
-        f"/api/projects/{run['project_id']}/messages"
-    ).json()
+    messages = queued_client.get(f"/api/projects/{run['project_id']}/messages").json()
     assert any(
         message["role"] == "user"
         and message["content"] == "将当前方案摘要修改为：保留当前方案，但突出翻译结果复制"

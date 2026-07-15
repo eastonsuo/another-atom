@@ -9,6 +9,7 @@ import type {
   DeploymentView,
   Mode,
   ModelsView,
+  PreviewView,
   ProjectFileContent,
   ProjectFileEntry,
   ProjectFileSaveResult,
@@ -145,8 +146,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ path, content, expected_content_hash: expectedContentHash, operation_id: operationId }),
     }),
-  preview: (versionId: string) => request<AppSpec>(`/api/previews/${versionId}`),
-  publicApp: (publicId: string) => request<AppSpec>(`/api/public/${publicId}`),
+  preview: (versionId: string) => request<PreviewView>(`/api/previews/${versionId}`),
+  publicApp: (publicId: string) => request<PreviewView>(`/api/public/${publicId}`),
   revise: (projectId: string, revision: Partial<AppSpec>) =>
     request<VersionView>(`/api/projects/${projectId}/revisions`, {
       method: "POST",

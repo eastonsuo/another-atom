@@ -44,6 +44,7 @@ from another_atom.contracts.schemas import (
     BlueprintApproval,
     BuildStatus,
     DataProfile,
+    DeliveryOutcome,
     DeploymentView,
     EngineerOutput,
     EventView,
@@ -60,6 +61,7 @@ from another_atom.contracts.schemas import (
     Mode,
     ModelOption,
     ModelsView,
+    PreviewView,
     ProductSpec,
     ProductSpecUpdateRequest,
     ProjectFileContent,
@@ -80,6 +82,7 @@ from another_atom.contracts.schemas import (
     RewriteConfirmation,
     RunCreate,
     RunStatus,
+    RuntimeCapabilities,
     RunView,
     SandboxSessionView,
     SourceBundle,
@@ -113,8 +116,13 @@ from another_atom.repository.service import (
     save_repository_text_file,
     write_product_spec,
 )
-from another_atom.runtime.artifacts import create_source_bundle
+from another_atom.runtime.artifacts import create_source_bundle, replace_source_bundle_contents
 from another_atom.runtime.client import RuntimeExecutorError, execute_request
+from another_atom.runtime.contracts import (
+    get_runtime_contract,
+    resolve_runtime_binding,
+    validate_source_bundle,
+)
 from another_atom.sandbox.client import SandboxClient, SandboxUnavailable, get_sandbox_client
 from another_atom.storage.database import SessionLocal, get_db
 from another_atom.storage.models import (
@@ -268,9 +276,7 @@ def _run_view(db: Session, run: Run) -> RunView:
             db, run.id, ArtifactType.ARCHITECTURE_SPEC, ArchitectureSpec
         ),
         app_spec=app_spec,
-        source_bundle=_artifact_model(
-            db, run.id, ArtifactType.SOURCE_BUNDLE, SourceBundle
-        ),
+        source_bundle=_artifact_model(db, run.id, ArtifactType.SOURCE_BUNDLE, SourceBundle),
         execution_report=_artifact_model(
             db, run.id, ArtifactType.EXECUTION_REPORT, ExecutionReport
         ),
@@ -281,9 +287,7 @@ def _run_view(db: Session, run: Run) -> RunView:
         version_id=version.id if version else None,
         error_code=run.error_code,
         error_message=run.error_message,
-        pending_human_task=(
-            _human_task_view(pending_human_task) if pending_human_task else None
-        ),
+        pending_human_task=(_human_task_view(pending_human_task) if pending_human_task else None),
         created_at=run.created_at,
         updated_at=run.updated_at,
     )
@@ -660,9 +664,7 @@ def retry_failed_run(
     project = _owned_project(db, failed_run.project_id, user.id)
     is_change_retry = failed_run.trigger == "ai_edit"
     base_version = (
-        db.get(ProjectVersion, failed_run.base_version_id)
-        if failed_run.base_version_id
-        else None
+        db.get(ProjectVersion, failed_run.base_version_id) if failed_run.base_version_id else None
     )
     if is_change_retry:
         if (
@@ -707,9 +709,7 @@ def retry_failed_run(
         trigger=failed_run.trigger,
         base_version_id=base_version.id if base_version else None,
         status=(
-            RunStatus.BUILD_QUEUED.value
-            if is_change_retry
-            else RunStatus.PRODUCT_RUNNING.value
+            RunStatus.BUILD_QUEUED.value if is_change_retry else RunStatus.PRODUCT_RUNNING.value
         ),
         current_stage="team_leader" if is_change_retry else "product_manager",
         prompt=failed_run.prompt,
@@ -1081,9 +1081,7 @@ def confirm_alternative_blueprint(
     artifact = save_artifact(db, next_run.id, ArtifactType.BLUEPRINT, confirmed_blueprint)
     product_spec = render_product_spec(confirmation.prompt, confirmed_blueprint)
     write_product_spec(next_run.project_id, product_spec.content)
-    product_spec_artifact = save_artifact(
-        db, next_run.id, ArtifactType.PRODUCT_SPEC, product_spec
-    )
+    product_spec_artifact = save_artifact(db, next_run.id, ArtifactType.PRODUCT_SPEC, product_spec)
     job = BuildJob(
         run_id=next_run.id,
         project_id=next_run.project_id,
@@ -1496,9 +1494,7 @@ def respond_to_human_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RunView:
-    task = db.scalar(
-        select(HumanTask).where(HumanTask.id == task_id, HumanTask.user_id == user.id)
-    )
+    task = db.scalar(select(HumanTask).where(HumanTask.id == task_id, HumanTask.user_id == user.id))
     if task is None:
         raise AppError("HUMAN_TASK_NOT_FOUND", "Human task was not found", 404)
     run = _owned_run(db, task.run_id, user.id)
@@ -1627,9 +1623,7 @@ def respond_to_human_task(
         )
         if claimed.rowcount != 1:
             db.rollback()
-            raise AppError(
-                "HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409
-            )
+            raise AppError("HUMAN_TASK_ALREADY_RESOLVED", "Human task was already resolved", 409)
         db.add(
             ProjectMessage(
                 project_id=project.id,
@@ -1812,15 +1806,11 @@ def _project_context_snapshot(
     selected_files: list[str],
 ) -> dict:
     base_version = (
-        db.get(ProjectVersion, project.latest_version_id)
-        if project.latest_version_id
-        else None
+        db.get(ProjectVersion, project.latest_version_id) if project.latest_version_id else None
     )
     base_run = db.get(Run, base_version.run_id) if base_version else None
     latest_project_run = db.scalar(
-        select(Run)
-        .where(Run.project_id == project.id)
-        .order_by(Run.created_at.desc())
+        select(Run).where(Run.project_id == project.id).order_by(Run.created_at.desc())
     )
     context_run = base_run or latest_project_run
     blueprint = (
@@ -1922,9 +1912,12 @@ def _project_context_snapshot(
             else None
         ),
     }
-    snapshot["context_hash"] = "sha256:" + hashlib.sha256(
-        json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    snapshot["context_hash"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+    )
     return snapshot
 
 
@@ -1998,9 +1991,7 @@ def send_project_message(
         )
     model_config = models()
     base_version = (
-        db.get(ProjectVersion, project.latest_version_id)
-        if project.latest_version_id
-        else None
+        db.get(ProjectVersion, project.latest_version_id) if project.latest_version_id else None
     )
     base_run = db.get(Run, base_version.run_id) if base_version else None
     selected_model = request.model or (base_run.model if base_run else model_config.default_model)
@@ -2111,10 +2102,7 @@ def send_project_message(
         if event_type == "agent.message.started":
             incoming_message_id = payload.get("message_id")
             if isinstance(incoming_message_id, str):
-                if (
-                    active_provider_message_id
-                    and incoming_message_id != active_provider_message_id
-                ):
+                if active_provider_message_id and incoming_message_id != active_provider_message_id:
                     current_output = next_payload.get("model_output")
                     next_payload["model_output"] = (
                         f"{current_output if isinstance(current_output, str) else ''}"
@@ -2249,9 +2237,7 @@ def send_project_message(
         user_message=_project_message_view(user_message),
         lead_message=_project_message_view(lead_message),
         proposal_id=(
-            lead_message.id
-            if decision.intent == ProjectLeadIntent.PROPOSE_CHANGE
-            else None
+            lead_message.id if decision.intent == ProjectLeadIntent.PROPOSE_CHANGE else None
         ),
         model=selected_model,
         fallback_provider=usage.fallback_provider,
@@ -2294,9 +2280,7 @@ def approve_project_change_proposal(
     if request_message is None or request_message.project_id != project.id:
         raise AppError("CHANGE_PROPOSAL_INVALID", "Proposal request message was not found", 409)
     selected_model = str(
-        proposal_payload.get("model")
-        or request_message.payload.get("model")
-        or ""
+        proposal_payload.get("model") or request_message.payload.get("model") or ""
     )
     model_config = models()
     if selected_model not in {option.id for option in model_config.models}:
@@ -2323,11 +2307,7 @@ def approve_project_change_proposal(
         model=selected_model,
         trigger="ai_edit" if base_version else "build",
         base_version_id=base_version.id if base_version else None,
-        status=(
-            RunStatus.BUILD_QUEUED.value
-            if base_version
-            else RunStatus.PRODUCT_RUNNING.value
-        ),
+        status=(RunStatus.BUILD_QUEUED.value if base_version else RunStatus.PRODUCT_RUNNING.value),
         current_stage="team_leader" if base_version else "product_manager",
         prompt=request_message.content,
     )
@@ -2447,9 +2427,7 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.SOURCE_PATCH_APPLY_REPORT: (
         ".another-atom/generated/source-patch-apply-report.json"
     ),
-    ArtifactType.SOURCE_FILE_CHANGE_SET: (
-        ".another-atom/generated/source-file-change-set.json"
-    ),
+    ArtifactType.SOURCE_FILE_CHANGE_SET: (".another-atom/generated/source-file-change-set.json"),
     ArtifactType.SOURCE_CHANGE_APPLY_REPORT: (
         ".another-atom/generated/source-change-apply-report.json"
     ),
@@ -2459,9 +2437,7 @@ _ARTIFACT_FILE_PATHS = {
     ArtifactType.ARCHITECTURE_SPEC: ".another-atom/generated/architecture-spec.json",
     ArtifactType.APP_SPEC: ".another-atom/generated/app-spec.json",
     ArtifactType.APP_SPEC_REPAIR: ".another-atom/generated/app-spec-repair.json",
-    ArtifactType.ENGINEER_OUTPUT_REPAIR: (
-        ".another-atom/generated/engineer-output-repair.json"
-    ),
+    ArtifactType.ENGINEER_OUTPUT_REPAIR: (".another-atom/generated/engineer-output-repair.json"),
     ArtifactType.SOURCE_BUNDLE: ".another-atom/generated/source-bundle.json",
     ArtifactType.BUILD_ARTIFACT: ".another-atom/generated/build-artifact.json",
     ArtifactType.EXECUTION_REPORT: ".another-atom/generated/execution-report.json",
@@ -2770,6 +2746,12 @@ def list_versions(
 
 
 def _version_view(version: ProjectVersion) -> VersionView:
+    source_bundle = (
+        SourceBundle.model_validate(version.source_bundle)
+        if version.source_bundle is not None
+        else None
+    )
+    outcome, capabilities = _delivery_capabilities(version, source_bundle)
     return VersionView(
         id=version.id,
         project_id=version.project_id,
@@ -2778,17 +2760,59 @@ def _version_view(version: ProjectVersion) -> VersionView:
         source=VersionSource(version.source),
         summary=f"{version.source.title()} version {version.version_number}",
         app_spec=AppSpec.model_validate(version.app_spec),
+        delivery_outcome=outcome,
+        runtime_binding=(source_bundle.runtime_binding if source_bundle is not None else None),
+        runtime_capabilities=capabilities,
         created_at=version.created_at,
         git_commit=version.git_commit,
     )
 
 
-@router.get("/previews/{version_id}", response_model=AppSpec)
+def _delivery_capabilities(
+    version: ProjectVersion,
+    source_bundle: SourceBundle | None,
+) -> tuple[DeliveryOutcome, RuntimeCapabilities]:
+    if source_bundle is None:
+        return DeliveryOutcome.VALID, RuntimeCapabilities(
+            build=True, test=True, preview=True, publish=True
+        )
+    if source_bundle.runtime_binding is None:
+        if source_bundle.schema_version == "1.0" and source_bundle.adapter_id == "web-static-v1":
+            contract = get_runtime_contract("web-static-v1", "1.0")
+            return DeliveryOutcome.VALID, contract.capabilities
+        return DeliveryOutcome.SOURCE_READY, RuntimeCapabilities()
+    try:
+        contract = resolve_runtime_binding(source_bundle.runtime_binding)
+    except ValueError:
+        return DeliveryOutcome.SOURCE_READY, RuntimeCapabilities()
+    passed = bool(version.execution_report) and version.execution_report.get("status") == "passed"
+    return (
+        DeliveryOutcome.VALID if passed else DeliveryOutcome.SOURCE_READY,
+        contract.capabilities if passed else RuntimeCapabilities(),
+    )
+
+
+def _preview_view(version: ProjectVersion) -> PreviewView:
+    source_bundle = (
+        SourceBundle.model_validate(version.source_bundle)
+        if version.source_bundle is not None
+        else None
+    )
+    outcome, capabilities = _delivery_capabilities(version, source_bundle)
+    return PreviewView(
+        app_spec=AppSpec.model_validate(version.app_spec),
+        source_bundle=source_bundle,
+        delivery_outcome=outcome,
+        runtime_capabilities=capabilities,
+    )
+
+
+@router.get("/previews/{version_id}", response_model=PreviewView)
 def preview(
     version_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> AppSpec:
+) -> PreviewView:
     version = db.scalar(
         select(ProjectVersion)
         .join(Project, Project.id == ProjectVersion.project_id)
@@ -2796,7 +2820,14 @@ def preview(
     )
     if version is None:
         raise AppError("VERSION_NOT_FOUND", "Preview version was not found", 404)
-    return AppSpec.model_validate(version.app_spec)
+    view = _preview_view(version)
+    if not view.runtime_capabilities.preview:
+        raise AppError(
+            "PREVIEW_NOT_SUPPORTED",
+            "This source version has no Runtime Adapter with Preview capability",
+            409,
+        )
+    return view
 
 
 @router.post("/projects/{project_id}/revisions", response_model=VersionView)
@@ -2832,7 +2863,13 @@ def revise_project(
     db.commit()
     try:
         project = _owned_project(db, project_id, user.id)
+        current_bundle = (
+            SourceBundle.model_validate(current.source_bundle)
+            if current.source_bundle is not None
+            else None
+        )
         app_spec = AppSpec.model_validate(current.app_spec)
+        previous_app_spec = app_spec
         updates = revision.model_dump(exclude_none=True)
         if not updates:
             raise AppError("EMPTY_REVISION", "Provide at least one field to update", 422)
@@ -2852,12 +2889,38 @@ def revise_project(
                 )
             updates.update({"html": html, "css": css})
         app_spec = AppSpec.model_validate(app_spec.model_copy(update=updates))
+        candidate_bundle: SourceBundle | None = None
+        if current_bundle is not None and current_bundle.schema_version == "2.0":
+            replacements: dict[str, str] = {}
+            replace_pairs = [
+                (getattr(previous_app_spec, field), getattr(app_spec, field))
+                for field in ("hero_title", "hero_body", "primary_color")
+                if field in updates
+            ]
+            for source_file in current_bundle.files:
+                if source_file.path == "app-spec.json":
+                    replacements[source_file.path] = (
+                        json.dumps(
+                            app_spec.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n"
+                    )
+                    continue
+                content = source_file.content
+                for before, after in replace_pairs:
+                    content = content.replace(before, after)
+                if content != source_file.content:
+                    replacements[source_file.path] = content
+            candidate_bundle = replace_source_bundle_contents(current_bundle, replacements)
         executed = _execute_version_candidate(
             db,
             current,
             app_spec,
             project.prompt,
             f"revision-{uuid4()}",
+            source_bundle_override=candidate_bundle,
         )
         if executed is None:
             blueprint, architecture_spec = _validation_contracts(db, current.run_id)
@@ -2917,9 +2980,7 @@ def revise_project(
             version.version_number,
             VersionSource.EDIT,
             app_spec,
-            SourceBundle.model_validate(source_bundle_payload)
-            if source_bundle_payload
-            else None,
+            SourceBundle.model_validate(source_bundle_payload) if source_bundle_payload else None,
         )
         project.latest_version_id = version.id
         db.execute(
@@ -2958,9 +3019,7 @@ def restore_version(
     user: User = Depends(get_current_user),
 ) -> VersionView:
     project = _owned_project(db, project_id, user.id)
-    operation_id, expected_latest_version_id = _claim_restore_write(
-        db, project, user.id
-    )
+    operation_id, expected_latest_version_id = _claim_restore_write(db, project, user.id)
     try:
         source_version = db.scalar(
             select(ProjectVersion).where(
@@ -3004,9 +3063,7 @@ def restore_last_usable_version(
     user: User = Depends(get_current_user),
 ) -> VersionView:
     project = _owned_project(db, project_id, user.id)
-    operation_id, expected_latest_version_id = _claim_restore_write(
-        db, project, user.id
-    )
+    operation_id, expected_latest_version_id = _claim_restore_write(db, project, user.id)
     try:
         versions = db.scalars(
             select(ProjectVersion)
@@ -3099,14 +3156,37 @@ def _validate_restore_candidate(
     db: Session,
     project: Project,
     source_version: ProjectVersion,
-) -> tuple[
-    AppSpec,
-    ValidationReport,
-    dict | None,
-    dict | None,
-    dict | None,
-] | None:
+) -> (
+    tuple[
+        AppSpec,
+        ValidationReport,
+        dict | None,
+        dict | None,
+        dict | None,
+    ]
+    | None
+):
     restored_app_spec = AppSpec.model_validate(source_version.app_spec)
+    stored_bundle = (
+        SourceBundle.model_validate(source_version.source_bundle)
+        if source_version.source_bundle is not None
+        else None
+    )
+    if (
+        stored_bundle is not None
+        and stored_bundle.schema_version == "2.0"
+        and stored_bundle.runtime_binding is None
+    ):
+        validation = validate_source_bundle(stored_bundle)
+        if not validation.passed:
+            return None
+        return (
+            restored_app_spec,
+            validation,
+            None,
+            source_version.build_artifact,
+            stored_bundle.model_dump(mode="json"),
+        )
     executed = _execute_version_candidate(
         db,
         source_version,
@@ -3194,9 +3274,7 @@ def _materialize_restore_version(
         restored.version_number,
         VersionSource.RESTORE,
         restored_app_spec,
-        SourceBundle.model_validate(source_bundle_payload)
-        if source_bundle_payload
-        else None,
+        SourceBundle.model_validate(source_bundle_payload) if source_bundle_payload else None,
     )
     latest_version_condition = (
         Project.latest_version_id == expected_latest_version_id
@@ -3246,11 +3324,11 @@ def _execute_version_candidate(
     app_spec: AppSpec,
     prompt: str,
     execution_id: str,
+    *,
+    source_bundle_override: SourceBundle | None = None,
 ) -> tuple[ExecutionResult, SourceBundle] | None:
     blueprint = _artifact_model(db, version.run_id, ArtifactType.BLUEPRINT, Blueprint)
-    product_spec = _artifact_model(
-        db, version.run_id, ArtifactType.PRODUCT_SPEC, ProductSpec
-    )
+    product_spec = _artifact_model(db, version.run_id, ArtifactType.PRODUCT_SPEC, ProductSpec)
     architecture_design = (
         ArchitectureDesign.model_validate(version.architecture_design)
         if version.architecture_design
@@ -3263,29 +3341,37 @@ def _execute_version_candidate(
     )
     if blueprint is None or product_spec is None or architecture_design is None:
         return None
-    existing_bundle = (
+    existing_bundle = source_bundle_override or (
         SourceBundle.model_validate(version.source_bundle)
         if version.source_bundle
         else _artifact_model(db, version.run_id, ArtifactType.SOURCE_BUNDLE, SourceBundle)
     )
     if existing_bundle is None:
         return None
-    unit_tests = [
-        SourceFileDraft.model_validate(
-            item.model_dump(mode="python", exclude={"content_hash"})
+    if existing_bundle.schema_version == "2.0":
+        if existing_bundle.runtime_binding is None:
+            return None
+        source_bundle = existing_bundle
+    else:
+        unit_tests = [
+            SourceFileDraft.model_validate(item.model_dump(mode="python", exclude={"content_hash"}))
+            for item in existing_bundle.files
+            if item.role == "test"
+        ]
+        source_bundle = create_source_bundle(
+            EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
+            blueprint.product_type,
         )
-        for item in existing_bundle.files
-        if item.role == "test"
-    ]
-    source_bundle = create_source_bundle(
-        EngineerOutput(app_spec=app_spec, unit_tests=unit_tests),
-        blueprint.product_type,
-    )
     request_payload = {
         "execution_id": execution_id,
         "run_id": version.run_id,
         "attempt": 1,
         "adapter_id": source_bundle.adapter_id,
+        "runtime_binding": (
+            source_bundle.runtime_binding.model_dump(mode="json")
+            if source_bundle.runtime_binding is not None
+            else None
+        ),
         "product_spec_hash": product_spec.content_hash,
         "architecture_design_hash": architecture_design.content_hash,
         "source_manifest_hash": source_bundle.manifest_hash,
@@ -3306,9 +3392,7 @@ def _execute_version_candidate(
         ).encode("utf-8")
     ).hexdigest()
     try:
-        _, result = execute_request(
-            ExecutionRequest(**request_payload, request_hash=request_hash)
-        )
+        _, result = execute_request(ExecutionRequest(**request_payload, request_hash=request_hash))
     except RuntimeExecutorError as exc:
         raise AppError("RUNTIME_EXECUTOR_UNAVAILABLE", str(exc), 503) from exc
     return result, source_bundle
@@ -3344,6 +3428,13 @@ def publish_project(
     )
     if version is None:
         raise AppError("VERSION_NOT_FOUND", "Publish version was not found", 404)
+    preview_view = _preview_view(version)
+    if not preview_view.runtime_capabilities.publish:
+        raise AppError(
+            "PUBLISH_NOT_SUPPORTED",
+            "This source version has no Runtime Adapter with Publish capability",
+            409,
+        )
     deployment = db.scalar(select(Deployment).where(Deployment.project_id == project.id))
     if deployment is None:
         deployment = Deployment(
@@ -3394,8 +3485,8 @@ def unpublish_project(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/public/{public_id}", response_model=AppSpec)
-def public_app(public_id: str, db: Session = Depends(get_db)) -> AppSpec:
+@router.get("/public/{public_id}", response_model=PreviewView)
+def public_app(public_id: str, db: Session = Depends(get_db)) -> PreviewView:
     deployment = db.scalar(
         select(Deployment).where(Deployment.public_id == public_id, Deployment.active.is_(True))
     )
@@ -3404,7 +3495,10 @@ def public_app(public_id: str, db: Session = Depends(get_db)) -> AppSpec:
     version = db.get(ProjectVersion, deployment.version_id)
     if version is None:
         raise AppError("VERSION_NOT_FOUND", "Published version is not available", 404)
-    return AppSpec.model_validate(version.app_spec)
+    view = _preview_view(version)
+    if not view.runtime_capabilities.preview:
+        raise AppError("PREVIEW_NOT_SUPPORTED", "Published Preview is unavailable", 409)
+    return view
 
 
 @router.get("/projects/{project_id}/export")
@@ -3693,9 +3787,7 @@ def save_project_sandbox(
             version.version_number,
             VersionSource.EDIT,
             app_spec,
-            SourceBundle.model_validate(source_bundle_payload)
-            if source_bundle_payload
-            else None,
+            SourceBundle.model_validate(source_bundle_payload) if source_bundle_payload else None,
         )
         project.latest_version_id = version.id
         db.execute(

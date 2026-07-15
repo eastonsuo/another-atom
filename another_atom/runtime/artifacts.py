@@ -7,10 +7,13 @@ from another_atom.contracts.schemas import (
     ArchitectureDesign,
     ArchitectureDesignDraft,
     EngineerOutput,
+    RuntimeContract,
     SourceBundle,
+    SourceEntrypoint,
     SourceFile,
 )
 from another_atom.repository.service import render_version_files
+from another_atom.runtime.contracts import runtime_binding, source_manifest_hash
 
 
 def content_hash(content: str) -> str:
@@ -117,38 +120,87 @@ def render_architecture_design(draft: ArchitectureDesignDraft) -> str:
 def create_source_bundle(
     output: EngineerOutput,
     project_type: str,
+    runtime_contract: RuntimeContract | None = None,
 ) -> SourceBundle:
-    rendered = render_version_files(output.app_spec)
+    legacy_compatibility = runtime_contract is None and not output.source_files
+    if output.source_files:
+        drafts = [*output.source_files, *output.unit_tests]
+        if not any(item.path == "app-spec.json" for item in drafts):
+            drafts.append(
+                SourceFile(
+                    path="app-spec.json",
+                    role="config",
+                    content=json.dumps(
+                        output.app_spec.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    + "\n",
+                    content_hash=content_hash(
+                        json.dumps(
+                            output.app_spec.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n"
+                    ),
+                )
+            )
+    else:
+        rendered = render_version_files(output.app_spec)
+        drafts = [
+            SourceFile(
+                path=path,
+                role="config" if path == "app-spec.json" else "source",
+                content=content,
+                content_hash=content_hash(content),
+            )
+            for path, content in sorted(rendered.items())
+        ]
+        drafts.extend(output.unit_tests)
     files: list[SourceFile] = []
-    for path, content in sorted(rendered.items()):
-        role = "config" if path == "app-spec.json" else "source"
-        files.append(
-            SourceFile(path=path, role=role, content=content, content_hash=content_hash(content))
-        )
-    for test in output.unit_tests:
+    for item in drafts:
+        if isinstance(item, SourceFile):
+            files.append(item)
+            continue
         files.append(
             SourceFile(
-                **test.model_dump(mode="python"),
-                content_hash=content_hash(test.content),
+                **item.model_dump(mode="python"),
+                content_hash=content_hash(item.content),
             )
         )
-    manifest_payload = [
-        {"path": item.path, "role": item.role, "content_hash": item.content_hash}
-        for item in sorted(files, key=lambda item: item.path)
-    ]
-    manifest_hash = content_hash(
-        json.dumps(manifest_payload, ensure_ascii=False, separators=(",", ":"))
-    )
-    return SourceBundle(
+    if legacy_compatibility:
+        bundle = SourceBundle(
+            project_type=project_type,
+            files=files,
+            manifest_hash="sha256:" + ("0" * 64),
+        )
+        return bundle.model_copy(update={"manifest_hash": source_manifest_hash(bundle)})
+    binding = runtime_binding(runtime_contract) if runtime_contract is not None else None
+    entrypoints = list(output.entrypoints)
+    if runtime_contract is not None and not entrypoints:
+        entrypoints = [
+            SourceEntrypoint(kind="application", path="index.html"),
+            SourceEntrypoint(kind="test", path=output.unit_tests[0].path),
+        ]
+    bundle = SourceBundle(
+        schema_version="2.0",
+        adapter_id=binding.contract_id if binding is not None else None,
         project_type=project_type,
+        entrypoint=None,
+        entrypoints=entrypoints,
+        runtime_binding=binding,
         files=files,
-        manifest_hash=manifest_hash,
+        manifest_hash="sha256:" + ("0" * 64),
     )
+    return bundle.model_copy(update={"manifest_hash": source_manifest_hash(bundle)})
 
 
 def create_source_bundle_from_files(
     candidate_files: dict[str, str],
     project_type: str,
+    runtime_contract: RuntimeContract | None = None,
+    entrypoints: list[SourceEntrypoint] | None = None,
 ) -> SourceBundle:
     files: list[SourceFile] = []
     for path, content in sorted(candidate_files.items()):
@@ -167,15 +219,55 @@ def create_source_bundle_from_files(
                 content_hash=content_hash(content),
             )
         )
-    manifest_payload = [
-        {"path": item.path, "role": item.role, "content_hash": item.content_hash}
-        for item in files
-    ]
-    manifest_hash = content_hash(
-        json.dumps(manifest_payload, ensure_ascii=False, separators=(",", ":"))
-    )
-    return SourceBundle(
+    binding = runtime_binding(runtime_contract) if runtime_contract is not None else None
+    resolved_entrypoints = list(entrypoints or [])
+    available_paths = {item.path for item in files}
+    test_paths = [item.path for item in files if item.role == "test"]
+    if resolved_entrypoints:
+        resolved_entrypoints = [
+            (
+                SourceEntrypoint(kind="test", path=test_paths[0])
+                if item.kind == "test" and item.path not in available_paths and test_paths
+                else item
+            )
+            for item in resolved_entrypoints
+        ]
+    if runtime_contract is not None and not resolved_entrypoints:
+        resolved_entrypoints = [SourceEntrypoint(kind="application", path="index.html")]
+        if test_paths:
+            resolved_entrypoints.append(SourceEntrypoint(kind="test", path=test_paths[0]))
+    bundle = SourceBundle(
+        schema_version="2.0",
+        adapter_id=binding.contract_id if binding is not None else None,
         project_type=project_type,
+        entrypoint=None,
+        entrypoints=resolved_entrypoints,
+        runtime_binding=binding,
         files=files,
-        manifest_hash=manifest_hash,
+        manifest_hash="sha256:" + ("0" * 64),
     )
+    return bundle.model_copy(update={"manifest_hash": source_manifest_hash(bundle)})
+
+
+def replace_source_bundle_contents(
+    bundle: SourceBundle,
+    replacements: dict[str, str],
+) -> SourceBundle:
+    """Return the same source contract with selected file contents replaced."""
+    known_paths = {item.path for item in bundle.files}
+    unknown_paths = sorted(set(replacements) - known_paths)
+    if unknown_paths:
+        raise ValueError(f"SourceBundle replacement paths do not exist: {', '.join(unknown_paths)}")
+    files = [
+        item.model_copy(
+            update={
+                "content": replacements[item.path],
+                "content_hash": content_hash(replacements[item.path]),
+            }
+        )
+        if item.path in replacements
+        else item
+        for item in bundle.files
+    ]
+    candidate = bundle.model_copy(update={"files": files})
+    return candidate.model_copy(update={"manifest_hash": source_manifest_hash(candidate)})
