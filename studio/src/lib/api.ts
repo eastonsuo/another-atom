@@ -156,6 +156,10 @@ export const api = {
     request<VersionView>(`/api/projects/${projectId}/restore/${versionId}`, {
       method: "POST",
     }),
+  restoreLastUsable: (projectId: string) =>
+    request<VersionView>(`/api/projects/${projectId}/restore-last-usable`, {
+      method: "POST",
+    }),
   publish: (projectId: string, versionId: string, strategy: string) =>
     request<DeploymentView>(`/api/projects/${projectId}/publish`, {
       method: "POST",

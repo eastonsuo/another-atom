@@ -54,3 +54,18 @@ def test_architecture_document_request_wins_over_background_file_refresh() -> No
     assert requested_effect.index("await refresh(requestedFilePath);") < requested_effect.index(
         "onRequestedFileOpened?.();"
     )
+
+
+def test_versions_are_project_tools_and_failed_runs_can_restore() -> None:
+    app_source = (ROOT / "studio/src/App.tsx").read_text(encoding="utf-8")
+    repository_source = (
+        ROOT / "studio/src/components/RepositoryPanel.tsx"
+    ).read_text(encoding="utf-8")
+    api_source = (ROOT / "studio/src/lib/api.ts").read_text(encoding="utf-8")
+
+    assert 'active === "versions"' in repository_source
+    assert 'copy(language, "Version history")' in repository_source
+    assert "await api.restore(run.project_id, version.id)" in repository_source
+    assert "await api.restoreLastUsable(run.project_id)" in app_source
+    assert '"Return to last usable version"' in app_source
+    assert "/restore-last-usable" in api_source

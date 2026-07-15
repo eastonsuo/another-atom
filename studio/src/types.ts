@@ -1,6 +1,6 @@
 export type Mode = "engineer" | "team";
 export type SupportLevel = "supported" | "adapted" | "unsupported";
-export type WorkspaceTab = "preview" | "edit" | "code" | "versions";
+export type WorkspaceTab = "preview" | "edit" | "code";
 
 export interface AttachmentMeta {
   name: string;
@@ -156,6 +156,7 @@ export interface RunEvent {
 export interface VersionView {
   id: string;
   project_id: string;
+  run_id: string;
   number: number;
   source: string;
   summary: string;

@@ -398,6 +398,14 @@ body.resizing-tool-panel { cursor: ew-resize; user-select: none; }
 .repository-viewer > p { margin: 12px; color: #d2cada; font-size: 10px; line-height: 1.5; }
 .repository-viewer > .repository-error { margin: 0; padding: 8px 10px; border-bottom: 1px solid #a94f59; background: #7d3944; color: #fff; }
 .repository-viewer > .repository-saved { margin: 0; padding: 6px 10px; border-bottom: 1px solid #397c64; background: #275d4b; color: #d9ffef; }.repository-saved code { color: inherit; font-weight: 900; }
+.version-history-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; background: #f7f3ff; overflow: hidden; }
+.version-history-panel > .repository-error { z-index: 2; margin: 0; padding: 9px 11px; border-bottom: 2px solid var(--ink); background: #7d3944; color: #fff; font-size: 10px; }
+.version-history-list { flex: 1; min-height: 0; padding: 12px; overflow-y: auto; }
+.version-history-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 68px; padding: 10px 8px; border-bottom: 1px dashed #bcb3cb; }
+.version-history-row.current { border: 1.5px solid var(--ink); border-radius: 6px; background: #fff7c8; box-shadow: 2px 2px 0 var(--ink); }
+.version-history-number { width: 38px; min-height: 30px; display: grid; place-items: center; border: 1.5px solid var(--ink); border-radius: 4px; background: var(--yellow); font: 800 10px "Fredoka", sans-serif; }
+.version-history-row > div { min-width: 0; }.version-history-row strong, .version-history-row small { display: block; }.version-history-row strong { font-size: 11px; }.version-history-row small { margin-top: 4px; overflow: hidden; color: #777080; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.version-history-row > b { color: #28765d; font-size: 9px; }.version-history-row > button { min-height: 30px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1.5px solid var(--ink); border-radius: 4px; background: #fff; box-shadow: 1px 1px 0 var(--ink); font-size: 9px; font-weight: 900; cursor: pointer; }.version-history-row > button:disabled { opacity: .5; cursor: wait; box-shadow: none; }
 .markdown-preview { flex: 1; min-height: 0; padding: 18px; overflow: auto; background: #fffdf7; color: #2c2834; font: 11px/1.7 "DM Sans", sans-serif; text-align: left; }
 .markdown-preview h1, .markdown-preview h2, .markdown-preview h3, .markdown-preview h4 { margin: 1.1em 0 .5em; font-family: "Fredoka", sans-serif; line-height: 1.2; }.markdown-preview h1:first-child { margin-top: 0; }.markdown-preview h1 { font-size: 24px; }.markdown-preview h2 { padding-bottom: 5px; border-bottom: 2px solid #e1d8f1; font-size: 18px; }.markdown-preview h3 { font-size: 15px; }.markdown-preview p, .markdown-preview ul { margin: .7em 0; }.markdown-preview ul { padding-left: 20px; }.markdown-preview a { color: #6648c8; font-weight: 800; }.markdown-preview code { padding: 1px 4px; border-radius: 3px; background: #eee8ff; color: #3b3156; font: 10px/1.5 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; }.markdown-preview pre { margin: 12px 0; padding: 10px; border-radius: 5px; background: #211e2b; overflow: auto; }.markdown-preview pre code { padding: 0; background: transparent; color: #f6f1ff; }
 .repository-editor { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: #211e2b; }
@@ -428,6 +436,7 @@ body.resizing-tool-panel { cursor: ew-resize; user-select: none; }
 .validation-failures > div { display: flex; align-items: flex-start; gap: 7px; padding: 7px 0; border-top: 1px dashed #d8cba5; color: #5e5546; font-size: 11px; line-height: 1.45; }
 .validation-failures svg { flex: 0 0 auto; margin-top: 1px; color: var(--coral); }
 .failed-state .primary-action { margin-top: 18px; }
+.failed-recovery-actions { width: min(620px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 18px; }.failed-recovery-actions .primary-action, .failed-recovery-actions .secondary-action { min-height: 46px; justify-content: center; margin: 0; }.failed-recovery-actions .primary-action:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 .failed-state > small { margin-top: 9px; color: #777169; font-size: 10px; }
 
 .result-toolbar { height: 54px; flex-basis: 54px; border-bottom: 2px solid var(--ink); background: #fff7df; }
@@ -506,6 +515,7 @@ body.resizing-tool-panel { cursor: ew-resize; user-select: none; }
   .workspace-tools { max-height: none; }.workspace-tool-content { min-height: 520px; }.repository-panel { grid-template-rows: auto 220px 300px; }
   .scope-actions { grid-template-columns: 1fr; }
   .project-chat-panel form { grid-template-columns: 1fr; }.project-chat-panel .primary-action { width: 100%; }
+  .failed-recovery-actions { grid-template-columns: 1fr; }
   .timeline-item { grid-template-columns: 38px 1fr; min-width: 128px; }
   .blueprint-heading { grid-template-columns: 58px 1fr; }
   .blueprint-heading .support-badge { grid-column: 2; width: max-content; margin-top: 10px; }

@@ -99,6 +99,11 @@ def test_build_failure_has_no_false_progress_or_version(client: TestClient) -> N
     assert run["error_code"] == "BUILD_VALIDATION_FAILED"
     assert run["version_id"] is None
     assert client.get(f"/api/projects/{run['project_id']}/versions").json() == []
+    restore = client.post(
+        f"/api/projects/{run['project_id']}/restore-last-usable"
+    )
+    assert restore.status_code == 409
+    assert restore.json()["code"] == "NO_USABLE_VERSION"
     events = client.get(f"/api/runs/{run['run_id']}/events/history").json()
     assert "repair.started" not in [event["type"] for event in events]
 
@@ -210,6 +215,19 @@ def test_cross_user_project_access_is_denied(client: TestClient) -> None:
         {"X-User-ID": "user-a"},
     )
     response = client.get(f"/api/projects/{created['project_id']}", headers={"X-User-ID": "user-b"})
+    assert response.status_code == 404
+
+
+def test_cross_user_last_usable_restore_is_denied(client: TestClient) -> None:
+    created = _create_run(
+        client,
+        {"prompt": "Build a product catalog", "mode": "team"},
+        {"X-User-ID": "user-a"},
+    )
+    response = client.post(
+        f"/api/projects/{created['project_id']}/restore-last-usable",
+        headers={"X-User-ID": "user-b"},
+    )
     assert response.status_code == 404
 
 

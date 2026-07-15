@@ -841,6 +841,7 @@ class EventView(BaseModel):
 class VersionView(BaseModel):
     id: str
     project_id: str
+    run_id: str
     number: int
     source: VersionSource
     summary: str

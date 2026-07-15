@@ -2773,6 +2773,7 @@ def _version_view(version: ProjectVersion) -> VersionView:
     return VersionView(
         id=version.id,
         project_id=version.project_id,
+        run_id=version.run_id,
         number=version.version_number,
         source=VersionSource(version.source),
         summary=f"{version.source.title()} version {version.version_number}",
@@ -2957,26 +2958,161 @@ def restore_version(
     user: User = Depends(get_current_user),
 ) -> VersionView:
     project = _owned_project(db, project_id, user.id)
-    if project.active_write_run_id:
+    operation_id, expected_latest_version_id = _claim_restore_write(
+        db, project, user.id
+    )
+    try:
+        source_version = db.scalar(
+            select(ProjectVersion).where(
+                ProjectVersion.id == version_id,
+                ProjectVersion.project_id == project.id,
+            )
+        )
+        if source_version is None:
+            raise AppError("VERSION_NOT_FOUND", "Restore version was not found", 404)
+        try:
+            candidate = _validate_restore_candidate(db, project, source_version)
+        except ValueError as exc:
+            raise AppError(
+                "RESTORE_VALIDATION_FAILED",
+                "The selected version does not contain a valid application contract",
+                422,
+            ) from exc
+        if candidate is None:
+            raise AppError(
+                "RESTORE_VALIDATION_FAILED",
+                "The selected version is not usable under the current validation rules",
+                422,
+            )
+        return _materialize_restore_version(
+            db,
+            project,
+            source_version,
+            candidate,
+            operation_id,
+            expected_latest_version_id,
+        )
+    except Exception:
+        _release_restore_write(db, project.id, operation_id)
+        raise
+
+
+@router.post("/projects/{project_id}/restore-last-usable", response_model=VersionView)
+def restore_last_usable_version(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> VersionView:
+    project = _owned_project(db, project_id, user.id)
+    operation_id, expected_latest_version_id = _claim_restore_write(
+        db, project, user.id
+    )
+    try:
+        versions = db.scalars(
+            select(ProjectVersion)
+            .where(ProjectVersion.project_id == project.id)
+            .order_by(ProjectVersion.version_number.desc())
+        ).all()
+        for source_version in versions:
+            if not _stored_version_passed_validation(source_version):
+                continue
+            try:
+                candidate = _validate_restore_candidate(db, project, source_version)
+            except ValueError:
+                continue
+            if candidate is None:
+                continue
+            return _materialize_restore_version(
+                db,
+                project,
+                source_version,
+                candidate,
+                operation_id,
+                expected_latest_version_id,
+            )
+        raise AppError(
+            "NO_USABLE_VERSION",
+            "No Project version is usable under the current validation rules",
+            409,
+        )
+    except Exception:
+        _release_restore_write(db, project.id, operation_id)
+        raise
+
+
+def _claim_restore_write(
+    db: Session,
+    project: Project,
+    user_id: str,
+) -> tuple[str, str | None]:
+    operation_id = f"restore-{uuid4()}"
+    expected_latest_version_id = project.latest_version_id
+    latest_version_condition = (
+        Project.latest_version_id == expected_latest_version_id
+        if expected_latest_version_id is not None
+        else Project.latest_version_id.is_(None)
+    )
+    claimed = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            Project.user_id == user_id,
+            latest_version_condition,
+            Project.active_write_run_id.is_(None),
+        )
+        .values(active_write_run_id=operation_id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
         raise AppError(
             "PROJECT_WRITE_BUSY",
             "Wait for the active Project change before restoring a version",
             409,
         )
-    source_version = db.scalar(
-        select(ProjectVersion).where(
-            ProjectVersion.id == version_id, ProjectVersion.project_id == project.id
+    db.commit()
+    return operation_id, expected_latest_version_id
+
+
+def _release_restore_write(db: Session, project_id: str, operation_id: str) -> None:
+    db.rollback()
+    db.execute(
+        update(Project)
+        .where(
+            Project.id == project_id,
+            Project.active_write_run_id == operation_id,
         )
+        .values(active_write_run_id=None)
+        .execution_options(synchronize_session=False)
     )
-    if source_version is None:
-        raise AppError("VERSION_NOT_FOUND", "Restore version was not found", 404)
+    db.commit()
+
+
+def _stored_version_passed_validation(version: ProjectVersion) -> bool:
+    try:
+        return ValidationReport.model_validate(version.validation_report).passed
+    except (TypeError, ValueError):
+        return False
+
+
+def _validate_restore_candidate(
+    db: Session,
+    project: Project,
+    source_version: ProjectVersion,
+) -> tuple[
+    AppSpec,
+    ValidationReport,
+    dict | None,
+    dict | None,
+    dict | None,
+] | None:
     restored_app_spec = AppSpec.model_validate(source_version.app_spec)
     executed = _execute_version_candidate(
         db,
         source_version,
         restored_app_spec,
         project.prompt,
-        f"restore-{uuid4()}",
+        f"restore-validation-{uuid4()}",
     )
     if executed is None:
         blueprint, architecture_spec = _validation_contracts(db, source_version.run_id)
@@ -3000,7 +3136,37 @@ def restore_version(
         )
         source_bundle_payload = source_bundle.model_dump(mode="json")
     if not validation.passed:
-        raise AppError("RESTORE_VALIDATION_FAILED", "The selected version failed validation", 422)
+        return None
+    return (
+        restored_app_spec,
+        validation,
+        execution_report,
+        build_artifact,
+        source_bundle_payload,
+    )
+
+
+def _materialize_restore_version(
+    db: Session,
+    project: Project,
+    source_version: ProjectVersion,
+    candidate: tuple[
+        AppSpec,
+        ValidationReport,
+        dict | None,
+        dict | None,
+        dict | None,
+    ],
+    operation_id: str,
+    expected_latest_version_id: str | None,
+) -> VersionView:
+    (
+        restored_app_spec,
+        validation,
+        execution_report,
+        build_artifact,
+        source_bundle_payload,
+    ) = candidate
     latest_number = db.scalar(
         select(func.max(ProjectVersion.version_number)).where(
             ProjectVersion.project_id == project.id
@@ -3011,7 +3177,7 @@ def restore_version(
         run_id=source_version.run_id,
         version_number=(latest_number or 0) + 1,
         source=VersionSource.RESTORE.value,
-        app_spec=source_version.app_spec,
+        app_spec=restored_app_spec.model_dump(mode="json"),
         architecture_design=source_version.architecture_design,
         source_bundle=source_bundle_payload,
         execution_report=execution_report,
@@ -3032,7 +3198,27 @@ def restore_version(
         if source_bundle_payload
         else None,
     )
-    project.latest_version_id = restored.id
+    latest_version_condition = (
+        Project.latest_version_id == expected_latest_version_id
+        if expected_latest_version_id is not None
+        else Project.latest_version_id.is_(None)
+    )
+    updated = db.execute(
+        update(Project)
+        .where(
+            Project.id == project.id,
+            latest_version_condition,
+            Project.active_write_run_id == operation_id,
+        )
+        .values(latest_version_id=restored.id, active_write_run_id=None)
+        .execution_options(synchronize_session=False)
+    )
+    if updated.rowcount != 1:
+        raise AppError(
+            "BASE_VERSION_CHANGED",
+            "The Project version changed before the restore could be saved",
+            409,
+        )
     _record_project_event(
         db,
         project.id,

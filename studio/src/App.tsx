@@ -7,7 +7,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  History,
   Layers3,
   LoaderCircle,
   LogOut,
@@ -240,6 +239,11 @@ const ZH: Record<string, string> = {
   "Failed validation checks": "未通过的校验项",
   "Retry with saved request": "使用已保存需求重新构建",
   "Retrying creates a new Run and preserves this failure record.": "重新构建会创建新任务，并保留本次失败记录。",
+  "Return to last usable version": "回到上个可用版本",
+  "Restoring usable version": "正在恢复可用版本",
+  "Restore creates a new version number and keeps this failure record.": "恢复会创建新的版本号，并保留本次失败记录。",
+  "This Project does not have a usable version yet.": "当前项目还没有可用版本。",
+  "Could not restore the version": "无法恢复版本",
   "Failure recorded": "失败已记录",
   "Build is moving": "构建进行中",
   "The run has started and is waiting for the next persisted event.": "任务已启动，正在等待下一条持久化事件。",
@@ -1333,7 +1337,7 @@ function Workspace({
           <ScopeStop blueprint={effectiveBlueprint} events={events} run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
         ) : run.status === "failed" ? (
           <div className="failed-project-view">
-            <FailedState run={run} setRun={setRun} refreshShell={refreshShell} setError={setError} language={language} />
+            <FailedState run={run} setRun={setRun} versions={versions} setVersions={setVersions} setTab={setTab} refreshShell={refreshShell} refreshRun={refreshRun} setError={setError} language={language} />
           </div>
         ) : run.status === "cancelled" && run.error_code === "BASE_VERSION_CHANGED" ? (
           <div className="failed-project-view">
@@ -1360,7 +1364,28 @@ function Workspace({
           </div>
         )}
       </section>
-      <RepositoryPanel run={run} events={events} language={language} sandboxAvailable={sandboxAvailable} logPanel={<RunLogPanel run={run} events={events} language={language} />} requestedFilePath={requestedFilePath} onRequestedFileOpened={() => setRequestedFilePath(null)} onError={setError} onVersionSaved={async (version) => { setVersions([version, ...versions]); await refreshRun(run.run_id); await refreshShell(); }} />
+      <RepositoryPanel
+        run={run}
+        events={events}
+        versions={versions}
+        language={language}
+        sandboxAvailable={sandboxAvailable}
+        logPanel={<RunLogPanel run={run} events={events} language={language} />}
+        requestedFilePath={requestedFilePath}
+        onRequestedFileOpened={() => setRequestedFilePath(null)}
+        onError={setError}
+        onVersionSaved={async (version) => {
+          setVersions([version, ...versions]);
+          await refreshRun(run.run_id);
+          await refreshShell();
+        }}
+        onVersionRestored={async (version) => {
+          setVersions([version, ...versions]);
+          await refreshRun(version.run_id);
+          await refreshShell();
+          setTab("preview");
+        }}
+      />
     </div>
   );
 }
@@ -1574,11 +1599,24 @@ function StaleClarificationState({ language }: { language: Language }) {
   </div>;
 }
 
-function FailedState({ run, setRun, refreshShell, setError, language }: { run: RunView; setRun: (run: RunView) => void; refreshShell: () => Promise<void>; setError: (error: string) => void; language: Language }) {
+interface FailedStateProps {
+  run: RunView;
+  setRun: (run: RunView) => void;
+  versions: VersionView[];
+  setVersions: (versions: VersionView[]) => void;
+  setTab: (tab: WorkspaceTab) => void;
+  refreshShell: () => Promise<void>;
+  refreshRun: (runId: string) => Promise<RunView>;
+  setError: (error: string) => void;
+  language: Language;
+}
+
+function FailedState({ run, setRun, versions, setVersions, setTab, refreshShell, refreshRun, setError, language }: FailedStateProps) {
   const [retrying, setRetrying] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const failedChecks = run.validation_report?.checks.filter((check) => check.status === "fail") ?? [];
   const retry = async () => {
-    if (retrying) return;
+    if (retrying || restoring) return;
     setRetrying(true);
     setError("");
     try {
@@ -1591,6 +1629,22 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
       setRetrying(false);
     }
   };
+  const restoreLastUsable = async () => {
+    if (retrying || restoring || versions.length === 0) return;
+    setRestoring(true);
+    setError("");
+    try {
+      const restored = await api.restoreLastUsable(run.project_id);
+      setVersions([restored, ...versions]);
+      await refreshRun(restored.run_id);
+      await refreshShell();
+      setTab("preview");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : ui(language, "Could not restore the version"));
+    } finally {
+      setRestoring(false);
+    }
+  };
   return <div className="center-state failed-state">
     <span className="state-icon error"><X /></span>
     <h1>{ui(language, "Run stopped")}</h1>
@@ -1601,8 +1655,11 @@ function FailedState({ run, setRun, refreshShell, setError, language }: { run: R
     </div>}
     <code>{run.error_code}</code>
     <span>{ui(language, "Your project and original request are still saved.")}</span>
-    <button className="primary-action" disabled={retrying || !run.prompt} onClick={retry}>{retrying ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, "Retry with saved request")}</button>
-    <small>{ui(language, "Retrying creates a new Run and preserves this failure record.")}</small>
+    <div className="failed-recovery-actions">
+      <button className="primary-action" disabled={retrying || restoring || !run.prompt} onClick={retry}>{retrying ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, "Retry with saved request")}</button>
+      <button className="secondary-action" disabled={retrying || restoring || versions.length === 0} onClick={restoreLastUsable}>{restoring ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />} {ui(language, restoring ? "Restoring usable version" : "Return to last usable version")}</button>
+    </div>
+    <small>{versions.length > 0 ? ui(language, "Restore creates a new version number and keeps this failure record.") : ui(language, "This Project does not have a usable version yet.")}</small>
   </div>;
 }
 
@@ -1708,7 +1765,7 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   };
   return <div className="result-view">
     <div className="result-toolbar">
-      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button><button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button><button className={tab === "versions" ? "active" : ""} onClick={() => setTab("versions")}><History size={15} /> {ui(language, "Versions")}</button></div>
+      <div className="result-tabs"><button className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}><Monitor size={15} /> {ui(language, "Preview")}</button><button className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}><Code2 size={15} /> {ui(language, "Edit")}</button></div>
       <div className="toolbar-actions">
         {tab === "preview" && <div className="device-switch"><button className={device === "desktop" ? "active" : ""} onClick={() => setDevice("desktop")} aria-label={ui(language, "Desktop preview")} title={ui(language, "Desktop preview")}><Monitor size={16} /></button><button className={device === "mobile" ? "active" : ""} onClick={() => setDevice("mobile")} aria-label={ui(language, "Mobile preview")} title={ui(language, "Mobile preview")}><Smartphone size={16} /></button></div>}
         <button className="publish-button" onClick={publish} disabled={publishing}>{publishing ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} {ui(language, "Publish")}</button>
@@ -1717,7 +1774,6 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
     {deploymentUrl && <div className="published-banner"><Check size={16} /><span>{ui(language, "Published successfully")}</span><a href={deploymentUrl} target="_blank" rel="noreferrer">{ui(language, "Open public app")} <ExternalLink size={14} /></a></div>}
     {tab === "preview" && current && <div className="preview-stage"><div className={device === "mobile" ? "preview-frame mobile" : "preview-frame"}><iframe key={`${current.id}-${previewKey}`} src={`/preview/${current.id}`} title={ui(language, "Generated application preview")} /></div></div>}
     {tab === "edit" && <div className="edit-panel"><div className="content-heading"><div><span>{ui(language, "Structured edit")}</span><h1>{ui(language, "Refine the current version")}</h1><p>{ui(language, "Saving creates a new ProjectVersion and keeps the original.")}</p></div></div><label>{ui(language, "Hero title")}<input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label>{ui(language, "Hero body")}<textarea value={body} onChange={(e) => setBody(e.target.value)} /></label><label>{ui(language, "Primary color")}<div className="color-input"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /><input value={color} onChange={(e) => setColor(e.target.value)} /></div></label><button className="primary-action" onClick={save}><Check size={16} /> {ui(language, "Save as new version")}</button></div>}
-    {tab === "versions" && <div className="versions-panel"><div className="content-heading"><div><span>{ui(language, "Project history")}</span><h1>{ui(language, "Versions")}</h1><p>{ui(language, "Restore always creates a new version; history is never overwritten.")}</p></div></div>{versions.map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.number}</span><div><strong>{version.summary}</strong><small>{new Date(version.created_at).toLocaleString()}</small></div>{version.id === run.version_id ? <b>{ui(language, "Current")}</b> : <button onClick={async () => { const restored = await api.restore(run.project_id, version.id); setVersions([restored, ...versions]); await refreshRun(run.run_id); }}>{ui(language, "Restore")}</button>}</div>)}</div>}
   </div>;
 }
 

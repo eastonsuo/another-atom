@@ -1,4 +1,4 @@
-import { Bug, Code2, Eye, FileJson, FileText, FolderGit2, GripVertical, LoaderCircle, Maximize2, Minimize2, Pencil, Redo2, RefreshCw, Save, TerminalSquare, Undo2, X } from "lucide-react";
+import { Bug, Code2, Eye, FileJson, FileText, FolderGit2, GripVertical, History, LoaderCircle, Maximize2, Minimize2, Pencil, Redo2, RefreshCw, RotateCcw, Save, TerminalSquare, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import type { ProjectFileContent, ProjectFileEntry, RunEvent, RunView, VersionView } from "../types";
@@ -7,13 +7,28 @@ import { TerminalPanel } from "./TerminalPanel";
 
 type Language = "zh" | "en";
 type ViewMode = "preview" | "source" | "edit";
+type Tool = "files" | "terminal" | "logs" | "versions";
+
+interface RepositoryPanelProps {
+  run: RunView;
+  events: RunEvent[];
+  versions: VersionView[];
+  language: Language;
+  sandboxAvailable: boolean;
+  logPanel: ReactNode;
+  requestedFilePath?: string | null;
+  onRequestedFileOpened?: () => void;
+  onVersionSaved: (version: VersionView) => void;
+  onVersionRestored: (version: VersionView) => Promise<void>;
+  onError: (message: string) => void;
+}
 
 const TOOL_PANEL_WIDTH_KEY = "another-atom-tool-panel-width";
 const DEFAULT_TOOL_PANEL_WIDTH = 368;
 const MIN_TOOL_PANEL_WIDTH = 320;
 
-export function RepositoryPanel({ run, events, language, sandboxAvailable, logPanel, requestedFilePath, onRequestedFileOpened, onVersionSaved, onError }: { run: RunView; events: RunEvent[]; language: Language; sandboxAvailable: boolean; logPanel: ReactNode; requestedFilePath?: string | null; onRequestedFileOpened?: () => void; onVersionSaved: (version: VersionView) => void; onError: (message: string) => void }) {
-  const [active, setActive] = useState<"files" | "terminal" | "logs" | null>(null);
+export function RepositoryPanel({ run, events, versions, language, sandboxAvailable, logPanel, requestedFilePath, onRequestedFileOpened, onVersionSaved, onVersionRestored, onError }: RepositoryPanelProps) {
+  const [active, setActive] = useState<Tool | null>(null);
   const [files, setFiles] = useState<ProjectFileEntry[]>([]);
   const [selected, setSelected] = useState<ProjectFileEntry | null>(null);
   const [fileContent, setFileContent] = useState<ProjectFileContent | null>(null);
@@ -23,6 +38,7 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
   const [mode, setMode] = useState<ViewMode>("source");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState("");
   const [error, setError] = useState("");
   const [savedCommit, setSavedCommit] = useState("");
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -204,10 +220,24 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
     setFullScreen(false);
     setActive(null);
   };
-  const activateTool = (tool: "files" | "terminal" | "logs") => {
+  const activateTool = (tool: Tool) => {
     if (active === tool) { closePanel(); return; }
     if (active === "files" && !confirmDiscard()) return;
     setActive(tool);
+  };
+  const restoreVersion = async (version: VersionView) => {
+    if (restoringVersionId) return;
+    if (!window.confirm(copy(language, "Restore this version as a new current version?"))) return;
+    setRestoringVersionId(version.id);
+    setError("");
+    try {
+      const restored = await api.restore(run.project_id, version.id);
+      await onVersionRestored(restored);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : copy(language, "Could not restore the version"));
+    } finally {
+      setRestoringVersionId("");
+    }
   };
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!active || fullScreen) return;
@@ -240,6 +270,7 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
       <button className={active === "files" ? "active" : ""} onClick={() => activateTool("files")} title={copy(language, "Project files")}><FolderGit2 size={17} /><span>{copy(language, "Files")}</span></button>
       <button className={active === "terminal" ? "active" : ""} disabled={!run.version_id} onClick={() => activateTool("terminal")} title={!sandboxAvailable ? copy(language, "Sandbox Host is not configured") : run.version_id ? copy(language, "Restricted Vim") : copy(language, "Build a version before opening Vim")}><TerminalSquare size={17} /><span>Vim</span></button>
       <button className={active === "logs" ? "active" : ""} onClick={() => activateTool("logs")} title={copy(language, "Run log")}><Bug size={17} /><span>{copy(language, "Logs")}</span>{events.length > 0 && <b>{events.length}</b>}</button>
+      <button className={active === "versions" ? "active" : ""} disabled={versions.length === 0} onClick={() => activateTool("versions")} title={versions.length > 0 ? copy(language, "Version history") : copy(language, "No usable versions yet")}><History size={17} /><span>{copy(language, "Versions")}</span>{versions.length > 0 && <b>{versions.length}</b>}</button>
     </div>
     {active && <div className="workspace-tool-content">
       <div className="workspace-tool-actions">
@@ -275,9 +306,29 @@ export function RepositoryPanel({ run, events, language, sandboxAvailable, logPa
           </div> : null}
           {!error && !fileContent ? <p>{copy(language, "No generated files yet")}</p> : null}
         </div>
-      </div> : active === "terminal" ? <div className="terminal-drawer">{sandboxAvailable ? <TerminalPanel projectId={run.project_id} language={language} onSaved={onVersionSaved} onError={onError} /> : <div className="sandbox-unavailable"><TerminalSquare size={28} /><strong>{copy(language, "Vim is not available")}</strong><p>{copy(language, "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.")}</p></div>}</div> : logPanel}
+      </div> : active === "versions" ? <VersionHistoryPanel versions={versions} currentVersionId={versions[0]?.id ?? null} restoringVersionId={restoringVersionId} error={error} language={language} onRestore={restoreVersion} /> : active === "terminal" ? <div className="terminal-drawer">{sandboxAvailable ? <TerminalPanel projectId={run.project_id} language={language} onSaved={onVersionSaved} onError={onError} /> : <div className="sandbox-unavailable"><TerminalSquare size={28} /><strong>{copy(language, "Vim is not available")}</strong><p>{copy(language, "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.")}</p></div>}</div> : logPanel}
     </div>}
   </aside>;
+}
+
+function VersionHistoryPanel({ versions, currentVersionId, restoringVersionId, error, language, onRestore }: { versions: VersionView[]; currentVersionId: string | null; restoringVersionId: string; error: string; language: Language; onRestore: (version: VersionView) => Promise<void> }) {
+  return <div className="version-history-panel">
+    <div className="repository-heading">
+      <div><History size={17} /><span><strong>{copy(language, "Version history")}</strong><small>{copy(language, "Restore creates a new version number")}</small></span></div>
+    </div>
+    {error && <p className="repository-error">{error}</p>}
+    <div className="version-history-list">
+      {versions.map((version) => {
+        const current = version.id === currentVersionId;
+        const restoring = restoringVersionId === version.id;
+        return <div className={current ? "version-history-row current" : "version-history-row"} key={version.id}>
+          <span className="version-history-number">v{version.number}</span>
+          <div><strong>{versionSourceLabel(language, version.source)}</strong><small>{new Date(version.created_at).toLocaleString(language === "zh" ? "zh-CN" : "en")}{version.git_commit ? ` · ${version.git_commit.slice(0, 8)}` : ""}</small></div>
+          {current ? <b>{copy(language, "Current")}</b> : <button disabled={Boolean(restoringVersionId)} onClick={() => void onRestore(version)}>{restoring ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{copy(language, restoring ? "Restoring" : "Restore")}</button>}
+        </div>;
+      })}
+    </div>
+  </div>;
 }
 
 function FileGroup({ title, files, selected, onOpen }: { title: string; files: ProjectFileEntry[]; selected: ProjectFileEntry | null; onOpen: (file: ProjectFileEntry) => Promise<unknown> }) {
@@ -293,6 +344,14 @@ function formatSize(bytes: number): string { return bytes < 1024 ? `${bytes} B` 
 function copy(language: Language, text: string): string {
   if (language === "en") return text;
   return {
-    "Project files": "项目文件", "Files": "文件", "Restricted Vim": "受限 Vim", "Build a version before opening Vim": "生成项目版本后才能打开 Vim", "Sandbox Host is not configured": "当前未配置 Sandbox Host，Vim 不可用", "Vim is not available": "当前无法打开 Vim", "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.": "需要先配置独立 Sandbox Host 才能使用受限编辑器；Control Plane 不会直接执行文件工具。", "Run log": "运行日志", "Logs": "日志", "Close panel": "关闭面板", "Resize panel": "拖动调整面板宽度", "Full screen": "全屏查看", "Exit full screen": "退出全屏", "Read and edit Project documents": "查看和编辑项目文档", "Refresh files": "刷新文件", "Project Repository": "项目代码库", "Generated Artifacts": "本次生成产物", "Read-only artifact": "只读产物", "Validated source": "受控源码", "Select a file": "选择文件查看内容", "No generated files yet": "暂时没有可查看的文件", "Could not list files": "无法获取文件列表", "Could not read file": "无法读取文件", "Could not save file": "无法保存文件", "Discard unsaved changes?": "当前文件有未保存修改，确定放弃吗？", "Preview": "预览", "Source": "源码", "Edit": "编辑", "File content": "文件内容", "Unsaved changes": "未保存", "No changes": "没有修改", "JSON is not valid": "JSON 格式不正确", "Undo": "撤销", "Redo": "重做", "Cancel": "取消", "Save": "保存", "Saving": "保存中", "Saved in commit": "已保存到提交",
+    "Project files": "项目文件", "Files": "文件", "Restricted Vim": "受限 Vim", "Build a version before opening Vim": "生成项目版本后才能打开 Vim", "Sandbox Host is not configured": "当前未配置 Sandbox Host，Vim 不可用", "Vim is not available": "当前无法打开 Vim", "Configure a separate Sandbox Host before opening the restricted editor. The Control Plane will not run file tools directly.": "需要先配置独立 Sandbox Host 才能使用受限编辑器；Control Plane 不会直接执行文件工具。", "Run log": "运行日志", "Logs": "日志", "Versions": "版本", "Version history": "版本历史", "No usable versions yet": "当前还没有可用版本", "Restore creates a new version number": "恢复会创建新的版本号", "Restore this version as a new current version?": "将这个版本恢复为新的当前版本？历史记录不会被覆盖。", "Could not restore the version": "无法恢复版本", "Current": "当前", "Restore": "恢复", "Restoring": "恢复中", "Close panel": "关闭面板", "Resize panel": "拖动调整面板宽度", "Full screen": "全屏查看", "Exit full screen": "退出全屏", "Read and edit Project documents": "查看和编辑项目文档", "Refresh files": "刷新文件", "Project Repository": "项目代码库", "Generated Artifacts": "本次生成产物", "Read-only artifact": "只读产物", "Validated source": "受控源码", "Select a file": "选择文件查看内容", "No generated files yet": "暂时没有可查看的文件", "Could not list files": "无法获取文件列表", "Could not read file": "无法读取文件", "Could not save file": "无法保存文件", "Discard unsaved changes?": "当前文件有未保存修改，确定放弃吗？", "Preview": "预览", "Source": "源码", "Edit": "编辑", "File content": "文件内容", "Unsaved changes": "未保存", "No changes": "没有修改", "JSON is not valid": "JSON 格式不正确", "Undo": "撤销", "Redo": "重做", "Cancel": "取消", "Save": "保存", "Saving": "保存中", "Saved in commit": "已保存到提交",
   }[text] ?? text;
+}
+
+function versionSourceLabel(language: Language, source: string): string {
+  const labels: Record<string, [string, string]> = {
+    build: ["构建", "Build"], ai_edit: ["AI 修改", "AI edit"], edit: ["编辑", "Edit"], resolve: ["修复", "Resolve"], restore: ["恢复", "Restore"],
+  };
+  const label = labels[source] ?? [source, source];
+  return language === "zh" ? label[0] : label[1];
 }
