@@ -132,3 +132,83 @@ V1 本项整改目标为：
 6. 增加按 Adapter 记录的一次通过率、Repair 后通过率、最终交付成功率和 Provider 内部失败率；在连续至少 100 个有效 Run 的窗口中，一次通过率达到 90% 以上后才能关闭本项可靠性发现。
 
 以上实现和部署证据补齐前，本 Review 继续保持`待办`。
+
+## 2026-07-16 Update：Engineer 与 Runtime 规范统一校准
+
+### 背景
+
+前一版 Update 将“固定 Runtime 管理外壳”列为提高一次通过率的首要措施。该表述只适用于明确接收 HTML Fragment 的特定 Web Adapter，不能成为 Another Atom 支持任意代码时的通用设计。若为了达到一次通过率目标而固定源码骨架、缩窄项目类型或强制所有项目进入 Web 形态，会直接违反项目的产品基线。
+
+本次校准覆盖 2026-07-15 Update 中“优先整改顺序”第 1 项，以及“修复与验收要求”第 2 项中把 Runtime 管理外壳视为通用约束的部分。其余关于 SourceBundle、候选版本、Provider 异常和局部 Repair 的发现继续成立。
+
+### 校准后的核心判断
+
+当前首要问题是 Engineer 的生成规范与 Runtime 的实际验收规范不统一，而不是 Runtime 校验整体过严：
+
+1. Engineer Prompt 和结构 Schema 没有完整表达 Runtime 后续使用的规则。
+2. 模型输出可以通过上游 Contract，却在 Packager 或 Runtime 中因另一套隐藏规则失败。
+3. Runtime 把“当前 Adapter 无法预览”与“项目源码生成失败”混成同一种失败。
+4. 部分 Web 形态规则被当成全局源码规则，反向限制了通用项目生成。
+
+因此，不应通过全面放松 Runtime 或固定代码模板来追求通过率。正确方向是建立同一个 Runtime Contract 作为 Engineer、确定性预检、Runtime Adapter 和 UI 共同使用的 Interface：Engineer 在生成前看到完整规则，预检按相同规则提前发现确定性错误，Runtime Adapter 只负责真实构建和执行，UI 根据同一结果语义展示可预览、仅源码可用或禁止执行。
+
+这里采用 `Runtime Contract` 而不是 `AdapterContract`：Contract 是位于通用 SourceBundle 与运行能力 seam 上的 Interface；具体 Web、Python 或其他 Runtime Adapter 是满足该 Interface 的实现。通用 SourceBundle 本身不服从任何单一 Adapter 的代码形态。
+
+### Runtime 校验的保留、收敛与降级
+
+Runtime 应对安全、源码完整性和真实执行结果保持严格，但不能对任意项目施加未声明的 Web 形态限制。
+
+必须继续阻断的项目包括：
+
+- 路径逃逸、越权文件写入、危险执行权限和 Sandbox 违规。
+- 文件清单、入口、基线 Hash 或可确定性解析的受控引用不完整。
+- 选择了某个 Runtime Adapter 后，不满足该 Adapter 已公开声明的必要输入。
+- 实际 Build/Test 失败，且这些检查属于当前项目明确声明的验收条件。
+
+必须改为 Adapter 专属、不能继续作为全局规则的项目包括：
+
+- 是否允许完整 `DOCTYPE/html/head/body` 文档。
+- 是否接收 HTML Fragment、完整 Document 或框架构建产物。
+- 是否允许内联 `<script>`、如何声明依赖和使用什么入口。
+- 是否必须存在 `index.html`、`styles.css` 或 `app.js`。
+
+应降级为 Warning 或能力状态的项目包括：
+
+- 当前没有匹配的 Preview Adapter。
+- 代码风格、可选 README、非验收条件的辅助测试和非阻断质量建议。
+- 源码有效但当前部署环境缺少对应工具链。
+
+### 结果语义必须拆开
+
+Runtime 和 Project 状态不应继续只有“成功/失败”两种结果。至少需要区分：
+
+1. `valid`：源码与已选择的 Runtime Adapter 均通过，可以生成版本并提供对应运行能力。
+2. `source_ready`：源码、文档和版本有效，但没有匹配 Adapter 或当前环境无法在线运行；不提供 Preview，不判定项目失败。
+3. `candidate_rejected`：本次候选的 Contract、Build 或 Test 未通过；保留最后可用版本和完整证据。
+4. `execution_blocked`：候选包含安全或权限问题，禁止执行；不得将其提升为可运行版本。
+
+Preview 是某个 Runtime Adapter 提供的能力，不是源码交付成立的前提。Preview 失败不能覆盖已经存在的可用 ProjectVersion，也不能把非 Web 项目改写为 Web 项目。
+
+### 90% 是质量目标，不是设计限制
+
+Engineer 候选一次通过率达到 90% 以上仍是 V1 的质量目标，但它只能用于衡量统一规范后的实际结果，不能参与决定产品支持哪些代码形态。
+
+明确禁止为了提高该指标而采取以下做法：
+
+- 缩小任意代码的产品范围，或在失败后把项目归为“不支持”以减少分母。
+- 强制模型使用少量固定模板、固定 HTML 外壳或固定文件名。
+- 放松安全、完整性、Build/Test 等必要门禁。
+- 把 Repair 后成功计入首次通过，或隐藏 Provider、解析和 Runtime 内部错误。
+
+通过率应按项目类型和 Runtime Contract 分组统计；能力识别必须在进入 Engineer 前完成并单独留痕。没有 Runtime Adapter 的项目以 `source_ready` 交付，不进入对应 Preview 通过率，但必须进入通用 Source Contract 成功率统计。90% 是否达到只能由真实有效 Run 证明，不能通过修改产品定义实现。
+
+### 修订后的处理要求
+
+1. 定义通用 Source Contract，允许表达任意目录、文件、项目类型、入口、依赖、测试和可选 Runtime 绑定；不得由 HTML/CSS/JavaScript 三字段反向定义源码。
+2. 定义版本化 Runtime Contract，并由 Engineer Prompt、确定性预检、Runtime Adapter 和 UI 共同读取，禁止各模块维护隐含且不一致的规则副本。
+3. `web-static-v1` 必须明确声明自己接收完整 HTML Document、HTML Fragment 或构建产物中的哪一种；若兼容多种模式，必须使用显式字段区分，不能继续复用含义模糊的 `html` 字段。
+4. Runtime Adapter 在隔离候选工作区消费源码，不得为了 Preview 修改 Repository 中的权威源码；候选通过后再原子生成 ProjectVersion。
+5. 将校验结果映射为 `valid`、`source_ready`、`candidate_rejected` 和 `execution_blocked`，并分别验证版本保留、错误证据和 UI 状态。
+6. 建立按项目类型与 Runtime Contract 分组的真实回归集，在不缩窄产品范围、不放松必要校验的前提下评估一次通过率。
+
+上述 Interface 和状态转换进入对应 V1 技术设计前，不应按 2026-07-15 Update 中“固定 Runtime 管理外壳”的通用方案开始实现。本 Review 继续保持`待办`。
