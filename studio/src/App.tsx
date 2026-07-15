@@ -1089,7 +1089,6 @@ function Studio() {
             error={error}
             setError={setError}
             sandboxAvailable={models?.sandbox_available ?? false}
-            visionEnabled={models?.vision_enabled ?? false}
             language={language}
           />
         )}
@@ -1264,22 +1263,21 @@ function Composer({
               </div>
             )}
             {imageAttachments.notice && <small className="attachment-notice">{imageAttachments.notice}</small>}
-            {imageAttachments.items.length > 0 && models && !models.vision_enabled && <small className="attachment-notice error">{language === "zh" ? "当前部署未配置视觉模型，不能发送图片" : "This deployment has no vision model configured"}</small>}
             <div className="composer-actions">
-              <label className="attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={17} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={addFiles} disabled={Boolean(models && !models.vision_enabled)} /></label>
+              <label className="attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={17} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={addFiles} /></label>
               <label className="model-select">
                 <Sparkles size={14} />
                 <select value={model} onChange={(event) => setModel(event.target.value)} aria-label={ui(language, "Language model")}>
                   {(models?.models ?? []).map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
                 </select>
               </label>
-              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting || Boolean(attachmentBlockReason) || Boolean(imageAttachments.items.length && models && !models.vision_enabled)} onClick={() => sendToLead()} aria-label={ui(language, "Send message")} title={attachmentBlockReason || ui(language, "Send message")}>
+              <button className="submit-prompt" disabled={!prompt.trim() || !model || submitting || Boolean(attachmentBlockReason)} onClick={() => sendToLead()} aria-label={ui(language, "Send message")} title={attachmentBlockReason || ui(language, "Send message")}>
                 {submitting ? <LoaderCircle className="spin" size={19} /> : <ArrowUp size={19} />}
               </button>
             </div>
           </div>
-          {error && <div className="inline-error"><CircleAlert size={16} /> {error}</div>}
           {lastLeadUserMessage && <div className="lead-user-message"><b>{language === "zh" ? "你" : "You"}</b><p>{lastLeadUserMessage.content}</p>{lastLeadUserMessage.attachments.length > 0 && <div className="message-attachments">{lastLeadUserMessage.attachments.map((attachment) => <a key={attachment.id} href={attachment.content_url} target="_blank" rel="noreferrer"><img src={attachment.content_url} alt={attachment.name} /><span>{attachment.name}</span></a>)}</div>}</div>}
+          {error && lastLeadUserMessage ? <div className="lead-reply error"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{language === "zh" ? "这条消息处理失败，请查看原因后重试。" : "This message could not be processed. Review the reason and retry."}</p><small>{error}</small></div></div> : error ? <div className="inline-error"><CircleAlert size={16} /> {error}</div> : null}
           {leadDecision?.image_context && <details className="lead-image-context image-context-detail"><summary>{language === "zh" ? "图片理解结果" : "Image understanding"}</summary><p>{leadDecision.image_context.combined_summary}</p>{leadDecision.image_context.observations.map((observation) => <div key={observation.attachment_id}><strong>{observation.summary}</strong>{observation.ocr_text.length > 0 && <small>{language === "zh" ? "识别文字：" : "OCR: "}{observation.ocr_text.join(" · ")}</small>}{observation.uncertainties.length > 0 && <small>{language === "zh" ? "不确定项：" : "Uncertainties: "}{observation.uncertainties.join(" · ")}</small>}</div>)}</details>}
           {leadDecision?.route === "direct" && <div className="lead-reply"><RoleAvatar role="leader" size="small" /><div><strong>{roleLabel(language, "leader")}</strong><p>{leadDecision.response}</p><small>{leadDecision.reason}</small></div><button onClick={() => sendToLead(true)}>{ui(language, "Call team")}</button></div>}
           {leadDecision?.route === "clarify" && (() => {
@@ -1365,7 +1363,6 @@ function Workspace({
   error,
   setError,
   sandboxAvailable,
-  visionEnabled,
   language,
 }: {
   run: RunView;
@@ -1382,7 +1379,6 @@ function Workspace({
   error: string;
   setError: (error: string) => void;
   sandboxAvailable: boolean;
-  visionEnabled: boolean;
   language: Language;
 }) {
   const [approving, setApproving] = useState(false);
@@ -1458,7 +1454,6 @@ function Workspace({
           refreshShell={refreshShell}
           refreshRun={refreshRun}
           setError={setError}
-          visionEnabled={visionEnabled}
           language={language}
           onReviseProductSpec={async (instruction) => {
             setRun({ ...run, status: "product_running", current_stage: "product_manager" });
@@ -1932,7 +1927,7 @@ function ResultWorkspace({ run, versions, setVersions, device, setDevice, tab, s
   </div>;
 }
 
-function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, visionEnabled, language, onReviseProductSpec }: { run: RunView; events: RunEvent[]; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (value: string) => void; visionEnabled: boolean; language: Language; onReviseProductSpec: (instruction: string) => Promise<void> }) {
+function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, language, onReviseProductSpec }: { run: RunView; events: RunEvent[]; refreshShell: () => Promise<void>; refreshRun: (id: string) => Promise<RunView>; setError: (value: string) => void; language: Language; onReviseProductSpec: (instruction: string) => Promise<void> }) {
   const draftKey = `another-atom:project-chat-draft:${run.project_id}`;
   const [changeMessage, setChangeMessage] = useState(() => window.localStorage.getItem(draftKey) ?? "");
   const [changeSubmitting, setChangeSubmitting] = useState(false);
@@ -2114,14 +2109,12 @@ function ProjectChatPanel({ run, events, refreshShell, refreshRun, setError, vis
     ? (language === "zh" ? "图片正在上传" : "Images are uploading")
     : imageAttachments.hasFailed
       ? (language === "zh" ? "请移除或重试上传失败的图片" : "Remove or retry failed images")
-      : imageAttachments.items.length > 0 && !visionEnabled
-        ? (language === "zh" ? "当前部署未配置可用的视觉模型，不能发送图片" : "This deployment has no usable vision model configured")
       : "";
   return <section className="project-chat-panel">
     <div className="project-chat-heading"><MessageCircle size={17} /><div><strong>{ui(language, "Project conversation")}</strong><small>{ui(language, "Ask about the Project or describe what you want to change.")}</small></div></div>
     {messagesError && <div className="inline-error"><CircleAlert size={15} /> {messagesError}</div>}
     {projectMessages.length > 0 && <div className="project-chat-history" ref={historyRef}>{projectMessages.slice(-30).map((message) => <ProjectChatMessageRow key={message.id} message={message} language={language} roleName={roleName} approvingProposalId={approvingProposalId} onApproveProposal={approveProposal} />)}</div>}
-    <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} onPaste={(event) => { if (isClarification || isProductSpecRevision || !visionEnabled) return; const images = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).flatMap((item) => item.getAsFile() ? [item.getAsFile() as File] : []); if (images.length) imageAttachments.addFiles(images); }} onKeyDown={(event) => { if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} rows={2} placeholder={inputHint} />{imageAttachments.items.length > 0 && <div className="attachment-row image-attachment-row">{imageAttachments.items.map((attachment) => <span className={`image-attachment-card ${attachment.status}`} key={attachment.localId}><img src={attachment.previewUrl} alt="" /><span><b>{attachment.file.name}</b><small>{attachment.status === "uploading" ? (language === "zh" ? "正在上传…" : "Uploading…") : attachment.status === "ready" ? (language === "zh" ? "已就绪" : "Ready") : attachment.error}</small></span>{attachment.status === "failed" && <button type="button" onClick={() => imageAttachments.retry(attachment.localId)}>{language === "zh" ? "重试" : "Retry"}</button>}<button type="button" onClick={() => imageAttachments.remove(attachment.localId)} aria-label={ui(language, "Remove attachment")}><X size={13} /></button></span>)}</div>}{!isClarification && !isProductSpecRevision && <label className={`attach-button project-attach-button${visionEnabled ? "" : " disabled"}`} title={visionEnabled ? ui(language, "Add reference attachments") : (language === "zh" ? "当前部署未配置视觉模型" : "No vision model is configured")}><Paperclip size={15} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple disabled={!visionEnabled} onChange={(event) => { imageAttachments.addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} /></label>}{!visionEnabled && !isClarification && !isProductSpecRevision && <small className="attachment-notice">{language === "zh" ? "图片理解需先配置 OLLAMA_VISION_MODEL" : "Configure OLLAMA_VISION_MODEL to enable image understanding"}</small>}{(imageAttachments.notice || attachmentBlockReason) && <small className="attachment-notice">{attachmentBlockReason || imageAttachments.notice}</small>}<small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend || Boolean(attachmentBlockReason)} title={!canSend ? inputHint : attachmentBlockReason || `${submitLabel}（Shift + Enter）`}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} <span>{submitLabel}</span><kbd>Shift + Enter</kbd></button></form>
+    <form onSubmit={submitChange}><div className="project-chat-composer"><textarea value={changeMessage} onChange={(event) => setChangeMessage(event.target.value)} onPaste={(event) => { if (isClarification || isProductSpecRevision) return; const images = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).flatMap((item) => item.getAsFile() ? [item.getAsFile() as File] : []); if (images.length) imageAttachments.addFiles(images); }} onKeyDown={(event) => { if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} rows={2} placeholder={inputHint} />{imageAttachments.items.length > 0 && <div className="attachment-row image-attachment-row">{imageAttachments.items.map((attachment) => <span className={`image-attachment-card ${attachment.status}`} key={attachment.localId}><img src={attachment.previewUrl} alt="" /><span><b>{attachment.file.name}</b><small>{attachment.status === "uploading" ? (language === "zh" ? "正在上传…" : "Uploading…") : attachment.status === "ready" ? (language === "zh" ? "已就绪" : "Ready") : attachment.error}</small></span>{attachment.status === "failed" && <button type="button" onClick={() => imageAttachments.retry(attachment.localId)}>{language === "zh" ? "重试" : "Retry"}</button>}<button type="button" onClick={() => imageAttachments.remove(attachment.localId)} aria-label={ui(language, "Remove attachment")}><X size={13} /></button></span>)}</div>}{!isClarification && !isProductSpecRevision && <label className="attach-button project-attach-button" title={ui(language, "Add reference attachments")}><Paperclip size={15} /><input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { imageAttachments.addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} /></label>}{(imageAttachments.notice || attachmentBlockReason) && <small className="attachment-notice">{attachmentBlockReason || imageAttachments.notice}</small>}<small className={canSend ? "composer-state ready" : "composer-state busy"}>{inputHint}</small></div><button className="primary-action" type="submit" disabled={!changeMessage.trim() || changeSubmitting || !canSend || Boolean(attachmentBlockReason)} title={!canSend ? inputHint : attachmentBlockReason || `${submitLabel}（Shift + Enter）`}>{changeSubmitting ? <LoaderCircle className="spin" size={16} /> : canSend ? <ArrowUp size={16} /> : <LoaderCircle className="spin" size={16} />} <span>{submitLabel}</span><kbd>Shift + Enter</kbd></button></form>
   </section>;
 }
 
@@ -2163,7 +2156,7 @@ function ProjectChatMessageRow({ message, language, roleName, approvingProposalI
   const outputSize = displayedOutput
     ? (language === "zh" ? `${displayedOutput.length.toLocaleString()} 字符` : `${displayedOutput.length.toLocaleString()} characters`)
     : (language === "zh" ? "等待首批内容" : "Waiting for first content");
-  return <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}`}>
+  return <div className={`project-chat-message ${message.role}${message.message_type === "change_proposal" ? " proposal" : ""}${message.message_type === "error" ? " error" : ""}`}>
     <b>{roleName(message.role)}</b>
     <span>{message.content || (streaming ? (language === "zh" ? "正在生成可验证的结果…" : "Generating a verifiable result…") : "")}{streaming && message.content ? <i className="streaming-cursor" /> : null}</span>
     {messageAttachments.length > 0 && <div className="message-attachments">{messageAttachments.map((attachment) => <a key={attachment.id} href={attachment.content_url} target="_blank" rel="noreferrer"><img src={attachment.content_url} alt={attachment.name} /><span>{attachment.name}</span></a>)}</div>}
