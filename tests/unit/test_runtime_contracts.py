@@ -2,9 +2,11 @@ import hashlib
 
 import pytest
 
-from another_atom.contracts.schemas import RuntimeBinding, SourceBundle
+from another_atom.contracts.schemas import RuntimeBinding, SourceBundle, SourceFile
 from another_atom.runtime.contracts import (
     RuntimeContractError,
+    engineer_contract_context,
+    get_runtime_contract,
     preflight_runtime,
     resolve_runtime_binding,
     source_manifest_hash,
@@ -22,6 +24,14 @@ def test_runtime_binding_hash_is_part_of_the_shared_contract() -> None:
         )
 
     assert error.value.code == "RUNTIME_CONTRACT_HASH_MISMATCH"
+
+
+def test_engineer_context_exposes_allowed_manifest_files() -> None:
+    contract = get_runtime_contract("web-static-document", "1.0")
+
+    context = engineer_contract_context(contract)
+
+    assert context["allowed_manifest_files"] == []
 
 
 def test_document_preflight_blocks_loopback_before_execution(
@@ -92,3 +102,40 @@ def test_document_preflight_requires_exactly_one_document_shell(client) -> None:
 
     document = next(check for check in report.checks if check.check_id == "runtime.document")
     assert document.status == "fail"
+
+
+def test_document_preflight_rejects_package_json_before_execution(client) -> None:
+    created = client.post(
+        "/api/runs",
+        json={"prompt": "Build a browser notes tool", "mode": "team"},
+    ).json()
+    run = client.get(f"/api/runs/{created['run_id']}").json()
+    client.post(
+        f"/api/runs/{created['run_id']}/approve",
+        json={"blueprint": run["blueprint"]},
+    )
+    completed = client.get(f"/api/runs/{created['run_id']}").json()
+    bundle = SourceBundle.model_validate(completed["source_bundle"])
+    package_json = '{"type":"module"}\n'
+    files = [item for item in bundle.files if item.path != "package.json"]
+    files.append(
+        SourceFile(
+            path="package.json",
+            role="config",
+            content=package_json,
+            content_hash=(
+                "sha256:" + hashlib.sha256(package_json.encode("utf-8")).hexdigest()
+            ),
+        )
+    )
+    candidate = bundle.model_copy(update={"files": files})
+    candidate = candidate.model_copy(update={"manifest_hash": source_manifest_hash(candidate)})
+
+    _, report = preflight_runtime(candidate)
+
+    manifest = next(
+        check for check in report.checks if check.check_id == "runtime.manifest_files"
+    )
+    assert report.passed is False
+    assert manifest.status == "fail"
+    assert manifest.detail == "Disallowed dependency manifests: package.json"

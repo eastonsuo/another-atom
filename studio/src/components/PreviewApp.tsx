@@ -150,7 +150,9 @@ function buildDocumentPreview(files: SourceFile[]): string {
     const path = localPath(node.getAttribute("src") ?? "");
     const file = path ? byPath.get(path) : undefined;
     if (!file) return;
-    const script = documentNode.createElement("script");
+    const script = node.cloneNode(false) as HTMLScriptElement;
+    script.removeAttribute("src");
+    script.removeAttribute("integrity");
     script.textContent = file.content.replace(/<\/script/gi, "<\\/script");
     node.replaceWith(script);
   });

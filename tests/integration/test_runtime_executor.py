@@ -12,11 +12,14 @@ from another_atom.contracts.schemas import (
     Blueprint,
     EngineerOutput,
     ExecutionRequest,
+    SourceBundle,
+    SourceFile,
     SourceFileDraft,
 )
 from another_atom.executor.app import app as executor_app
 from another_atom.executor.runner import execute
 from another_atom.runtime.artifacts import create_source_bundle
+from another_atom.runtime.contracts import source_manifest_hash
 from another_atom.storage.models import ProjectVersion
 
 
@@ -204,6 +207,46 @@ def test_executor_private_http_stream_authenticates_and_returns_terminal_result(
     assert envelopes[-1]["kind"] == "result"
     assert envelopes[-1]["data"]["status"] == "passed"
     assert envelopes[-1]["data"]["execution_report"]["test"]["status"] == "passed"
+
+
+def test_executor_rejects_disallowed_package_json_before_materializing_source(
+    client: TestClient,
+) -> None:
+    run = _approve(client, "Build a small browser timer")
+    bundle = SourceBundle.model_validate(run["source_bundle"])
+    package_json = '{"type":"module"}\n'
+    candidate = bundle.model_copy(
+        update={
+            "files": [
+                *[item for item in bundle.files if item.path != "package.json"],
+                SourceFile(
+                    path="package.json",
+                    role="config",
+                    content=package_json,
+                    content_hash=(
+                        "sha256:" + hashlib.sha256(package_json.encode("utf-8")).hexdigest()
+                    ),
+                ),
+            ]
+        }
+    )
+    candidate = candidate.model_copy(
+        update={"manifest_hash": source_manifest_hash(candidate)}
+    )
+
+    events, result = execute(
+        _execution_request(
+            run,
+            "manifest-preflight-test",
+            source_bundle=candidate.model_dump(mode="json"),
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.execution_report.error_code == "RUNTIME_PREFLIGHT_REJECTED"
+    assert result.execution_report.build.status == "not_run"
+    assert result.execution_report.test.status == "not_run"
+    assert all(event.type != "source.materializing" for event in events)
 
 
 def test_executor_enforces_deadline_and_cancellation(client: TestClient) -> None:

@@ -2,6 +2,15 @@
 
 本仓库的议题和产品需求文档（PRD）记录在 GitHub Issues 中。所有操作使用 `gh` 命令行工具完成。
 
+## 与 Bug 文档的关系
+
+GitHub Issue 是执行状态事实源，负责排期、负责人、讨论和关闭；[`docs/bug/`](../bug/README.md) 是代码缺陷的仓库证据源，负责稳定保存复现、根因、修复边界和验收结果。
+
+- 一个能够独立修复和验收的 Bug 对应一个 Issue；同一根因的重复现象不重复建 Issue。
+- Issue 正文链接 Bug 文档；Bug 文档元信息回填 Issue 编号。
+- Issue 关闭不自动等于 Bug 归档。只有自动化或部署验证证据进入 Bug 文档后，文件才移入`归档`。
+- Review 发现 Bug 时链接 Bug 文档；Issue 不承载长期 Design，修复需要改变 Contract 时仍按 Review → Design 流程处理。
+
 ## 操作约定
 
 - **创建议题**：`gh issue create --title "..." --body "..."`。多行正文使用 heredoc。

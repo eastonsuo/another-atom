@@ -2,7 +2,7 @@
 
 [toc]
 
-项目文档分为 Design 和 Review 两类，先按 `V1`、`V2`、`整体` 区分版本范围。已经确认的方案进入 Design；带日期的检查、问题和阶段结论进入 Review。图片等非文档资源保存在 `assets/`。
+项目文档分为 Design、Review 和 Bug 三类。已经确认的方案进入 Design；带日期的功能完备性检查和阶段结论进入 Review；违反既有设计或 Contract、能够独立复现和验收的代码实现错误进入 Bug。图片等非文档资源保存在 `assets/`。
 
 ## 设计
 
@@ -15,10 +15,14 @@
 
 ## Review
 
-[Review 文档](./review/README.md)回答“实际检查到了什么、现在是否仍需处理”。新问题进入`待办`；修复、验证或完成范围决策，并把长期结论写入 Design 后，移入`归档`。Review 不再按版本或评审领域建立目录，版本范围和产品/Agent/工程/综合类型直接写在文档元信息中。
+[Review 文档](./review/README.md)回答“某项功能是否完备、检查到了什么”。新 Review 进入`待办`；修复、验证或完成范围决策，并把长期结论写入 Design 后，移入`归档`。Review 不再承担单个代码缺陷的当前队列；检查发现独立 Bug 时只保留检查结论并链接 Bug 文档。
 
 Review 发现需要系统性解决的问题时，在相应 Review 中记录依据与结论；形成正式决定后同步写入 Design。解决方案本身不在 Review 中长期维护。
 
+## Bug
+
+[Bug 文档](./bug/README.md)回答“哪个既有预期被代码实现违反、如何复现和证明修复”。Bug 默认可以直接修改代码，不要求同步更新 Design；只有修复会改变既有 Contract 或产品行为时，才把该部分升级为 Review/Design 变更。GitHub Issue 负责执行状态，Bug 文档保留仓库内的复现、根因与验收证据。
+
 ## 资源
 
-`assets/` 保存 README 和设计文档引用的图片，不参与设计与 Review 分类。
+`assets/` 保存 README、Design、Review 和 Bug 引用的图片，不参与文档分类。

@@ -2002,6 +2002,9 @@ class OllamaCloudProvider:
                 "只在 app_spec_delta "
                 "中返回确实变化的非源码元数据；代码和颜色不得放入 Delta。保留需求未改变的源码、"
                 "交互和测试，不要复制未修改文件。"
+                "必须遵守 runtime_contract.allowed_manifest_files；空列表表示不得新增 package.json，"
+                "非空时也只能新增明确列出的 Manifest，且源码和测试必须遵守既有 Manifest 声明的"
+                "模块制。"
                 "公共 HTTPS API 仅在已确认需求要求时允许；禁止 localhost、回环地址、动态 import、"
                 "eval、包安装、后端和 Shell。所有 Project、Run、版本、commit、Manifest 与 Context "
                 "绑定字段必须原样复制 supplied_binding。"
@@ -2093,6 +2096,8 @@ class OllamaCloudProvider:
                 "出现在 source_files。测试必须验证实际源码的核心行为或验收条件，不能写恒真断言。"
                 "不要返回 Markdown 代码围栏，不得提供 Shell 或安装命令。Runtime Contract 存在时"
                 "必须遵守其中的依赖、网络、文件和大小限制，不得访问 localhost 或回环地址。"
+                "allowed_manifest_files 为空时不得生成 package.json；非空时也只能生成明确列出的"
+                "Manifest，并确保源码和测试遵守其中声明的模块制。"
                 "视觉颜色必须与架构设计中的 visual_tokens 完全一致。"
             ),
             {

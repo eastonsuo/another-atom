@@ -30,6 +30,8 @@ WEB_PROJECT_TYPES = {
     "website",
 }
 
+NODE_RUNTIME_MANIFEST_FILES = {"package.json"}
+
 
 def _canonical_hash(payload: object) -> str:
     encoded = json.dumps(
@@ -221,6 +223,12 @@ def preflight_runtime(bundle: SourceBundle) -> tuple[RuntimeContract, Validation
         if len(item.content.encode("utf-8")) > contract.max_file_bytes
     ]
     missing_files = sorted(set(contract.required_files) - set(files))
+    disallowed_manifest_files = sorted(
+        path
+        for path in files
+        if path.rsplit("/", 1)[-1] in NODE_RUNTIME_MANIFEST_FILES
+        and path not in set(contract.allowed_manifest_files)
+    )
     entrypoint_kinds = {item.kind for item in bundle.entrypoints}
     missing_entrypoints = sorted(set(contract.required_entrypoint_kinds) - entrypoint_kinds)
     checks.extend(
@@ -241,6 +249,16 @@ def preflight_runtime(bundle: SourceBundle) -> tuple[RuntimeContract, Validation
                 "Runtime-required files are present",
                 not missing_files,
                 detail=f"Missing required files: {', '.join(missing_files)}",
+                root_cause="runtime",
+            ),
+            _check(
+                "runtime.manifest_files",
+                "Dependency manifests are allowed by the Runtime Contract",
+                not disallowed_manifest_files,
+                detail=(
+                    "Disallowed dependency manifests: "
+                    f"{', '.join(disallowed_manifest_files) or 'none'}"
+                ),
                 root_cause="runtime",
             ),
             _check(
@@ -347,6 +365,7 @@ def engineer_contract_context(contract: RuntimeContract | None) -> dict[str, obj
         "required_files": contract.required_files,
         "required_entrypoint_kinds": contract.required_entrypoint_kinds,
         "tests_required": contract.tests_required,
+        "allowed_manifest_files": contract.allowed_manifest_files,
         "dependency_installation": contract.dependency_installation,
         "network_policy": contract.network_policy,
         "capabilities": contract.capabilities.model_dump(mode="json"),
