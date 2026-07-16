@@ -2,7 +2,7 @@
 
 [toc]
 
-- **文档状态：** V1 技术设计基线；Project 路由和静态源码 Context 已完成本地实现；当前模型 raw Patch 路径需迁移为 `SourceFileChangeSet`，受控动态读取、CandidateRevision、Repair ChangeSet、恢复与 Railway 验收尚未完成
+- **文档状态：** V1 技术设计基线；Project 路由、静态源码 Context、`SourceFileChangeSet` 和验证失败后最多两次有界 Repair 已完成本地实现；受控动态读取、完整 CandidateRevision/ContextReceipt、修复检查点恢复与 Railway 验收尚未完成
 - **功能范围：** 已有 Project 中的 Lead 对话、增量修改、校验、版本与恢复
 - **合并流程基线：** [统一 Chat 与 Human-in-the-loop](../产品设计/06-统一Chat与Human-in-the-loop.md)
 - **产品设计：** [V1 通过对话修改现有项目](../产品设计/03-通过对话修改现有项目.md)
@@ -16,7 +16,7 @@
 
 ## 背景
 
-当前 V1 已能在用户批准后读取基线源码，并由 Runtime（运行系统）构建、测试和校验候选。但已实现的 Engineer raw unified diff 路径在简单改名中因 hunk 计数错误终止，说明模型输出 Interface 仍包含不必要的 Git Patch 编码不确定性。V1 的源码变更 Contract 因此修订为 `SourceFileChangeSet`：Engineer 返回被修改文件的完整最终内容，Runtime 物化候选并本地计算 Diff。大仓库动态补读和基于真实错误的有界修正仍是后续范围。
+当前 V1 已能在用户批准后读取基线源码，并由 Runtime（运行系统）构建、测试和校验候选。曾实现的 Engineer raw unified diff 路径在简单改名中因 hunk 计数错误终止，因此 V1 已迁移为 `SourceFileChangeSet`：Engineer 返回被修改文件的完整最终内容，Runtime 物化候选并本地计算 Diff。在此基础上，Runtime 已能把可修复的 Build、Unit Test 或 Validator 失败结构化为静态 `SourceRepairContext`，最多生成两次 Repair ChangeSet。大仓库动态补读和完整 CandidateRevision/ContextReceipt 仍是后续范围。
 
 ## 摘要
 
@@ -108,7 +108,7 @@ Lead(ProjectContextSnapshot) -> ProjectLeadDecision
 
 `GET/POST /api/projects/{project_id}/messages` 已将对话和执行拆开。POST 先持久化用户消息，组装 Project Context，再调用 `route_project_message` 返回 `answer | clarify | propose_change`。前两种只写回 Chat；第三种写入 pending `change_proposal` ProjectMessage。`POST /projects/{project_id}/change-proposals/{proposal_id}/approve` 重新校验基线，成功后才创建 Run、BuildJob 和 Project 写占用。
 
-当前 `team` 路径绑定 `base_version_id`，顺序生成 ChangeBrief、RequirementDelta、ArchitectureSpec 和完整修订后的 ArchitectureDesign。Engineer 已使用静态 SourceContext 下的 `SourceFileChangeSet`：Runtime 在隔离候选目录写入声明文件，再从真实文件重建兼容 AppSpec、SourceBundle、SourceDiff、ExecutionReport 和 ValidationReport，最后创建 `ai_edit` 版本；新 Run 不再生成 raw `SourcePatchSet` 或执行模型提供的 `git apply`。静态 ChangeSet 仍是过渡态，后续继续迁移全量 Manifest、RepositoryMap、受控动态读取、ContextReceipt、CandidateRevision 和有界 Repair ChangeSet。
+当前 `team` 路径绑定 `base_version_id`，顺序生成 ChangeBrief、RequirementDelta、ArchitectureSpec 和完整修订后的 ArchitectureDesign。Engineer 已使用静态 SourceContext 下的 `SourceFileChangeSet`：Runtime 在隔离候选目录写入声明文件，再从真实文件重建兼容 AppSpec、SourceBundle、SourceDiff、ExecutionReport 和 ValidationReport。门禁失败且可修复时，初始尝试与最多两次 Repair ChangeSet 按序写入 `source_change_attempt_ledger`，每次均基于当前失败候选完整复验；仅最终通过的累计候选创建一个 `ai_edit` 版本。新 Run 不再生成 raw `SourcePatchSet` 或执行模型提供的 `git apply`。后续继续迁移 RepositoryMap、受控动态读取、ContextReceipt 和完整 CandidateRevision。
 
 已实现的正确性边界包括 Project 单写占用、最终基线检查、阶段 Artifact 复用、阶段配额、失败释放、用户归属校验和发布指针不变。
 
@@ -118,7 +118,7 @@ Lead(ProjectContextSnapshot) -> ProjectLeadDecision
 - Project Context 的完整内容只进入 Provider，请求后持久化的是 hash、有效文档类型、对话条数、源码 manifest 及包含/省略清单；尚无独立 ContextEnvelope 表；
 - `change_proposal` 当前复用 ProjectMessage payload 保存 pending/approved/stale，并由专用批准 API 恢复；通用 Approval subject、reject/cancel 和风险策略尚未接入；
 - 完整 ChangeBrief 仍在批准后的 Run 内生成，批准前卡片只有 Lead 的 `change_summary`；
-- 当前修改生产路径已使用 `SourceFileChangeSet` 和 Runtime 隔离文件物化；`EngineerAction`、受控动态读取、ContextReceipt、CandidateRevision、ChangeAttempt 和 Repair ChangeSet 尚未实现；
+- 当前修改生产路径已使用 `SourceFileChangeSet`、Runtime 隔离文件物化、有界 Repair ChangeSet 和 attempt ledger；`EngineerAction`、受控动态读取、ContextReceipt、完整 CandidateRevision 和修复检查点进程重启验收尚未完成；
 - Risk Policy 尚未根据范围、破坏性 Diff 和额外预算扩充 Approval；
 - SourceDiff 已持久化并可从文件面板查看，但尚未形成独立结果卡片；
 - 外部 GitHub/本地目录导入和 Git/数据库之间的 VersionMaterialization 记录尚未实现。
@@ -827,13 +827,13 @@ error_code / trace_id
 
 ## 17. 实施状态与后续顺序
 
-已完成 ProjectMessage、ProjectLeadDecision、Project Context 组装与 hash、answer/clarify 无 Run、pending change proposal、独立“修改代码”按钮、批准后建 Run/占写锁、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、基于旧版完整 ArchitectureDesign 的同步修订、BaseSourceSnapshot、`MAX_SOURCE_CHARS` 确定性静态源码装箱、SourceContext Artifact、`SourceFileChangeSet`、隔离文件物化、Runtime 真实 SourceDiff、Project 单写占用、最终基线检查和 `ai_edit` 版本，以及问答、澄清、批准幂等、旧提案失效、并发、失败和双用户测试。真实 Provider 与 Railway 验收仍未完成。
+已完成 ProjectMessage、ProjectLeadDecision、Project Context 组装与 hash、answer/clarify 无 Run、pending change proposal、独立“修改代码”按钮、批准后建 Run/占写锁、Run trigger/base、ChangeBrief、RequirementDelta、完整 ArchitectureSpec 修订、基于旧版完整 ArchitectureDesign 的同步修订、BaseSourceSnapshot、`MAX_SOURCE_CHARS` 确定性静态源码装箱、SourceContext Artifact、`SourceFileChangeSet`、隔离文件物化、Runtime 真实 SourceDiff、静态 `SourceRepairContext`、最多两次 Repair ChangeSet、attempt ledger、每轮完整复验、Project 单写占用、最终基线检查和 `ai_edit` 版本，以及问答、澄清、批准幂等、旧提案失效、并发、修复成功/耗尽、安全拦截不修复和双用户测试。真实 Provider、修复检查点进程重启与 Railway 验收仍未完成。
 
 后续按以下顺序完成：
 
 1. **[异步可靠性]** ConversationJob、lease、重启恢复和消息 idempotency key。
 2. **[通用授权]** 将专用 change proposal 迁移到通用 Approval subject，并补 reject/cancel、风险对象和批准前完整 ChangeBrief。
-3. **[动态 Context 与有界修正]** 按[受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)扩展 BaseSourceManifest、RepositoryMap、EngineerAction、ContextReceipt、CandidateRevision、ChangeAttempt、增量/累计 Diff 和 RepairContext；复用已经实现的文件变更 Module，不回退 raw diff 或完整 AppSpec。
+3. **[动态 Context 与候选持久化]** 按[受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)扩展 BaseSourceManifest、RepositoryMap、EngineerAction、ContextReceipt、完整 CandidateRevision、增量/累计 Diff、按需读取和修复检查点恢复；复用已经实现的文件变更与有界验证修复 Module，不回退 raw diff 或完整 AppSpec。
 4. **[风险确认]** impact/risk Contract、范围与破坏性 Diff 判断、提交前 Approval。
 5. **[结果证据]** 独立 Diff/验收结果卡片和候选 hash。
 6. **[提交恢复]** VersionMaterialization，收窄 Git commit 成功而数据库事务未完成的窗口。

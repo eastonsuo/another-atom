@@ -45,12 +45,14 @@ from another_atom.contracts.schemas import (
     SourceFileChange,
     SourceFileChangeSet,
     SourceFileDraft,
+    SourceRepairContext,
     SupportLevel,
     ValidationReport,
     VisionAnalysisResult,
 )
 from another_atom.repository.service import (
     calculate_source_context_hash,
+    calculate_source_repair_context_hash,
     render_version_files,
 )
 from another_atom.runtime.contracts import engineer_contract_context
@@ -248,6 +250,23 @@ class LLMProvider(Protocol):
         run_id: str,
         source_snapshot: BaseSourceSnapshot,
         source_context: SourceContext,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
+    ) -> SourceFileChangeSet: ...
+
+    def repair_source_file_change_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        repair_context: SourceRepairContext,
+        previous_change_set: SourceFileChangeSet,
         product_spec: ProductSpec,
         blueprint: Blueprint,
         architecture_design: ArchitectureDesign,
@@ -957,6 +976,95 @@ class MockLLMProvider:
             changes=changes,
         )
 
+    def repair_source_file_change_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        repair_context: SourceRepairContext,
+        previous_change_set: SourceFileChangeSet,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
+    ) -> SourceFileChangeSet:
+        del (
+            product_spec,
+            blueprint,
+            architecture_design,
+            architecture_spec,
+            app_spec,
+            runtime_contract,
+        )
+        self._record_request()
+        self._raise_if_requested(change_brief.original_request, "engineer-change-repair")
+        changes: list[SourceFileChange] = []
+        for source_file in source_context.included_files:
+            if source_file.path == "app-spec.json":
+                continue
+            repaired = source_file.content.replace(
+                "/* [repair:source:fixable] */ const =;",
+                "/* repaired from deterministic Runtime diagnostics */",
+            ).replace("assert.equal(1, 2)", "assert.equal(1, 1)")
+            if "/* [repair:source:stuck] */ const =;" in repaired:
+                repaired = (
+                    repaired.rstrip()
+                    + f"\n/* repair attempt {repair_context.repair_attempt} retained failure */\n"
+                )
+            if repaired == source_file.content:
+                continue
+            changes.append(
+                SourceFileChange(
+                    path=source_file.path,
+                    operation="modify",
+                    before_hash=source_file.sha256,
+                    replacement_content=repaired,
+                )
+            )
+        if not changes:
+            included = {item.path: item for item in source_context.included_files}
+            target = next(
+                (
+                    included[item.path]
+                    for item in previous_change_set.changes
+                    if item.operation != "delete" and item.path in included
+                ),
+                None,
+            )
+            if target is None:
+                raise LLMProviderError("No repairable source file is available in SourceContext")
+            changes.append(
+                SourceFileChange(
+                    path=target.path,
+                    operation="modify",
+                    before_hash=target.sha256,
+                    replacement_content=(
+                        target.content.rstrip()
+                        + f"\n/* deterministic repair attempt {repair_context.repair_attempt} */\n"
+                    ),
+                )
+            )
+        return SourceFileChangeSet(
+            project_id=source_snapshot.project_id,
+            run_id=run_id,
+            base_version_id=source_snapshot.base_version_id,
+            base_git_commit=source_snapshot.base_git_commit,
+            source_manifest_hash=source_snapshot.source_manifest_hash,
+            source_context_hash=calculate_source_context_hash(source_context),
+            change_kind="repair",
+            change_attempt_index=repair_context.change_attempt_index,
+            source_revision=repair_context.source_revision,
+            repair_context_hash=calculate_source_repair_context_hash(repair_context),
+            repairs_failure_code=repair_context.failure_code,
+            summary=(f"修复 Runtime 校验失败：{repair_context.failure_summary}")[:800],
+            app_spec_delta=AppSpecDelta(),
+            changes=changes,
+        )
+
     def create_architecture_spec(self, blueprint: Blueprint) -> ArchitectureSpec:
         self._record_request()
         if blueprint.product_type == "web_game":
@@ -1645,14 +1753,11 @@ class OllamaCloudProvider:
                 "role": "user",
                 "content": json.dumps(manifest, ensure_ascii=False),
                 "images": [
-                    base64.b64encode(bytes(image["content"])).decode("ascii")
-                    for image in images
+                    base64.b64encode(bytes(image["content"])).decode("ascii") for image in images
                 ],
             },
         ]
-        expected = {
-            (str(image["attachment_id"]), str(image["source_hash"])) for image in images
-        }
+        expected = {(str(image["attachment_id"]), str(image["source_hash"])) for image in images}
         uses_ollama_cloud = self.vision_host.lower() in {
             "https://ollama.com",
             "https://www.ollama.com",
@@ -1686,9 +1791,7 @@ class OllamaCloudProvider:
                 self._record_response_usage(body)
                 content = self._message_content(body)
                 try:
-                    result = VisionAnalysisResult.model_validate_json(
-                        self._extract_json(content)
-                    )
+                    result = VisionAnalysisResult.model_validate_json(self._extract_json(content))
                     actual = {
                         (observation.attachment_id, observation.source_hash)
                         for observation in result.observations
@@ -2020,6 +2123,69 @@ class OllamaCloudProvider:
                 },
                 "supplied_source_context": source_context.model_dump(mode="json"),
                 "current_app_spec_metadata": app_spec_metadata,
+                "product_spec": product_spec.model_dump(mode="json"),
+                "blueprint": blueprint.model_dump(mode="json"),
+                "architecture_design": architecture_design.model_dump(mode="json"),
+                "architecture_spec": architecture_spec.model_dump(mode="json"),
+                "change_brief": change_brief.model_dump(mode="json"),
+                "requirement_delta": requirement_delta.model_dump(mode="json"),
+                "runtime_contract": engineer_contract_context(runtime_contract),
+            },
+            stream=True,
+        )
+
+    def repair_source_file_change_set(
+        self,
+        run_id: str,
+        source_snapshot: BaseSourceSnapshot,
+        source_context: SourceContext,
+        repair_context: SourceRepairContext,
+        previous_change_set: SourceFileChangeSet,
+        product_spec: ProductSpec,
+        blueprint: Blueprint,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        app_spec: AppSpec,
+        runtime_contract: RuntimeContract | None = None,
+    ) -> SourceFileChangeSet:
+        repair_context_hash = calculate_source_repair_context_hash(repair_context)
+        return self._structured_chat(
+            SourceFileChangeSet,
+            "Engineer Repair（工程师修复）",
+            (
+                "根据 deterministic_repair_context 修复当前候选 revision，只返回一份结构化 "
+                "SourceFileChangeSet。不要重新实现原始需求，不要返回完整项目或 unified diff。"
+                "优先修改 diagnostics 直接指向的源码或测试；保留已经通过的行为和未受影响文件。"
+                "modify/delete 只能作用于 supplied_source_context.included_files 中完整提供的文件；"
+                "modify/add 必须返回文件完整最终内容，禁止修改 app-spec.json。"
+                "必须原样复制 supplied_binding 中的 Project、Run、版本、commit、Manifest、Context、"
+                "attempt、revision、RepairContext hash 和 failure code。"
+                "不得通过删除有效测试、放宽断言、伪造通过状态或扩大已批准需求范围来消除错误。"
+                "继续遵守 Runtime Contract 的 Manifest、模块制、网络、安全、文件和大小限制；禁止"
+                "localhost、回环地址、动态 import、eval、包安装、后端和 Shell。"
+            ),
+            {
+                "supplied_binding": {
+                    "project_id": source_snapshot.project_id,
+                    "run_id": run_id,
+                    "base_version_id": source_snapshot.base_version_id,
+                    "base_git_commit": source_snapshot.base_git_commit,
+                    "source_manifest_hash": source_snapshot.source_manifest_hash,
+                    "source_context_hash": calculate_source_context_hash(source_context),
+                    "change_kind": "repair",
+                    "change_attempt_index": repair_context.change_attempt_index,
+                    "source_revision": repair_context.source_revision,
+                    "repair_context_hash": repair_context_hash,
+                    "repairs_failure_code": repair_context.failure_code,
+                },
+                "deterministic_repair_context": repair_context.model_dump(mode="json"),
+                "previous_change_set": previous_change_set.model_dump(mode="json"),
+                "supplied_source_context": source_context.model_dump(mode="json"),
+                "current_app_spec_metadata": app_spec.model_dump(
+                    mode="json", exclude={"html", "css", "javascript"}
+                ),
                 "product_spec": product_spec.model_dump(mode="json"),
                 "blueprint": blueprint.model_dump(mode="json"),
                 "architecture_design": architecture_design.model_dump(mode="json"),

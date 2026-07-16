@@ -99,6 +99,7 @@ class ArtifactType(StrEnum):
     SOURCE_PATCH_APPLY_REPORT = "source_patch_apply_report"
     SOURCE_FILE_CHANGE_SET = "source_file_change_set"
     SOURCE_CHANGE_APPLY_REPORT = "source_change_apply_report"
+    SOURCE_CHANGE_ATTEMPT_LEDGER = "source_change_attempt_ledger"
     SOURCE_DIFF = "source_diff"
     BLUEPRINT = "blueprint"
     PRODUCT_SPEC = "product_spec"
@@ -564,6 +565,11 @@ class SourceFileChangeSet(BaseModel):
     base_git_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     source_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    change_kind: Literal["initial", "repair"] = "initial"
+    change_attempt_index: int = Field(default=1, ge=1, le=3)
+    source_revision: int = Field(default=0, ge=0, le=2)
+    repair_context_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    repairs_failure_code: str | None = Field(default=None, min_length=1, max_length=120)
     summary: str = Field(min_length=1, max_length=800)
     app_spec_delta: AppSpecDelta = Field(default_factory=AppSpecDelta)
     changes: list[SourceFileChange] = Field(min_length=1, max_length=20)
@@ -576,6 +582,28 @@ class SourceFileChangeSet(BaseModel):
             raise ValueError("SourceFileChangeSet paths must be unique")
         return value
 
+    @model_validator(mode="after")
+    def attempt_binding_is_consistent(self) -> SourceFileChangeSet:
+        if self.change_kind == "initial":
+            if (
+                self.change_attempt_index != 1
+                or self.source_revision != 0
+                or self.repair_context_hash is not None
+                or self.repairs_failure_code is not None
+            ):
+                raise ValueError("initial SourceFileChangeSet must bind attempt 1 and revision 0")
+            return self
+        if (
+            self.change_attempt_index < 2
+            or self.source_revision < 1
+            or self.repair_context_hash is None
+            or self.repairs_failure_code is None
+        ):
+            raise ValueError(
+                "repair SourceFileChangeSet requires current revision and RepairContext binding"
+            )
+        return self
+
 
 class SourceChangeApplyReport(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
@@ -584,6 +612,84 @@ class SourceChangeApplyReport(BaseModel):
     materialized_files: list[str] = Field(min_length=1, max_length=20)
     candidate_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     checks: list[str] = Field(min_length=1, max_length=20)
+
+
+class SourceRepairDiagnostic(BaseModel):
+    check_id: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=240)
+    root_cause: Literal[
+        "app_spec", "source", "runtime", "security", "renderer", "platform", "unknown"
+    ]
+    detail: str = Field(min_length=1, max_length=4_000)
+
+
+class SourceRepairContext(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: str = Field(min_length=1, max_length=80)
+    repair_attempt: int = Field(ge=1, le=2)
+    change_attempt_index: int = Field(ge=2, le=3)
+    source_revision: int = Field(ge=1, le=2)
+    candidate_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    failure_stage: Literal["build", "unit_test", "validation"]
+    failure_code: str = Field(min_length=1, max_length=120)
+    failure_summary: str = Field(min_length=1, max_length=800)
+    diagnostics: list[SourceRepairDiagnostic] = Field(min_length=1, max_length=20)
+    previous_change_set_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    remaining_change_attempts: int = Field(ge=0, le=1)
+
+
+class SourceChangeAttemptRecord(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    change_attempt_index: int = Field(ge=1, le=3)
+    phase: Literal["initial", "repair"]
+    source_revision: int = Field(ge=0, le=2)
+    status: Literal[
+        "context_prepared",
+        "change_generated",
+        "materialized",
+        "validation_failed",
+        "validation_passed",
+        "materialization_failed",
+    ]
+    repair_context: SourceRepairContext | None = None
+    change_set: SourceFileChangeSet | None = None
+    apply_report: SourceChangeApplyReport | None = None
+    validation_report: ValidationReport | None = None
+    execution_report: ExecutionReport | None = None
+    candidate_source_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def phase_and_attempt_are_consistent(self) -> SourceChangeAttemptRecord:
+        if self.phase == "initial":
+            if self.change_attempt_index != 1 or self.source_revision != 0:
+                raise ValueError("initial SourceChangeAttemptRecord must use attempt 1 revision 0")
+            if self.repair_context is not None:
+                raise ValueError("initial SourceChangeAttemptRecord cannot contain RepairContext")
+            if self.change_set is None:
+                raise ValueError("initial SourceChangeAttemptRecord requires SourceFileChangeSet")
+            return self
+        if self.change_attempt_index < 2 or self.source_revision < 1 or self.repair_context is None:
+            raise ValueError("repair SourceChangeAttemptRecord requires RepairContext")
+        if self.status != "context_prepared" and self.change_set is None:
+            raise ValueError("generated repair attempt requires SourceFileChangeSet")
+        return self
+
+
+class SourceChangeAttemptLedger(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: str = Field(min_length=1, max_length=80)
+    max_change_attempts: int = Field(default=3, ge=1, le=3)
+    attempts: list[SourceChangeAttemptRecord] = Field(min_length=1, max_length=3)
+
+    @field_validator("attempts")
+    @classmethod
+    def attempt_indexes_are_unique_and_ordered(
+        cls, value: list[SourceChangeAttemptRecord]
+    ) -> list[SourceChangeAttemptRecord]:
+        indexes = [item.change_attempt_index for item in value]
+        if indexes != sorted(set(indexes)):
+            raise ValueError("SourceChangeAttemptLedger attempts must be unique and ordered")
+        return value
 
 
 # Read-only compatibility for Artifact payloads created before

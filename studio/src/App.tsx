@@ -380,6 +380,11 @@ const ZH: Record<string, string> = {
   "event.source.change_check_started": "正在校验源码文件变更",
   "event.source.change_applied": "源码文件变更已物化",
   "event.source.change_failed": "源码文件变更失败",
+  "event.source.repair_started": "源码修复已开始",
+  "event.source.repair_change_created": "修复变更已生成",
+  "event.source.repair_applied": "修复变更已物化",
+  "event.source.repair_validation_completed": "修复候选已完成校验",
+  "event.source.repair_failed": "源码修复失败",
   "event.alternative.regeneration_requested": "PM 草案重新生成",
   "event.product_spec.updated": "产品说明摘要已更新",
   "event.product_spec.regenerated": "产品说明已重新生成",
@@ -655,6 +660,45 @@ function eventMessage(language: Language, event: RunEvent): string {
       ? `文件变更本地校验或物化失败（${errorCode}），未写入新的项目版本。`
       : `Local file-change validation or materialization failed (${errorCode}); no new project version was written.`;
   }
+  if (event.type === "source.repair_started") {
+    const repairAttempt = typeof event.payload.repair_attempt === "number" ? event.payload.repair_attempt : 1;
+    const maxRepairs = typeof event.payload.max_repair_attempts === "number" ? event.payload.max_repair_attempts : 1;
+    const failureCode = typeof event.payload.failure_code === "string" ? event.payload.failure_code : "VALIDATION_FAILED";
+    return language === "zh"
+      ? `候选代码未通过确定性校验（${failureCode}），工程师正在进行第 ${repairAttempt}/${maxRepairs} 次定向修复。`
+      : `Candidate validation failed (${failureCode}); the Engineer started targeted repair ${repairAttempt}/${maxRepairs}.`;
+  }
+  if (event.type === "source.repair_change_created") {
+    const files = Array.isArray(event.payload.change_files)
+      ? event.payload.change_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `工程师已根据 Runtime 错误生成修复变更：${detail}。`
+      : `The Engineer produced repair changes from Runtime evidence: ${detail}.`;
+  }
+  if (event.type === "source.repair_applied") {
+    const files = Array.isArray(event.payload.materialized_files)
+      ? event.payload.materialized_files.filter((value): value is string => typeof value === "string")
+      : [];
+    const detail = files.length ? files.join("、") : language === "zh" ? "无源码文件" : "no source files";
+    return language === "zh"
+      ? `修复变更已在隔离候选中物化：${detail}。正在重新执行完整 Build、Test 和 Validation。`
+      : `Repair changes were materialized in the isolated candidate: ${detail}. Full Build, Test, and Validation are running again.`;
+  }
+  if (event.type === "source.repair_validation_completed") {
+    const repairAttempt = typeof event.payload.repair_attempt === "number" ? event.payload.repair_attempt : 1;
+    const passed = event.payload.passed === true;
+    return language === "zh"
+      ? `第 ${repairAttempt} 次修复${passed ? "已通过完整校验" : "仍未通过校验"}。`
+      : `Repair ${repairAttempt} ${passed ? "passed complete validation" : "still failed validation"}.`;
+  }
+  if (event.type === "source.repair_failed") {
+    const errorCode = typeof event.payload.error_code === "string" ? event.payload.error_code : "SOURCE_REPAIR_FAILED";
+    return language === "zh"
+      ? `修复变更未通过本地物化检查（${errorCode}），当前项目版本保持不变。`
+      : `Repair changes failed local materialization (${errorCode}); the current project version remains unchanged.`;
+  }
   if (event.type === "source.patch_created") {
     const files = Array.isArray(event.payload.patch_files)
       ? event.payload.patch_files.filter((value): value is string => typeof value === "string")
@@ -894,6 +938,11 @@ function Studio() {
       "provider.response.received",
       "provider.contract_correction.started",
       "provider.deadline.exceeded",
+      "source.repair_started",
+      "source.repair_change_created",
+      "source.repair_applied",
+      "source.repair_validation_completed",
+      "source.repair_failed",
       "agent.message.started",
       "agent.message.delta",
       "agent.message.completed",

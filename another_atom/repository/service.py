@@ -18,6 +18,7 @@ from another_atom.contracts.schemas import (
     SourceContext,
     SourceDiff,
     SourceFileChangeSet,
+    SourceRepairContext,
     SourceSnapshotFile,
     VersionSource,
 )
@@ -278,7 +279,42 @@ def build_source_context(
     )
 
 
+def build_candidate_source_snapshot(
+    base_snapshot: BaseSourceSnapshot,
+    candidate_files: dict[str, str],
+) -> BaseSourceSnapshot:
+    """Freeze one materialized candidate as the input revision for a repair attempt."""
+    files: list[SourceSnapshotFile] = []
+    for path, content in sorted(candidate_files.items()):
+        encoded = content.encode("utf-8")
+        files.append(
+            SourceSnapshotFile(
+                path=path,
+                sha256=sha256(encoded).hexdigest(),
+                size=len(encoded),
+                content=content,
+            )
+        )
+    manifest = "\n".join(f"{file.path}\0{file.sha256}" for file in files)
+    return base_snapshot.model_copy(
+        update={
+            "files": files,
+            "source_manifest_hash": sha256(manifest.encode("utf-8")).hexdigest(),
+        }
+    )
+
+
 def calculate_source_context_hash(context: SourceContext) -> str:
+    payload = json.dumps(
+        context.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def calculate_source_repair_context_hash(context: SourceRepairContext) -> str:
     payload = json.dumps(
         context.model_dump(mode="json"),
         ensure_ascii=False,

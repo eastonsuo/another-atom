@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 
 from another_atom.agent.provider import MockLLMProvider
 from another_atom.build.worker import process_next_job
+from another_atom.contracts.schemas import SourceChangeAttemptLedger, SourceFileChange
 from another_atom.storage.models import (
     Artifact,
     BuildJob,
@@ -706,6 +707,178 @@ def test_invalid_source_change_fails_without_creating_a_version(
     assert "source_change_apply_report" not in artifacts
     events = client.get(f"/api/runs/{failed['run_id']}/events/history").json()
     assert "source.change_failed" in [event["type"] for event in events]
+
+
+def test_runtime_validation_failure_runs_bounded_source_repair(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    initial = _build_project(client)
+    project_id = initial["project_id"]
+    original = MockLLMProvider.create_source_file_change_set
+
+    def invalid_javascript_change(self, *args, **kwargs):
+        change_set = original(self, *args, **kwargs)
+        source_context = args[2]
+        app_file = next(item for item in source_context.included_files if item.path == "app.js")
+        broken = SourceFileChange(
+            path="app.js",
+            operation="modify",
+            before_hash=app_file.sha256,
+            replacement_content=(
+                app_file.content.rstrip() + "\n/* [repair:source:fixable] */ const =;\n"
+            ),
+        )
+        return change_set.model_copy(
+            update={
+                "changes": [item for item in change_set.changes if item.path != "app.js"] + [broken]
+            }
+        )
+
+    monkeypatch.setattr(
+        MockLLMProvider,
+        "create_source_file_change_set",
+        invalid_javascript_change,
+    )
+    proposal = _propose_change(client, project_id, "把标题改成“修复后的扫雷”")
+    completed = _approve_change(client, project_id, proposal["proposal_id"])
+
+    assert completed["status"] == "completed"
+    assert completed["version_id"] != initial["version_id"]
+    repaired_app = next(
+        item["content"] for item in completed["source_bundle"]["files"] if item["path"] == "app.js"
+    )
+    assert "[repair:source:fixable]" not in repaired_app
+    with client.app.state.testing_session() as db:
+        artifact = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == completed["run_id"],
+                Artifact.artifact_type == "source_change_attempt_ledger",
+            )
+        )
+    assert artifact is not None
+    ledger = SourceChangeAttemptLedger.model_validate(artifact.payload)
+    assert [attempt.status for attempt in ledger.attempts] == [
+        "validation_failed",
+        "validation_passed",
+    ]
+    assert ledger.attempts[1].repair_context is not None
+    assert ledger.attempts[1].change_set is not None
+    assert ledger.attempts[1].change_set.change_kind == "repair"
+    events = client.get(f"/api/runs/{completed['run_id']}/events/history").json()
+    event_types = [event["type"] for event in events]
+    assert event_types.count("source.repair_started") == 1
+    assert event_types.count("source.repair_change_created") == 1
+    assert event_types.count("source.repair_applied") == 1
+    assert event_types.count("source.repair_validation_completed") == 1
+
+
+def test_source_repair_stops_after_two_failed_candidates(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    initial = _build_project(client)
+    project_id = initial["project_id"]
+    original = MockLLMProvider.create_source_file_change_set
+
+    def permanently_invalid_change(self, *args, **kwargs):
+        change_set = original(self, *args, **kwargs)
+        source_context = args[2]
+        app_file = next(item for item in source_context.included_files if item.path == "app.js")
+        broken = SourceFileChange(
+            path="app.js",
+            operation="modify",
+            before_hash=app_file.sha256,
+            replacement_content=(
+                app_file.content.rstrip() + "\n/* [repair:source:stuck] */ const =;\n"
+            ),
+        )
+        return change_set.model_copy(
+            update={
+                "changes": [item for item in change_set.changes if item.path != "app.js"] + [broken]
+            }
+        )
+
+    monkeypatch.setattr(
+        MockLLMProvider,
+        "create_source_file_change_set",
+        permanently_invalid_change,
+    )
+    proposal = _propose_change(client, project_id, "把标题改成“无法通过的扫雷”")
+    failed = _approve_change(client, project_id, proposal["proposal_id"])
+
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "CANDIDATE_REJECTED"
+    assert failed["version_id"] is None
+    assert [item["id"] for item in client.get(f"/api/projects/{project_id}/versions").json()] == [
+        initial["version_id"]
+    ]
+    with client.app.state.testing_session() as db:
+        artifact = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == failed["run_id"],
+                Artifact.artifact_type == "source_change_attempt_ledger",
+            )
+        )
+        project = db.get(Project, project_id)
+    assert artifact is not None
+    assert project is not None and project.active_write_run_id is None
+    ledger = SourceChangeAttemptLedger.model_validate(artifact.payload)
+    assert [attempt.status for attempt in ledger.attempts] == [
+        "validation_failed",
+        "validation_failed",
+        "validation_failed",
+    ]
+    events = client.get(f"/api/runs/{failed['run_id']}/events/history").json()
+    assert [event["type"] for event in events].count("source.repair_started") == 2
+
+
+def test_non_repairable_security_failure_does_not_call_source_repair(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    initial = _build_project(client)
+    project_id = initial["project_id"]
+    original = MockLLMProvider.create_source_file_change_set
+
+    def loopback_change(self, *args, **kwargs):
+        change_set = original(self, *args, **kwargs)
+        source_context = args[2]
+        app_file = next(item for item in source_context.included_files if item.path == "app.js")
+        unsafe = SourceFileChange(
+            path="app.js",
+            operation="modify",
+            before_hash=app_file.sha256,
+            replacement_content=(
+                app_file.content.rstrip() + '\nfetch("http://localhost:9000/private");\n'
+            ),
+        )
+        return change_set.model_copy(
+            update={
+                "changes": [item for item in change_set.changes if item.path != "app.js"] + [unsafe]
+            }
+        )
+
+    def reject_repair(*args, **kwargs):
+        raise AssertionError("Security failures must not be sent to Engineer repair")
+
+    monkeypatch.setattr(MockLLMProvider, "create_source_file_change_set", loopback_change)
+    monkeypatch.setattr(MockLLMProvider, "repair_source_file_change_set", reject_repair)
+    proposal = _propose_change(client, project_id, "把标题改成“越权网络扫雷”")
+    failed = _approve_change(client, project_id, proposal["proposal_id"])
+
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "EXECUTION_BLOCKED"
+    with client.app.state.testing_session() as db:
+        ledger = db.scalar(
+            select(Artifact).where(
+                Artifact.run_id == failed["run_id"],
+                Artifact.artifact_type == "source_change_attempt_ledger",
+            )
+        )
+    assert ledger is None
+    events = client.get(f"/api/runs/{failed['run_id']}/events/history").json()
+    assert "source.repair_started" not in [event["type"] for event in events]
 
 
 def test_project_message_history_is_owner_scoped(client: TestClient) -> None:

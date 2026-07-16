@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TypeVar
@@ -44,9 +45,15 @@ from another_atom.contracts.schemas import (
     RequirementDelta,
     ReviewReport,
     RunStatus,
+    RuntimeContract,
     SourceBundle,
+    SourceChangeApplyReport,
+    SourceChangeAttemptLedger,
+    SourceChangeAttemptRecord,
     SourceContext,
     SourceFileChangeSet,
+    SourceRepairContext,
+    SourceRepairDiagnostic,
     SupportLevel,
     ValidationReport,
     VersionSource,
@@ -59,9 +66,11 @@ from another_atom.observability import get_logger
 from another_atom.repository.service import (
     RepositoryError,
     SourceChangeError,
+    build_candidate_source_snapshot,
     build_source_context,
     build_source_snapshot,
     calculate_source_diff_from_files,
+    calculate_source_repair_context_hash,
     commit_version,
     materialize_source_file_change_set,
     write_architecture_design,
@@ -1469,8 +1478,43 @@ class Orchestrator:
                 attempt=1,
             )
             validation_report = execution_result.validation_report
+            if not validation_report.passed and self._can_auto_repair_source_change(
+                execution_result
+            ):
+                (
+                    app_spec,
+                    candidate_files,
+                    change_set,
+                    source_bundle,
+                    execution_result,
+                    build_job,
+                ) = self._run_source_change_repairs(
+                    run=run,
+                    project=project,
+                    blueprint=blueprint,
+                    product_spec=product_spec,
+                    architecture_design=architecture_design,
+                    architecture_spec=architecture_spec,
+                    change_brief=change_brief,
+                    requirement_delta=requirement_delta,
+                    base_app_spec=base_app_spec,
+                    base_source_bundle=base_source_bundle,
+                    base_runtime_contract=base_runtime_contract,
+                    base_source_snapshot=source_snapshot,
+                    current_app_spec=app_spec,
+                    current_candidate_files=candidate_files,
+                    current_change_set=change_set,
+                    current_apply_report=apply_report,
+                    current_source_bundle=source_bundle,
+                    current_execution_result=execution_result,
+                    build_job=build_job,
+                )
+                validation_report = execution_result.validation_report
             if not validation_report.passed:
                 build_job.status = BuildStatus.FAILED.value
+                failed_check_ids = [
+                    check.check_id for check in validation_report.checks if check.status == "fail"
+                ]
                 self._fail_run(
                     run,
                     (
@@ -1478,7 +1522,8 @@ class Orchestrator:
                         if execution_result.outcome == DeliveryOutcome.EXECUTION_BLOCKED
                         else "CANDIDATE_REJECTED"
                     ),
-                    "The Runtime Contract rejected the materialized SourceFileChangeSet",
+                    "The Runtime Contract rejected the materialized SourceFileChangeSet: "
+                    + ", ".join(failed_check_ids),
                 )
                 return
             compatibility_review = ReviewReport(
@@ -1546,6 +1591,525 @@ class Orchestrator:
             current = self.db.get(Run, run.id)
             if current:
                 self._fail_run(current, "CHANGE_PIPELINE_FAILED", str(exc))
+
+    def _run_source_change_repairs(
+        self,
+        *,
+        run: Run,
+        project: Project,
+        blueprint: Blueprint,
+        product_spec: ProductSpec,
+        architecture_design: ArchitectureDesign,
+        architecture_spec: ArchitectureSpec,
+        change_brief: ChangeBrief,
+        requirement_delta: RequirementDelta,
+        base_app_spec: AppSpec,
+        base_source_bundle: SourceBundle | None,
+        base_runtime_contract: RuntimeContract | None,
+        base_source_snapshot: BaseSourceSnapshot,
+        current_app_spec: AppSpec,
+        current_candidate_files: dict[str, str],
+        current_change_set: SourceFileChangeSet,
+        current_apply_report: SourceChangeApplyReport,
+        current_source_bundle: SourceBundle,
+        current_execution_result: ExecutionResult,
+        build_job: BuildJob,
+    ) -> tuple[
+        AppSpec,
+        dict[str, str],
+        SourceFileChangeSet,
+        SourceBundle,
+        ExecutionResult,
+        BuildJob,
+    ]:
+        max_repairs = max(0, min(2, get_settings().max_source_repair_attempts))
+        if max_repairs == 0:
+            return (
+                current_app_spec,
+                current_candidate_files,
+                current_change_set,
+                current_source_bundle,
+                current_execution_result,
+                build_job,
+            )
+        self._upsert_source_change_attempt(
+            run,
+            SourceChangeAttemptRecord(
+                change_attempt_index=1,
+                phase="initial",
+                source_revision=0,
+                status="validation_failed",
+                change_set=current_change_set,
+                apply_report=current_apply_report,
+                validation_report=current_execution_result.validation_report,
+                execution_report=current_execution_result.execution_report,
+                candidate_source_hash=current_apply_report.candidate_source_hash,
+            ),
+            max_change_attempts=max_repairs + 1,
+        )
+
+        previous_change_set = current_change_set
+        current_apply = current_apply_report
+        for repair_attempt in range(1, max_repairs + 1):
+            if not self._can_auto_repair_source_change(current_execution_result):
+                break
+            source_revision = repair_attempt
+            change_attempt_index = repair_attempt + 1
+            candidate_snapshot = build_candidate_source_snapshot(
+                base_source_snapshot,
+                current_candidate_files,
+            )
+            repair_context = self._create_source_repair_context(
+                run,
+                repair_attempt=repair_attempt,
+                max_repairs=max_repairs,
+                source_revision=source_revision,
+                candidate_source_hash=current_apply.candidate_source_hash,
+                previous_change_set=previous_change_set,
+                execution_result=current_execution_result,
+            )
+            selected_files = [
+                item.path for item in previous_change_set.changes if item.operation != "delete"
+            ]
+            diagnostic_text = "\n".join(item.detail for item in repair_context.diagnostics)
+            selected_files.extend(
+                item.path
+                for item in candidate_snapshot.files
+                if item.path != "app-spec.json" and item.path in diagnostic_text
+            )
+            repair_source_context = build_source_context(
+                candidate_snapshot,
+                change_brief.original_request + "\n" + diagnostic_text,
+                get_settings().max_source_chars,
+                list(dict.fromkeys(selected_files)),
+                ["app-spec.json"],
+            )
+            unavailable_changed_files = sorted(
+                set(selected_files) - {item.path for item in repair_source_context.included_files}
+            )
+            if unavailable_changed_files:
+                raise AppError(
+                    "SOURCE_REPAIR_CONTEXT_TOO_LARGE",
+                    "Repair Context could not include the current changed files: "
+                    + ", ".join(unavailable_changed_files),
+                    422,
+                )
+
+            existing_attempt = self._source_change_attempt(run.id, change_attempt_index)
+            if existing_attempt is not None:
+                existing_hash = (
+                    calculate_source_repair_context_hash(existing_attempt.repair_context)
+                    if existing_attempt.repair_context is not None
+                    else None
+                )
+                expected_hash = calculate_source_repair_context_hash(repair_context)
+                if existing_hash != expected_hash:
+                    raise AppError(
+                        "SOURCE_REPAIR_RECOVERY_MISMATCH",
+                        "Persisted repair attempt does not match the current candidate revision",
+                        409,
+                    )
+                repair_change_set = existing_attempt.change_set
+            else:
+                repair_change_set = None
+                self._upsert_source_change_attempt(
+                    run,
+                    SourceChangeAttemptRecord(
+                        change_attempt_index=change_attempt_index,
+                        phase="repair",
+                        source_revision=source_revision,
+                        status="context_prepared",
+                        repair_context=repair_context,
+                    ),
+                    max_change_attempts=max_repairs + 1,
+                )
+
+            run.status = RunStatus.ENGINEER_RUNNING.value
+            run.current_stage = "engineer_repair"
+            record_event(
+                self.db,
+                run.id,
+                "source.repair_started",
+                "Engineer is repairing the candidate from deterministic Runtime evidence",
+                stage="engineer_repair",
+                payload={
+                    "repair_attempt": repair_attempt,
+                    "max_repair_attempts": max_repairs,
+                    "failure_code": repair_context.failure_code,
+                    "failed_check_ids": [item.check_id for item in repair_context.diagnostics],
+                },
+            )
+            self.db.commit()
+
+            if repair_change_set is None:
+
+                def repair_operation(
+                    snapshot: BaseSourceSnapshot = candidate_snapshot,
+                    context: SourceContext = repair_source_context,
+                    evidence: SourceRepairContext = repair_context,
+                    prior: SourceFileChangeSet = previous_change_set,
+                    app: AppSpec = current_app_spec,
+                ) -> SourceFileChangeSet:
+                    return self._provider(run).repair_source_file_change_set(
+                        run.id,
+                        snapshot,
+                        context,
+                        evidence,
+                        prior,
+                        product_spec,
+                        blueprint,
+                        architecture_design,
+                        architecture_spec,
+                        change_brief,
+                        requirement_delta,
+                        app,
+                        base_runtime_contract,
+                    )
+
+                repair_change_set = self._run_unpersisted_agent_stage(
+                    run,
+                    "engineer_repair",
+                    repair_operation,
+                )
+            expected_repair_binding = {
+                "run_id": run.id,
+                "change_kind": "repair",
+                "change_attempt_index": change_attempt_index,
+                "source_revision": source_revision,
+                "repair_context_hash": calculate_source_repair_context_hash(repair_context),
+                "repairs_failure_code": repair_context.failure_code,
+            }
+            actual_repair_binding = {
+                "run_id": repair_change_set.run_id,
+                "change_kind": repair_change_set.change_kind,
+                "change_attempt_index": repair_change_set.change_attempt_index,
+                "source_revision": repair_change_set.source_revision,
+                "repair_context_hash": repair_change_set.repair_context_hash,
+                "repairs_failure_code": repair_change_set.repairs_failure_code,
+            }
+            if actual_repair_binding != expected_repair_binding:
+                raise AppError(
+                    "SOURCE_REPAIR_BINDING_MISMATCH",
+                    "Repair SourceFileChangeSet does not match its deterministic RepairContext",
+                    422,
+                )
+            self._upsert_source_change_attempt(
+                run,
+                SourceChangeAttemptRecord(
+                    change_attempt_index=change_attempt_index,
+                    phase="repair",
+                    source_revision=source_revision,
+                    status="change_generated",
+                    repair_context=repair_context,
+                    change_set=repair_change_set,
+                ),
+                max_change_attempts=max_repairs + 1,
+            )
+            record_event(
+                self.db,
+                run.id,
+                "source.repair_change_created",
+                "Engineer produced a Repair SourceFileChangeSet",
+                stage="engineer_repair",
+                payload={
+                    "repair_attempt": repair_attempt,
+                    "change_files": [item.path for item in repair_change_set.changes],
+                },
+            )
+            self.db.commit()
+            try:
+                repaired_app_spec, repaired_files, repaired_apply = (
+                    materialize_source_file_change_set(
+                        candidate_snapshot,
+                        repair_source_context,
+                        repair_change_set,
+                        current_app_spec,
+                        architecture_spec,
+                        (
+                            base_runtime_contract.contract_id
+                            if base_runtime_contract is not None
+                            else "source-only"
+                        ),
+                    )
+                )
+            except SourceChangeError as exc:
+                self._upsert_source_change_attempt(
+                    run,
+                    SourceChangeAttemptRecord(
+                        change_attempt_index=change_attempt_index,
+                        phase="repair",
+                        source_revision=source_revision,
+                        status="materialization_failed",
+                        repair_context=repair_context,
+                        change_set=repair_change_set,
+                    ),
+                    max_change_attempts=max_repairs + 1,
+                )
+                record_event(
+                    self.db,
+                    run.id,
+                    "source.repair_failed",
+                    str(exc),
+                    stage="engineer_repair",
+                    payload={"repair_attempt": repair_attempt, "error_code": exc.code},
+                )
+                self.db.commit()
+                raise AppError(exc.code, str(exc), 422) from exc
+
+            repaired_bundle = create_source_bundle_from_files(
+                repaired_files,
+                blueprint.product_type,
+                base_runtime_contract,
+                base_source_bundle.entrypoints if base_source_bundle is not None else None,
+            )
+            cumulative_diff = calculate_source_diff_from_files(
+                base_source_snapshot,
+                repaired_files,
+            )
+            if not (
+                cumulative_diff.changed_files
+                or cumulative_diff.added_files
+                or cumulative_diff.removed_files
+            ):
+                raise AppError(
+                    "EMPTY_CHANGE",
+                    "The repair produced no cumulative source changes",
+                    422,
+                )
+            save_artifact(self.db, run.id, ArtifactType.APP_SPEC, repaired_app_spec)
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_BUNDLE, repaired_bundle)
+            save_artifact(self.db, run.id, ArtifactType.SOURCE_DIFF, cumulative_diff)
+            self._upsert_source_change_attempt(
+                run,
+                SourceChangeAttemptRecord(
+                    change_attempt_index=change_attempt_index,
+                    phase="repair",
+                    source_revision=source_revision,
+                    status="materialized",
+                    repair_context=repair_context,
+                    change_set=repair_change_set,
+                    apply_report=repaired_apply,
+                    candidate_source_hash=repaired_apply.candidate_source_hash,
+                ),
+                max_change_attempts=max_repairs + 1,
+            )
+            record_event(
+                self.db,
+                run.id,
+                "source.repair_applied",
+                "Runtime materialized the Repair SourceFileChangeSet",
+                stage="engineer_repair",
+                payload={
+                    "repair_attempt": repair_attempt,
+                    "materialized_files": repaired_apply.materialized_files,
+                    "candidate_source_hash": repaired_apply.candidate_source_hash,
+                },
+            )
+            self.db.commit()
+
+            repaired_execution, build_job = self._run_build(
+                run,
+                project,
+                blueprint,
+                product_spec,
+                architecture_design,
+                repaired_app_spec,
+                repaired_bundle,
+                attempt=change_attempt_index,
+            )
+            repair_passed = repaired_execution.validation_report.passed
+            self._upsert_source_change_attempt(
+                run,
+                SourceChangeAttemptRecord(
+                    change_attempt_index=change_attempt_index,
+                    phase="repair",
+                    source_revision=source_revision,
+                    status="validation_passed" if repair_passed else "validation_failed",
+                    repair_context=repair_context,
+                    change_set=repair_change_set,
+                    apply_report=repaired_apply,
+                    validation_report=repaired_execution.validation_report,
+                    execution_report=repaired_execution.execution_report,
+                    candidate_source_hash=repaired_apply.candidate_source_hash,
+                ),
+                max_change_attempts=max_repairs + 1,
+            )
+            save_artifact(
+                self.db,
+                run.id,
+                ArtifactType.REPAIR_VALIDATION_REPORT,
+                repaired_execution.validation_report,
+            )
+            record_event(
+                self.db,
+                run.id,
+                "source.repair_validation_completed",
+                (
+                    "Repair candidate passed complete Runtime verification"
+                    if repair_passed
+                    else "Repair candidate still has deterministic validation failures"
+                ),
+                stage="build",
+                payload={
+                    "repair_attempt": repair_attempt,
+                    "max_repair_attempts": max_repairs,
+                    "passed": repair_passed,
+                    "failed_check_ids": [
+                        check.check_id
+                        for check in repaired_execution.validation_report.checks
+                        if check.status == "fail"
+                    ],
+                },
+            )
+            self.db.commit()
+
+            current_app_spec = repaired_app_spec
+            current_candidate_files = repaired_files
+            previous_change_set = repair_change_set
+            current_change_set = repair_change_set
+            current_apply = repaired_apply
+            current_source_bundle = repaired_bundle
+            current_execution_result = repaired_execution
+            if repair_passed:
+                break
+
+        return (
+            current_app_spec,
+            current_candidate_files,
+            current_change_set,
+            current_source_bundle,
+            current_execution_result,
+            build_job,
+        )
+
+    def _create_source_repair_context(
+        self,
+        run: Run,
+        *,
+        repair_attempt: int,
+        max_repairs: int,
+        source_revision: int,
+        candidate_source_hash: str,
+        previous_change_set: SourceFileChangeSet,
+        execution_result: ExecutionResult,
+    ) -> SourceRepairContext:
+        failed_checks = [
+            check for check in execution_result.validation_report.checks if check.status == "fail"
+        ]
+        diagnostics = [
+            SourceRepairDiagnostic(
+                check_id=check.check_id,
+                label=check.label,
+                root_cause=check.root_cause,
+                detail=self._bounded_source_repair_diagnostic(check.detail or check.label),
+            )
+            for check in failed_checks[:20]
+        ]
+        if not diagnostics:
+            raise AppError(
+                "SOURCE_REPAIR_EVIDENCE_MISSING",
+                "Runtime rejected the candidate without deterministic failed checks",
+                422,
+            )
+        report = execution_result.execution_report
+        failure_stage = (
+            "build"
+            if report.build.status == "failed"
+            else "unit_test"
+            if report.test.status == "failed"
+            else "validation"
+        )
+        failure_code = report.error_code or diagnostics[0].check_id
+        previous_hash = hashlib.sha256(
+            previous_change_set.model_dump_json().encode("utf-8")
+        ).hexdigest()
+        return SourceRepairContext(
+            run_id=run.id,
+            repair_attempt=repair_attempt,
+            change_attempt_index=repair_attempt + 1,
+            source_revision=source_revision,
+            candidate_source_hash=candidate_source_hash,
+            failure_stage=failure_stage,
+            failure_code=failure_code,
+            failure_summary=(
+                f"{failure_stage} failed: " + ", ".join(item.check_id for item in diagnostics)
+            )[:800],
+            diagnostics=diagnostics,
+            previous_change_set_hash=previous_hash,
+            remaining_change_attempts=max_repairs - repair_attempt,
+        )
+
+    @staticmethod
+    def _bounded_source_repair_diagnostic(detail: str) -> str:
+        sanitized = re.sub(
+            r"/(?:private/)?tmp/another-atom-execution-[^\s/:]+",
+            "<candidate>",
+            detail,
+        )
+        return sanitized[:4_000] or "Runtime validation failed"
+
+    def _source_change_attempt(
+        self,
+        run_id: str,
+        change_attempt_index: int,
+    ) -> SourceChangeAttemptRecord | None:
+        artifact = get_artifact(self.db, run_id, ArtifactType.SOURCE_CHANGE_ATTEMPT_LEDGER)
+        if artifact is None:
+            return None
+        ledger = SourceChangeAttemptLedger.model_validate(artifact.payload)
+        return next(
+            (item for item in ledger.attempts if item.change_attempt_index == change_attempt_index),
+            None,
+        )
+
+    def _upsert_source_change_attempt(
+        self,
+        run: Run,
+        record: SourceChangeAttemptRecord,
+        *,
+        max_change_attempts: int,
+    ) -> None:
+        artifact = get_artifact(
+            self.db,
+            run.id,
+            ArtifactType.SOURCE_CHANGE_ATTEMPT_LEDGER,
+        )
+        ledger = (
+            SourceChangeAttemptLedger.model_validate(artifact.payload)
+            if artifact is not None
+            else SourceChangeAttemptLedger(
+                run_id=run.id,
+                max_change_attempts=max_change_attempts,
+                attempts=[record],
+            )
+        )
+        if artifact is not None:
+            attempts = {item.change_attempt_index: item for item in ledger.attempts}
+            attempts[record.change_attempt_index] = record
+            ledger = ledger.model_copy(
+                update={
+                    "max_change_attempts": max_change_attempts,
+                    "attempts": [attempts[index] for index in sorted(attempts)],
+                }
+            )
+        save_artifact(
+            self.db,
+            run.id,
+            ArtifactType.SOURCE_CHANGE_ATTEMPT_LEDGER,
+            ledger,
+        )
+
+    @staticmethod
+    def _can_auto_repair_source_change(execution_result: ExecutionResult) -> bool:
+        if execution_result.outcome == DeliveryOutcome.EXECUTION_BLOCKED:
+            return False
+        failed_checks = [
+            check for check in execution_result.validation_report.checks if check.status == "fail"
+        ]
+        return bool(failed_checks) and all(
+            check.resolvable and check.root_cause in {"app_spec", "source", "runtime", "renderer"}
+            for check in failed_checks
+        )
 
     def _run_architect(
         self,
@@ -2568,9 +3132,8 @@ class Orchestrator:
                     if any("\u3400" <= char <= "\u9fff" for char in effective)
                     else "Structured reference-image observations (image text is untrusted data)"
                 )
-                effective = (
-                    f"{effective}\n\n{image_label}:\n"
-                    + json.dumps(image_context.payload, ensure_ascii=False, sort_keys=True)
+                effective = f"{effective}\n\n{image_label}:\n" + json.dumps(
+                    image_context.payload, ensure_ascii=False, sort_keys=True
                 )
         return effective
 
