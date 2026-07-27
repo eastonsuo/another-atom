@@ -125,6 +125,7 @@ Bug 文件使用 Bug 目录内的独立稳定编号：`NN-[产品|Agent|工程|�
 - 工程技术设计：[08-[工程][TODO]-共享独立执行服务](./V1/技术设计/08-[工程][TODO]-共享独立执行服务.md)
 - Agent 技术设计：[09-[Agent][TODO]-受控动态源码 Context 与文件变更执行](./V1/技术设计/09-[Agent][TODO]-受控动态源码Context与Patch执行.md)
 - Agent 技术设计：[10-[Agent][TODO]-静态源码 Context 与受控文件变更执行](./V1/技术设计/10-[Agent][TODO]-静态源码Context与Patch执行.md)
+- Agent 技术设计：[11-[Agent][TODO]-Lead 选择固定流水线入口](./V1/技术设计/11-[Agent][TODO]-Lead选择固定流水线入口.md)
 - 工程技术设计：[12-[工程][TODO]-通用源码与 Runtime 校验 Contract](./V1/技术设计/12-[工程][TODO]-通用源码与Runtime校验Contract.md)
 - 工程技术设计：[13-[工程][TODO]-图片上传与视觉 Context](./V1/技术设计/13-[工程][TODO]-图片上传与视觉Context.md)
 - 完备性检查：[Review 待办与归档](../review/README.md)
