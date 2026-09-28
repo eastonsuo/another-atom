@@ -5,7 +5,7 @@
 - This project is developed by one person. By default, commit and push changes directly to `main`; create a separate branch or pull request only when the user explicitly asks for one.
 - Implement the project in V1 -> V2 order. V1 is the current implementation and acceptance baseline.
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
-- 第一版首次创建执行产品经理（Product Manager）-> 架构师（Architect）-> 工程师（Engineer）完整链路。已有 Project 的修改按产品／架构是否变化选择三个固定入口，并由 Runtime 顺序执行剩余阶段；该产品基线已于 2026-09-28 确认，代码仍待实现。审批、适用的 Runtime Build/Test/Validation、基线检查和版本保护不能跳过；上游依据不足时从更早阶段开始，执行中发现需改变被跳过的上游设计时停止并重新确认任务。不引入任意角色组合、并行或跨角色自动回退。产品确认依据见 [Feature 04 产品说明](docs/features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，技术设计和 Code Spec 仍需独立确认。Build、Test、Validator 是确定性的非智能体阶段；Data Analyst 和 Reviewer 在新 Run 中暂不启用，只保留历史 Artifact 的只读兼容。
+- 第一版首次创建执行产品经理（Product Manager）-> 架构师（Architect）-> 工程师（Engineer）完整链路。已有 Project 的修改按产品／架构是否变化选择三个固定入口，并由 Runtime 顺序执行剩余阶段；该产品基线已于 2026-09-28 确认，代码仍待实现。审批、适用的 Runtime Build/Test/Validation、基线检查和版本保护不能跳过；上游依据不足时从更早阶段开始，执行中发现需改变被跳过的上游设计时停止并重新确认任务。不引入任意角色组合、并行或跨角色自动回退。产品确认依据见 [Feature 04 产品说明](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，技术设计和 Code Spec 仍需独立确认。Build、Test、Validator 是确定性的非智能体阶段；Data Analyst 和 Reviewer 在新 Run 中暂不启用，只保留历史 Artifact 的只读兼容。
 - 第一版的目标运行系统构建/测试/校验（Runtime Build/Test/Validation）由 Railway 同一项目、同一环境中的共享独立执行服务完成。所有用户共享该服务，主服务保持唯一任务事实源；执行服务不挂载主服务持久化卷、不持有业务密钥，且只允许固定受限运行时适配器（Runtime Adapter）。这是服务级隔离，不代表每用户或每任务独立强沙箱；在代码和 Railway 部署验收完成前，不得声称已支持真实构建和单元测试。
 - V2 autonomous multi-agent behavior is a planned implementation version after V1 acceptance; it is not implemented yet.
 - User requirements may describe any software product goal. Preserve the requested project type and target platform; never convert a non-Web project into a Web application or catalog merely because the current Runtime is easier to execute.
@@ -14,9 +14,9 @@
 
 ## Documentation Governance
 
-- Design is continuously maintained in two scopes: `docs/design/` holds shared product, architecture, version and deployment baselines; `docs/features/<稳定编号>-<中文功能名>/` holds Feature-specific product and technical design. Each contract has one authoritative home. Start from `docs/features/README.md` and the Feature entry to locate it.
+- Design is continuously maintained in two scopes: `docs/design/` holds shared product, architecture, version and deployment baselines; `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/` holds Feature-specific product and technical design. The five capability domains organize documents, not runtime components or delivery milestones. Each contract has one authoritative home. Start from `docs/features/README.md`, then the domain and Feature entry to locate it.
 - Feature design bodies have moved to their registered Feature directories. `docs/features/文档归属与迁移映射.md` records historical source paths and current authoritative destinations. Do not recreate old copies under `docs/design/`.
-- Feature directories and identifiers remain stable across iterations; version scope belongs in metadata. A Feature entry links applicable design, the current Code Spec, optional Plan, self-test and historical evidence. It does not duplicate design contracts or the Issue task queue. Create supporting documents only when needed.
+- Feature identifiers are globally unique across capability domains and remain stable across iterations; version scope belongs in metadata. The 2026-09-29 authorized grouping preserves identifiers 01–09 and adds baseline-derived entries 10–12. Domain READMEs only index features and explain ownership; a cross-domain contract has one home and is referenced elsewhere. A Feature entry links applicable design, the current Code Spec, optional Plan, self-test and historical evidence. It does not duplicate design contracts or the Issue task queue. Create supporting documents only when needed.
 - `docs/review/` records dated inspections, reflections, verification evidence, and milestone findings. A Review answers whether a product or technical area is complete and what the inspection found; it is not the current queue for independently reproducible implementation defects and does not become the long-term home of a solution design.
 - `docs/bug/` records independently reproducible implementation defects where existing Design, Contract, or accepted behavior is already clear but the code does not satisfy it. A Bug may be fixed directly without changing Design. If resolving it would change the expected Contract or product behavior, treat that part as a Review finding and update the applicable shared or Feature design before implementation.
 - New Review files start under `待办`. Move a Review to `归档` only after every finding is fixed, transferred to a newer pending Review or Bug, or made an explicit version-boundary decision; any durable conclusion must first be written into the applicable shared or Feature design, and the Review must receive a dated Update with the relevant Design, Bug, or verification links.
@@ -90,10 +90,10 @@ Before closing a task or milestone, verify:
 
 ### Validation workflow
 
-- 开发侧自测遵循 [`docs/validation/README.md`](./docs/validation/README.md)，记录按需创建于 `docs/features/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`。一个 Feature 只维护一份当前记录，执行批次绑定实际版本并追加结果；`docs/validation/` 只保留公共规范。
+- 开发侧自测遵循 [`docs/validation/README.md`](./docs/validation/README.md)，记录按需创建于 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`。一个 Feature 只维护一份当前记录，执行批次绑定实际版本并追加结果；`docs/validation/` 只保留公共规范。
 - 非生产环境及其不可变版本、访问入口和授权边界从 [`docs/agents/validation-environments.md`](./docs/agents/validation-environments.md) 读取。未登记或不能唯一识别的 Railway 环境不得推定为非生产环境。
 - 本地单元测试、静态检查、前端 lint/build 和本地真实边界集成属于代码实施；制品构建与环境变更属于部署；Smoke、API、页面和 E2E 属于环境验证。三类事实不得相互替代。
-- 本个人仓库的 `[实施澄清记录]` 位置登记为 `docs/features/<稳定编号>-<中文功能名>/11-实施澄清记录.md`；本轮已授权登记这一位置，后续在已授权 Feature 工作范围内按需创建，不为占位创建空文档。记录不能由现有依据唯一决定的语义冲突或持久工程取舍；普通实现问题和一次性操作授权不进入记录。完整讨论只留在该记录，已确认结论回写适用设计、Spec 或项目配置；记录本身不替代设计／Spec 确认及环境授权。
+- 本个人仓库的 `[实施澄清记录]` 位置登记为 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/11-实施澄清记录.md`；本轮目录授权随 Feature 更新这一位置，后续在已授权 Feature 工作范围内按需创建，不为占位创建空文档。记录不能由现有依据唯一决定的语义冲突或持久工程取舍；普通实现问题和一次性操作授权不进入记录。完整讨论只留在该记录，已确认结论回写适用设计、Spec 或项目配置；记录本身不替代设计／Spec 确认及环境授权。
 
 ### Issue tracker
 

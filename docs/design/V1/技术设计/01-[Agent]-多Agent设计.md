@@ -6,8 +6,8 @@
 - 更新日期：2026-07-16
 - 产品设计：[Another Atom V1 核心产品需求与交互](../产品设计/01-核心产品需求与交互.md)
 - 工程设计：[Another Atom V1 系统架构](./03-[工程]-系统架构.md)
-- 执行服务：[Another Atom V1 共享独立执行服务](../../../features/06-共享独立执行服务/02-技术总设计.md)
-- 图片输入：[Another Atom V1 图片上传与视觉 Context](../../../features/08-图片输入与视觉上下文/02-技术总设计.md)
+- 执行服务：[Another Atom V1 共享独立执行服务](../../../features/04-执行与验证环境/06-共享独立执行服务/02-技术总设计.md)
+- 图片输入：[Another Atom V1 图片上传与视觉 Context](../../../features/03-用户交互与协作/08-图片输入与视觉上下文/02-技术总设计.md)
 - 当前实现：[Another Atom V1 关键设计与实现 Review](../../../review/归档/08-[综合]-2026-07-12-关键设计与实现检查.md)
 - 整体产品：[Another Atom 整体产品目标与定位](../../整体/01-[产品]-整体产品目标与定位.md)
 - 问题整理：[多角色 Agent 设计问题整理](../../../review/归档/10-[Agent]-2026-07-13-多角色Agent设计问题整理.md)
@@ -44,7 +44,7 @@ V1 需要让产品、架构和工程三种专业分工可检查、可恢复且�
 
 ## 1. 设计结论
 
-V1 采用 **Lead 路由 + 文档驱动的固定顺序角色链路**，不是经典推理与行动循环（ReAct），也不是开放式自主智能体（Autonomous Agent）。首次创建执行完整链路；2026-09-28 已确认已有项目修改按产品／架构影响选择三个固定入口，确认依据见[Feature 04 产品说明](../../../features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，详细技术方案见[入口专项设计](../../../features/04-对话式代码修改/05-Lead选择固定流水线入口.md)。该能力尚未实现，技术设计与 Code Spec 仍需独立确认。
+V1 采用 **Lead 路由 + 文档驱动的固定顺序角色链路**，不是经典推理与行动循环（ReAct），也不是开放式自主智能体（Autonomous Agent）。首次创建执行完整链路；2026-09-28 已确认已有项目修改按产品／架构影响选择三个固定入口，确认依据见[Feature 04 产品说明](../../../features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，详细技术方案见[入口专项设计](../../../features/02-任务规划与执行编排/04-对话式代码修改/05-Lead选择固定流水线入口.md)。该能力尚未实现，技术设计与 Code Spec 仍需独立确认。
 
 项目类型不由智能体（Agent）流程预设。团队负责人（Lead）和产品经理（Product Manager）必须保留用户指定的软件类型与目标平台；进入架构师（Architect）/工程师（Engineer）阶段后，运行系统（Runtime）应选择匹配的源码和运行契约（Contract）。当前实现只有网页应用规格（Web AppSpec），因此只有网页（Web）项目能进入完整生成、预览（Preview）和公开路由（Public Route）链路；非网页请求不得被改写成网页项目，而应在匹配适配器（Adapter）尚未实现时形成明确能力缺口。
 
@@ -105,7 +105,7 @@ V1 把一次构建拆成四个边界清楚的步骤：
 
 ### 2.2 团队负责人（Lead）：首次入口区分询问与明确构建
 
-**职责与范围：** 本节描述首次创建入口的 Lead，不适用于已有 Project 的修改路由。首次进入团队不能跳过 PM 或 ProductSpec 确认；首次结构化澄清协议见[Feature 02](../../../features/02-首次需求澄清与产品方案/02-首次需求结构化澄清设计.md)。已有项目修改按 Feature 04 选择固定入口。两类入口均不能由 Lead 直接写代码、执行工具或改变版本与发布状态。
+**职责与范围：** 本节描述首次创建入口的 Lead，不适用于已有 Project 的修改路由。首次进入团队不能跳过 PM 或 ProductSpec 确认；首次结构化澄清协议见[Feature 02](../../../features/01-角色职责与能力/02-首次需求澄清与产品方案/02-首次需求结构化澄清设计.md)。已有项目修改按 Feature 04 选择固定入口。两类入口均不能由 Lead 直接写代码、执行工具或改变版本与发布状态。
 
 **当前输入契约（Contract）：**
 
@@ -135,7 +135,7 @@ API 返回的 `LeadDecisionView` 额外包含 `message_id`、实际 `model` 和�
 
 **职责：** 产品经理（Product Manager）保留用户目标、项目类型和目标平台，把当前需求整理成可阅读、可编辑、可随代码库持久化的完整产品规格（ProductSpec）。产品规格是下游产品事实源；产品蓝图（Blueprint）保留为能力路由和结构化索引，不能取代完整文档交给架构师（Architect）。
 
-**当前已实现：** 运行系统（Runtime）会形成产品规格阶段产物（ProductSpec Artifact），并把完整 Markdown 写入 `docs/product-spec.md`。用户可以在产品方案卡片中查看摘要并打开完整文档。完整生成代次（generation）、编辑失效和重新生成的剩余边界由 [PM 整理产品方案并由用户确认](../../../features/02-首次需求澄清与产品方案/01-产品说明.md) 继续约束。
+**当前已实现：** 运行系统（Runtime）会形成产品规格阶段产物（ProductSpec Artifact），并把完整 Markdown 写入 `docs/product-spec.md`。用户可以在产品方案卡片中查看摘要并打开完整文档。完整生成代次（generation）、编辑失效和重新生成的剩余边界由 [PM 整理产品方案并由用户确认](../../../features/01-角色职责与能力/02-首次需求澄清与产品方案/01-产品说明.md) 继续约束。
 
 **输出产品规格（`ProductSpec`）：**
 
@@ -213,7 +213,7 @@ API 返回的 `LeadDecisionView` 额外包含 `message_id`、实际 `model` 和�
 
 **职责：** 工程师（Engineer）只回答“哪些实际文件实现了产品规格（ProductSpec）和架构设计（ArchitectureDesign），以及如何用单元测试证明关键模块行为”。它不重新定义产品文案和视觉方向，也不能用自报结果代替真实构建与测试。
 
-**输入：** 已批准产品规格（ProductSpec）、与该产品规格指纹对齐的架构设计（ArchitectureDesign），以及主服务已选择的 Runtime Contract 标识、版本、内容指纹和 Engineer 可见要求。已有项目修改还需接收基线源码清单和明确变更要求。Runtime Contract 的选择、字段和校验职责以[通用源码与 Runtime 校验 Contract](../../../features/07-通用源码与运行校验/02-技术总设计.md)为事实来源；Engineer 只能原样引用，不能自行选择或改写 Contract。
+**输入：** 已批准产品规格（ProductSpec）、与该产品规格指纹对齐的架构设计（ArchitectureDesign），以及主服务已选择的 Runtime Contract 标识、版本、内容指纹和 Engineer 可见要求。已有项目修改还需接收基线源码清单和明确变更要求。Runtime Contract 的选择、字段和校验职责以[通用源码与 Runtime 校验 Contract](../../../features/05-产物与交付部署/07-通用源码与运行校验/02-技术总设计.md)为事实来源；Engineer 只能原样引用，不能自行选择或改写 Contract。
 
 **输出一：** 应用规格（`AppSpec`）。应用规格（AppSpec）收敛为应用交付清单，不再容纳完整源码或复制产品文案。
 
@@ -249,7 +249,7 @@ SourceBundle
 
 工程师（Engineer）自己编写的单元测试不能代替平台门禁。校验器（Validator）仍要独立检查产品范围、架构映射、源码完整性、安全边界、能力缺口与真实执行报告（ExecutionReport）。
 
-**2026-07-15 本地实现：** 工程师已同时交付应用规格（AppSpec）、`web-static-v1` 源码包（SourceBundle）和 `tests/*.test.js` 单元测试；项目 Git 和项目版本（ProjectVersion）保存源码、测试、源码清单指纹和执行证据。当前应用规格（AppSpec）仍保留网页源码兼容字段，源码包的项目类型也仍只实现 `web-static-v1`，尚未完成面向非 Web 项目的通用清单迁移。该剩余迁移由[通用源码与 Runtime 校验 Contract](../../../features/07-通用源码与运行校验/02-技术总设计.md)定义目标设计，并由[第二十二号评审（Review 22）](../../../review/待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md)跟踪实现与验收证据。
+**2026-07-15 本地实现：** 工程师已同时交付应用规格（AppSpec）、`web-static-v1` 源码包（SourceBundle）和 `tests/*.test.js` 单元测试；项目 Git 和项目版本（ProjectVersion）保存源码、测试、源码清单指纹和执行证据。当前应用规格（AppSpec）仍保留网页源码兼容字段，源码包的项目类型也仍只实现 `web-static-v1`，尚未完成面向非 Web 项目的通用清单迁移。该剩余迁移由[通用源码与 Runtime 校验 Contract](../../../features/05-产物与交付部署/07-通用源码与运行校验/02-技术总设计.md)定义目标设计，并由[第二十二号评审（Review 22）](../../../review/待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md)跟踪实现与验收证据。
 
 ### 2.6 运行系统构建、测试与校验器（Runtime Build、Test 与 Validator）：生成不可由智能体（Agent）改写的工程证据
 
@@ -445,7 +445,7 @@ Stage Context
 
 - Session 保存用户可恢复的交互边界；Run 保存一次构建/修改任务；StageRun 保存一次角色调用。
 - Artifact 使用不可变 ID、版本和 hash 引用，下一阶段不依赖内存对象。
-- 参考图片先形成绑定消息、原图指纹、视觉模型和 Prompt 版本的不可变 `ImageContext` 记录；进入团队后由 Run Artifact 引用，下游角色不重复调用视觉模型。具体 Contract 与失败路径由[图片上传与视觉 Context](../../../features/08-图片输入与视觉上下文/02-技术总设计.md)定义。
+- 参考图片先形成绑定消息、原图指纹、视觉模型和 Prompt 版本的不可变 `ImageContext` 记录；进入团队后由 Run Artifact 引用，下游角色不重复调用视觉模型。具体 Contract 与失败路径由[图片上传与视觉 Context](../../../features/03-用户交互与协作/08-图片输入与视觉上下文/02-技术总设计.md)定义。
 - 当前单实例实现以每类唯一 Artifact 作为阶段恢复检查点；成功输出与该次 Provider usage 在同一事务提交，Worker 重启后直接复用已提交 Artifact。
 - 错误上下文只保留错误码、失败 check、evidence ref 和截断摘要，不把无限日志送入模型。
 - 每次调用记录 `model`、`prompt_version`、`input_artifact_refs`、`output_artifact_id`、usage 和 attempt。
@@ -497,7 +497,7 @@ Engineer 必须交付单元测试，但“负责自测”不会赋予它 Shell T
 
 V2 如需开放 Tool，应先引入结构化 `ToolRequest`、独立权限策略、审批和运行级沙箱；不能直接把这些 Runtime 操作注册给 V1 Agent。
 
-当前 `web-static-v1` 适配器已经从应用规格（AppSpec）生成源码包（SourceBundle），在共享独立执行服务的临时目录中物化文件，固定执行 `node --check app.js`、`node --test tests/*.test.js` 和确定性校验，并把执行报告（ExecutionReport）写回主服务。该结论只适用于已登记的受限网页适配器；它不是通用依赖构建、任意 Shell 执行或任务级强沙箱，Railway 部署验收仍以[共享独立执行服务设计](../../../features/06-共享独立执行服务/02-技术总设计.md)为准。
+当前 `web-static-v1` 适配器已经从应用规格（AppSpec）生成源码包（SourceBundle），在共享独立执行服务的临时目录中物化文件，固定执行 `node --check app.js`、`node --test tests/*.test.js` 和确定性校验，并把执行报告（ExecutionReport）写回主服务。该结论只适用于已登记的受限网页适配器；它不是通用依赖构建、任意 Shell 执行或任务级强沙箱，Railway 部署验收仍以[共享独立执行服务设计](../../../features/04-执行与验证环境/06-共享独立执行服务/02-技术总设计.md)为准。
 
 ## 7. WebIDE、Sandbox 与执行边界
 

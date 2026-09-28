@@ -6,7 +6,7 @@
 
 - **关联 Review：** [Engineer 项目源码 Contract 缺口](../../review/待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md)
 - **完备性 Review：** [修改流水线设计同步与 Patch 实现检查](../../review/待办/26-[Agent]-2026-07-15-修改流水线设计同步与Patch实现检查.md)
-- **既有 Design：** [通用源码与 Runtime 校验 Contract](../../features/07-通用源码与运行校验/02-技术总设计.md)
+- **既有 Design：** [通用源码与 Runtime 校验 Contract](../../features/05-产物与交付部署/07-通用源码与运行校验/02-技术总设计.md)
 - **关联 Issue：** [#4](https://github.com/eastonsuo/another-atom/issues/4)
 
 ## 现象

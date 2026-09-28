@@ -210,7 +210,7 @@ V1 的核心目标：
 
 V1 选择：
 
-- 首次创建执行完整三角色链路；2026-09-28 已确认已有项目修改按影响选择三个固定入口，代码尚未实现，仍不做任意角色组合、动态委派和并行。当前产品基线与确认依据见[Feature 04](docs/features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)；
+- 首次创建执行完整三角色链路；2026-09-28 已确认已有项目修改按影响选择三个固定入口，代码尚未实现，仍不做任意角色组合、动态委派和并行。当前产品基线与确认依据见[Feature 04](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)；
 - 单实例或 Railway 单副本；
 - 进程内 BackgroundTask + 单 Worker；
 - 数据库持久化 Run/Job/Artifact/Version；
@@ -1030,9 +1030,9 @@ Runtime 限制：总返工轮次、单 Artifact 修订次数、相同 Evidence �
 ### 24.2 V1
 
 - `docs/design/V1/产品设计/01-核心产品需求与交互.md`：V1 产品 Contract、用户路径和验收边界。
-- `docs/features/09-管理员后台/01-产品说明.md`：V1 只读管理员后台产品设计。
+- `docs/features/03-用户交互与协作/09-管理员后台/01-产品说明.md`：V1 只读管理员后台产品设计。
 - `docs/design/V1/技术设计/01-[Agent]-多Agent设计.md`：V1 角色、HITL、Context、Tool 和状态机。
-- `docs/features/04-对话式代码修改/02-技术总设计.md`：Project 对话和 ChangeProposal 初版。
+- `docs/features/02-任务规划与执行编排/04-对话式代码修改/02-技术总设计.md`：Project 对话和 ChangeProposal 初版。
 - `docs/design/V1/技术设计/03-[工程]-系统架构.md`：V1 组件、数据、安全、恢复和部署。
 - `docs/design/V1/技术设计/04-[工程]-运行与部署.md`：配置与部署步骤。
 - `docs/review/归档/10-[Agent]-2026-07-13-多角色Agent设计问题整理.md`：Contract、Memory/RAG、多 Agent、TaskGraph 和 HITL 的阶段解释。

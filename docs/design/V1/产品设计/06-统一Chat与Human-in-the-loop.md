@@ -5,7 +5,7 @@
 - **文档状态：** V1 合并需求设计基线；Project 默认对话、修改授权与 Context 传递存在实现偏差，见 Review 20
 - **功能定位：** 用一条 Project Chat 承接问答、PM 需求澄清、用户确认、构建、失败继续和已有代码修改
 - **产品基线：** [V1 核心产品需求与交互](./01-核心产品需求与交互.md)
-- **相关详细设计：** [对话修改现有项目](../../../features/04-对话式代码修改/01-产品说明.md) · [Human-in-the-loop 审批](../../../features/03-人工确认与流程恢复/01-产品说明.md) · [PM 产品方案](../../../features/02-首次需求澄清与产品方案/01-产品说明.md) · [常驻流式对话与执行期间输入控制](../../../features/01-项目对话与交互控制/01-产品说明.md)
+- **相关详细设计：** [对话修改现有项目](../../../features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md) · [Human-in-the-loop 审批](../../../features/03-用户交互与协作/03-人工确认与流程恢复/01-产品说明.md) · [PM 产品方案](../../../features/01-角色职责与能力/02-首次需求澄清与产品方案/01-产品说明.md) · [常驻流式对话与执行期间输入控制](../../../features/03-用户交互与协作/01-项目对话与交互控制/01-产品说明.md)
 - **相关检查：** [19｜统一 Chat 与 HITL 核心纵切检查](../../../review/归档/19-[综合]-2026-07-14-统一Chat与HITL核心纵切检查.md) · [20｜Project 对话路由与代码修改授权检查](../../../review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md) · [24｜首次需求结构化澄清检查](../../../review/待办/24-[产品]-2026-07-14-首次需求结构化澄清.md)
 
 ## 背景
@@ -221,7 +221,7 @@ ai_edit Run
 - Project Lead 已能持久化可见增量并支持可选 `client_message_id`，但仍在 HTTP 请求内执行，缺少可租约、可重启恢复的 ConversationJob；
 - 修改任务卡尚未使用通用 Approval subject；当前专用 proposal 状态支持 pending、approved、stale 和幂等批准，但不支持独立 reject/cancel；
 - 批准前只有 Lead change summary，完整 ChangeBrief 在批准后的 Run 内产生；
-- 2026-09-28 核对：ArchitectureDesign、SourceBundle、单元测试、隔离执行与有界源码修正已有代码和本地用例，不能继续写为全部未实现；真实环境交付仍待验证。当前源码及结果语义见[Feature 07](../../../features/07-通用源码与运行校验/01-产品说明.md)，执行隔离见[Feature 06](../../../features/06-共享独立执行服务/01-产品说明.md)。
+- 2026-09-28 核对：ArchitectureDesign、SourceBundle、单元测试、隔离执行与有界源码修正已有代码和本地用例，不能继续写为全部未实现；真实环境交付仍待验证。当前源码及结果语义见[Feature 07](../../../features/05-产物与交付部署/07-通用源码与运行校验/01-产品说明.md)，执行隔离见[Feature 06](../../../features/04-执行与验证环境/06-共享独立执行服务/01-产品说明.md)。
 
 本轮也不将以下能力暗示为已完成：
 
@@ -229,7 +229,7 @@ ai_edit Run
 - 长期 Agent Memory 或基于向量检索的 RAG；
 - 外部 Git 或用户本地代码的无授权读取；
 - 任意 Shell、动态依赖安装或绕过 Sandbox 的执行；
-- ProductSpec 已写入真实文件，supported/adapted 均确认，主动重新生成已有 CAS 和新审批任务；完整 generation、直接编辑后的强制失效与显式 Architect Handoff 仍待完成。当前差距及代码依据见[Feature 02 产品说明](../../../features/02-首次需求澄清与产品方案/01-产品说明.md)。
+- ProductSpec 已写入真实文件，supported/adapted 均确认，主动重新生成已有 CAS 和新审批任务；完整 generation、直接编辑后的强制失效与显式 Architect Handoff 仍待完成。当前差距及代码依据见[Feature 02 产品说明](../../../features/01-角色职责与能力/02-首次需求澄清与产品方案/01-产品说明.md)。
 - 通用 Stop/Cancel API、富 Diff 消息卡片和所有风险类型的业务适配器。
 
 ## 8. 验收标准

@@ -6,7 +6,7 @@
 
 - **发布主题：** 可检查、可恢复的对话式项目修改
 - **产品范围：** V1 ProductSpec 确认、持久化 Project Chat、架构交付、受控源码修改与 Runtime 验证
-- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)、[常驻流式对话与执行期间输入控制](./docs/features/01-项目对话与交互控制/01-产品说明.md)、[静态源码 Context 与受控文件变更执行](./docs/features/04-对话式代码修改/03-静态源码Context与受控文件变更.md)
+- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)、[常驻流式对话与执行期间输入控制](./docs/features/03-用户交互与协作/01-项目对话与交互控制/01-产品说明.md)、[静态源码 Context 与受控文件变更执行](./docs/features/02-任务规划与执行编排/04-对话式代码修改/03-静态源码Context与受控文件变更.md)
 
 ### 本次发布
 
@@ -50,7 +50,7 @@
 
 ### 依据
 
-- [基于现有代码的对话式 AI Coding](./docs/features/04-对话式代码修改/02-技术总设计.md)
+- [基于现有代码的对话式 AI Coding](./docs/features/02-任务规划与执行编排/04-对话式代码修改/02-技术总设计.md)
 - [Project 对话路由与代码修改授权检查](./docs/review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)
 - [修改流水线设计同步与 Patch 实现检查](./docs/review/待办/26-[Agent]-2026-07-15-修改流水线设计同步与Patch实现检查.md)
 - [模型生成 Unified Diff 可靠性检查](./docs/review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)

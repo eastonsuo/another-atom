@@ -215,7 +215,7 @@ Engineer 候选一次通过率达到 90% 以上仍是 V1 的质量目标，但�
 
 ## 2026-07-16 Update：正式技术设计已建立
 
-长期方案已经写入[通用源码与 Runtime 校验 Contract](../../features/07-通用源码与运行校验/02-技术总设计.md)，并在 Agent 设计、系统架构和共享独立执行服务设计中建立职责链接。正式设计确认：
+长期方案已经写入[通用源码与 Runtime 校验 Contract](../../features/05-产物与交付部署/07-通用源码与运行校验/02-技术总设计.md)，并在 Agent 设计、系统架构和共享独立执行服务设计中建立职责链接。正式设计确认：
 
 - SourceBundle 是任意文本项目源码的权威产物，AppSpec 三段网页源码只保留历史兼容；
 - Runtime Contract 是 Engineer、预检、Runtime Adapter 与 UI 共同使用的唯一 Interface；
