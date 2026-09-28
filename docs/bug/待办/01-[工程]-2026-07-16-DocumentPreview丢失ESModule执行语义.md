@@ -5,7 +5,7 @@
 > 类型：Bug｜领域：工程｜状态：待办｜严重程度：P1｜日期：2026-07-16｜版本范围：V1
 
 - **关联 Review：** [Engineer 项目源码 Contract 缺口](../../review/待办/22-[工程]-2026-07-14-Engineer项目源码Contract缺口.md)
-- **既有 Design：** [通用源码与 Runtime 校验 Contract](../../design/V1/技术设计/12-[工程][TODO]-通用源码与Runtime校验Contract.md)
+- **既有 Design：** [通用源码与 Runtime 校验 Contract](../../features/07-通用源码与运行校验/02-技术总设计.md)
 - **关联 Issue：** [#3](https://github.com/eastonsuo/another-atom/issues/3)
 
 ## 现象

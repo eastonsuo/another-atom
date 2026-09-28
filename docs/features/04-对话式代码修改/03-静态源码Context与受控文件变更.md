@@ -4,9 +4,9 @@
 
 - **文档状态：** V1 本地实现基线；`SourceFileChangeSet`、隔离文件物化、Runtime 本地 Diff、静态 Context 下有界 Repair 与自动化测试已完成，真实 Provider、Worker 修复检查点恢复与 Railway 验收仍待完成
 - **功能范围：** 已有 Project 修改时的一次性源码 Context、受控文件变更、隔离候选、真实 Diff、最多两次验证修复与现有执行门禁
-- **上位设计：** [基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
-- **后续终态：** [受控动态源码 Context 与 Patch 执行](./09-[Agent][TODO]-受控动态源码Context与Patch执行.md)
-- **检查来源：** [29｜模型生成 Unified Diff 可靠性检查](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)
+- **上位设计：** [基于现有代码的对话式 AI Coding](./02-技术总设计.md)
+- **后续终态：** [受控动态源码 Context 与 Patch 执行](./04-动态源码Context与受控文件变更.md)
+- **检查来源：** [29｜模型生成 Unified Diff 可靠性检查](../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)
 
 ## 背景
 

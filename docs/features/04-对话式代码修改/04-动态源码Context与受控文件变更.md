@@ -5,13 +5,13 @@
 - **文档状态：** V1 目标技术设计；静态 `SourceFileChangeSet`、隔离文件物化和验证失败后最多两次 Repair ChangeSet 已本地实现，动态读取、完整 CandidateRevision/ContextReceipt 协议、修复检查点恢复与 Railway 验收尚未完成
 - **更新日期：** 2026-07-16
 - **功能范围：** 已有 Project 的 Engineer 源码读取、受控文件变更、候选物化、验证与恢复
-- **上位设计：** [基于现有代码的对话式 AI Coding](./02-[Agent]-基于现有代码的对话式AI-Coding.md)
-- **审批设计：** [Human-in-the-loop 审批机制](./05-[Agent][TODO]-Human-in-the-loop审批机制.md)
-- **执行服务：** [共享独立执行服务](./08-[工程][TODO]-共享独立执行服务.md)
-- **设计来源：** [20｜Project 对话路由与代码修改授权检查](../../../review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)
-- **实现状态复核：** [26｜修改流水线设计同步与 Patch 实现检查](../../../review/待办/26-[Agent]-2026-07-15-修改流水线设计同步与Patch实现检查.md)
-- **第一阶段实现：** [静态源码 Context 与 Patch 执行](./10-[Agent][TODO]-静态源码Context与Patch执行.md)
-- **文件变更 Contract 修订：** [29｜模型生成 Unified Diff 可靠性检查](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)
+- **上位设计：** [基于现有代码的对话式 AI Coding](./02-技术总设计.md)
+- **审批设计：** [Human-in-the-loop 审批机制](../03-人工确认与流程恢复/02-技术总设计.md)
+- **执行服务：** [共享独立执行服务](../06-共享独立执行服务/02-技术总设计.md)
+- **设计来源：** [20｜Project 对话路由与代码修改授权检查](../../review/待办/20-[综合]-2026-07-14-Project对话路由与代码修改授权检查.md)
+- **实现状态复核：** [26｜修改流水线设计同步与 Patch 实现检查](../../review/待办/26-[Agent]-2026-07-15-修改流水线设计同步与Patch实现检查.md)
+- **第一阶段实现：** [静态源码 Context 与 Patch 执行](./03-静态源码Context与受控文件变更.md)
+- **文件变更 Contract 修订：** [29｜模型生成 Unified Diff 可靠性检查](../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md)
 
 ## 背景
 
@@ -19,7 +19,7 @@
 
 本文把目标确定为一条有边界的完整闭环：模型先读取初始源码，信息不足时结构化申请补充；信息足够后返回小范围 `SourceFileChangeSet`；Runtime 在隔离候选工作区物化声明文件并立即执行构建、单元测试和校验；属于代码问题且仍有预算时，把结构化错误和当前候选源码重新交给 Engineer 生成 Repair ChangeSet。所有候选修正通过后才创建 ProjectVersion 和 Git commit，失败或达到上限时丢弃候选，不影响当前版本。
 
-“静态源码 Context → raw Patch → 隔离 apply”第一阶段已被 [Review 29](../../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 证明不适合作为终态基础。当前已完成 `SourceFileChangeSet`、Runtime 文件物化和静态 Context 下的有界验证修复；下一步不再重写修复循环，而是补齐 RepositoryMap、`NeedContext`、ContextReceipt 和按 revision 读取。动态读取复用现有文件变更 Module，不复用 `git apply` 链。
+“静态源码 Context → raw Patch → 隔离 apply”第一阶段已被 [Review 29](../../review/待办/29-[工程]-2026-07-15-模型生成UnifiedDiff可靠性检查.md) 证明不适合作为终态基础。当前已完成 `SourceFileChangeSet`、Runtime 文件物化和静态 Context 下的有界验证修复；下一步不再重写修复循环，而是补齐 RepositoryMap、`NeedContext`、ContextReceipt 和按 revision 读取。动态读取复用现有文件变更 Module，不复用 `git apply` 链。
 
 ## 摘要
 
@@ -1140,7 +1140,7 @@ error_code / trace_id
 
 迁移不能同时改完所有路径后一次切换。推荐顺序：
 
-raw Patch 第一阶段曾出现与业务语义无关的 hunk 语法失败。当前已按[静态源码 Context 与受控文件变更执行](./10-[Agent][TODO]-静态源码Context与Patch执行.md)完成 `SourceFileChangeSet -> 隔离文件物化 -> 真实 Diff -> Build/Test/Validation` 本地迁移，动态 Context 从这一文件变更 Module 继续扩展。
+raw Patch 第一阶段曾出现与业务语义无关的 hunk 语法失败。当前已按[静态源码 Context 与受控文件变更执行](./03-静态源码Context与受控文件变更.md)完成 `SourceFileChangeSet -> 隔离文件物化 -> 真实 Diff -> Build/Test/Validation` 本地迁移，动态 Context 从这一文件变更 Module 继续扩展。
 
 第一阶段不能成为另一套长期协议。它在迁移时必须被归入终态 Contract 的受限子集：
 

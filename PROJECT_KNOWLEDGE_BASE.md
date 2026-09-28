@@ -1030,9 +1030,9 @@ Runtime 限制：总返工轮次、单 Artifact 修订次数、相同 Evidence �
 ### 24.2 V1
 
 - `docs/design/V1/产品设计/01-核心产品需求与交互.md`：V1 产品 Contract、用户路径和验收边界。
-- `docs/design/V1/产品设计/02-管理员后台需求与交互.md`：V1 只读管理员后台产品设计。
+- `docs/features/09-管理员后台/01-产品说明.md`：V1 只读管理员后台产品设计。
 - `docs/design/V1/技术设计/01-[Agent]-多Agent设计.md`：V1 角色、HITL、Context、Tool 和状态机。
-- `docs/design/V1/技术设计/02-[Agent]-基于现有代码的对话式AI-Coding.md`：Project 对话和 ChangeProposal 初版。
+- `docs/features/04-对话式代码修改/02-技术总设计.md`：Project 对话和 ChangeProposal 初版。
 - `docs/design/V1/技术设计/03-[工程]-系统架构.md`：V1 组件、数据、安全、恢复和部署。
 - `docs/design/V1/技术设计/04-[工程]-运行与部署.md`：配置与部署步骤。
 - `docs/review/归档/10-[Agent]-2026-07-13-多角色Agent设计问题整理.md`：Contract、Memory/RAG、多 Agent、TaskGraph 和 HITL 的阶段解释。

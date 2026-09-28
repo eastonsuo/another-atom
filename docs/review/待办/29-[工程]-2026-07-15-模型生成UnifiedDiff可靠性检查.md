@@ -5,9 +5,9 @@
 > 类型：工程检查｜状态：待办｜日期：2026-07-15｜版本范围：V1｜代码基线：`d280b77`
 
 - **问题来源：** Run `1c36c375-f800-4ef8-8b2d-d4392ed68f9b` 的 Debug Log
-- **相关设计：** [静态源码 Context 与 Patch 执行](../../design/V1/技术设计/10-[Agent][TODO]-静态源码Context与Patch执行.md)
-- **上位设计：** [基于现有代码的对话式 AI Coding](../../design/V1/技术设计/02-[Agent]-基于现有代码的对话式AI-Coding.md)
-- **后续设计：** [受控动态源码 Context 与 Patch 执行](../../design/V1/技术设计/09-[Agent][TODO]-受控动态源码Context与Patch执行.md)
+- **相关设计：** [静态源码 Context 与 Patch 执行](../../features/04-对话式代码修改/03-静态源码Context与受控文件变更.md)
+- **上位设计：** [基于现有代码的对话式 AI Coding](../../features/04-对话式代码修改/02-技术总设计.md)
+- **后续设计：** [受控动态源码 Context 与 Patch 执行](../../features/04-对话式代码修改/04-动态源码Context与受控文件变更.md)
 
 ## 背景
 
