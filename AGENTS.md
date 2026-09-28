@@ -5,7 +5,7 @@
 - This project is developed by one person. By default, commit and push changes directly to `main`; create a separate branch or pull request only when the user explicitly asks for one.
 - Implement the project in V1 -> V2 order. V1 is the current implementation and acceptance baseline.
 - V1 delivers a Railway-hosted cloud application; Terminal CLI and local repository execution are outside V1.
-- 第一版使用固定顺序的模型角色链路：产品经理（Product Manager）-> 架构师（Architect）-> 工程师（Engineer）。工程师之后的运行系统构建（Runtime Build）、测试（Test）和校验器（Validator）是确定性的非智能体阶段。新运行（Run）暂不启用数据分析师（Data Analyst）和质量评审员（Reviewer），仅保留历史阶段产物（Artifact）的只读兼容。
+- 第一版首次创建执行产品经理（Product Manager）-> 架构师（Architect）-> 工程师（Engineer）完整链路。已有 Project 的修改按产品／架构是否变化选择三个固定入口，并由 Runtime 顺序执行剩余阶段；该产品基线已于 2026-09-28 确认，代码仍待实现。审批、适用的 Runtime Build/Test/Validation、基线检查和版本保护不能跳过；上游依据不足时从更早阶段开始，执行中发现需改变被跳过的上游设计时停止并重新确认任务。不引入任意角色组合、并行或跨角色自动回退。产品确认依据见 [Feature 04 产品说明](docs/features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，技术设计和 Code Spec 仍需独立确认。Build、Test、Validator 是确定性的非智能体阶段；Data Analyst 和 Reviewer 在新 Run 中暂不启用，只保留历史 Artifact 的只读兼容。
 - 第一版的目标运行系统构建/测试/校验（Runtime Build/Test/Validation）由 Railway 同一项目、同一环境中的共享独立执行服务完成。所有用户共享该服务，主服务保持唯一任务事实源；执行服务不挂载主服务持久化卷、不持有业务密钥，且只允许固定受限运行时适配器（Runtime Adapter）。这是服务级隔离，不代表每用户或每任务独立强沙箱；在代码和 Railway 部署验收完成前，不得声称已支持真实构建和单元测试。
 - V2 autonomous multi-agent behavior is a planned implementation version after V1 acceptance; it is not implemented yet.
 - User requirements may describe any software product goal. Preserve the requested project type and target platform; never convert a non-Web project into a Web application or catalog merely because the current Runtime is easier to execute.

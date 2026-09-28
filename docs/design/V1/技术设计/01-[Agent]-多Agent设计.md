@@ -27,9 +27,9 @@ V1 需要让产品、架构和工程三种专业分工可检查、可恢复且�
 ## 摘要
 
 - **入口路由**
-  - 团队负责人（Lead）只执行 `direct/team` 二选一路由，不动态创建任务图或调整权限。
+  - 团队负责人（Lead）接收用户请求，不动态创建任务图或调整权限；首次创建进入完整团队，已有项目修改可按影响选择固定入口，产品范围已确认、实现待完成。
 - **固定三角色**
-  - 团队（Team）只顺序运行产品经理（Product Manager）、架构师（Architect）和工程师（Engineer）。数据分析师（Data Analyst）与质量评审员（Reviewer）保留历史数据兼容，不再是 V1 新运行（Run）的必经阶段。
+  - 首次创建顺序运行产品经理（Product Manager）、架构师（Architect）和工程师（Engineer）；已有项目修改的目标是从所选入口执行固定后缀。Data Analyst 与 Reviewer 保留历史数据兼容，不再是 V1 新 Run 的必经阶段。
 - **文档与源码交接**
   - 产品经理（Product Manager）交付已批准产品规格（ProductSpec），架构师（Architect）交付代码库中的架构设计文档，工程师（Engineer）交付项目源码、单元测试和必要测试配置。
 - **工程自测闭环**
@@ -44,12 +44,12 @@ V1 需要让产品、架构和工程三种专业分工可检查、可恢复且�
 
 ## 1. 设计结论
 
-V1 采用 **团队负责人（Lead）二选一路由 + 文档驱动的固定三角色团队**，不是经典推理与行动循环（ReAct），也不是开放式自主智能体（Autonomous Agent）。
+V1 采用 **Lead 路由 + 文档驱动的固定顺序角色链路**，不是经典推理与行动循环（ReAct），也不是开放式自主智能体（Autonomous Agent）。首次创建执行完整链路；2026-09-28 已确认已有项目修改按产品／架构影响选择三个固定入口，确认依据见[Feature 04 产品说明](../../../features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，详细技术方案见[入口专项设计](../../../features/04-对话式代码修改/05-Lead选择固定流水线入口.md)。该能力尚未实现，技术设计与 Code Spec 仍需独立确认。
 
 项目类型不由智能体（Agent）流程预设。团队负责人（Lead）和产品经理（Product Manager）必须保留用户指定的软件类型与目标平台；进入架构师（Architect）/工程师（Engineer）阶段后，运行系统（Runtime）应选择匹配的源码和运行契约（Contract）。当前实现只有网页应用规格（Web AppSpec），因此只有网页（Web）项目能进入完整生成、预览（Preview）和公开路由（Public Route）链路；非网页请求不得被改写成网页项目，而应在匹配适配器（Adapter）尚未实现时形成明确能力缺口。
 
 ```text
-用户消息
+首次创建请求
    |
    v
 Lead Agent -> LeadDecision(route=direct|team)
@@ -71,7 +71,7 @@ Lead Agent -> LeadDecision(route=direct|team)
 | -------------------------------------------- | ------- | ---------------------------------------- |
 | ReAct：模型循环执行 Action -> Observation -> Action | 否       | V1 不向模型开放 Shell、文件、构建或发布 Tool，不需要开放式工具循环 |
 | 开放式 Plan-and-Execute                         | 否       | Lead 不能自由创建任务图、选择任意角色、决定权限、重试次数或发布       |
-| Lead 二选一路由                                   | 是       | Lead 只决定直接回答/澄清，或调用完整固定团队；用户可以覆盖为“调用团队”  |
+| 首次入口的 Lead 路由                              | 是       | 回答、澄清或进入完整团队；已有项目修改的固定入口选择另由 Feature 04 约束 |
 | Contract-first Plan -> Execute -> Validate   | 是       | 团队产生显式产物，平台按固定状态机执行，Validator 决定确定性结果    |
 
 
@@ -101,11 +101,11 @@ V1 把一次构建拆成四个边界清楚的步骤：
 | 运行系统校验器（Runtime Validator） | 产品范围、架构映射、源码安全和运行边界是否通过？ | 产品规格、架构设计、应用规格、源码包和执行报告 | 校验报告（`ValidationReport`） | 否 |
 | 用户（User） | 当前版本是否符合预期，是否继续修改或发布？ | 预览（Preview）、源码、文档和验证证据 | 验收、修改或发布指令 | 否 |
 
-团队负责人（Lead）只决定是否进入团队；进入 `team` 后只按产品经理（Product Manager）、架构师（Architect）、工程师（Engineer）的顺序执行。构建（Build）、测试（Test）和校验器（Validator）是运行系统（Runtime）的确定性阶段，不计入模型角色。
+首次创建进入团队后，按 Product Manager、Architect、Engineer 的顺序完整执行。已有项目修改允许从产品、架构或工程入口执行固定后缀；被跳过的阶段复用有效上游产物，不伪装成新调用。构建、测试和校验是 Runtime 的确定性阶段，不计入模型角色，也不能因入口后移而跳过。
 
-### 2.2 团队负责人（Lead）：区分询问与明确构建
+### 2.2 团队负责人（Lead）：首次入口区分询问与明确构建
 
-**职责：** 团队负责人（Lead）是用户入口，只判断本条消息走 `direct` 还是 `team`。`direct` 返回回答或澄清；`team` 表示进入产品经理（Product Manager）、架构师（Architect）、工程师（Engineer）固定三角色团队。它不生成产品规格（ProductSpec），不选择专业角色，不执行工具（Tool），也不改变项目（Project）、版本或发布状态。
+**职责与范围：** 本节描述首次创建入口的 Lead，不适用于已有 Project 的修改路由。首次进入团队不能跳过 PM 或 ProductSpec 确认；首次结构化澄清协议见[Feature 02](../../../features/02-首次需求澄清与产品方案/02-首次需求结构化澄清设计.md)。已有项目修改按 Feature 04 选择固定入口。两类入口均不能由 Lead 直接写代码、执行工具或改变版本与发布状态。
 
 **当前输入契约（Contract）：**
 
@@ -289,7 +289,7 @@ V1 新运行（Run）不调用质量评审员（Reviewer），不生成伪造的
 
 历史质量评审报告（ReviewReport）和相关模式（Schema）可保留只读兼容，但质量评审员（Reviewer）失败不再阻断新运行（Run）。未来如要重新启用模型质量评审，必须先证明它能发现确定性门禁和用户验收无法覆盖的问题，而不是为了保留多角色形式而必经调用。
 
-### 2.9 固定交接链路
+### 2.9 首次创建的固定交接链路
 
 ```text
 Lead            -> LeadDecision（direct reply | fixed team）
@@ -304,7 +304,7 @@ Validator       -> ValidationReport
 
 每个 Agent Artifact 都先经过 Schema 校验再持久化；ProductSpec、ArchitectureDesign 和 SourceBundle 还必须在 Project Git 中有对应文件和内容指纹。下一阶段读取已保存产物，不依赖上一角色的隐藏对话或 Chain of Thought。
 
-### 2.10 二选一路由边界
+### 2.10 首次入口与项目修改的路由边界
 
 V1 不再让用户先理解 Engineer Mode / Team Mode。默认入口只有 Lead：
 
@@ -312,15 +312,17 @@ V1 不再让用户先理解 Engineer Mode / Team Mode。默认入口只有 Lead�
 用户询问能力、状态或需求不完整
     -> direct -> Lead 回答或澄清
 
-用户明确要求创建、修改、修复应用
+用户明确要求首次创建应用
     -> team -> Product Manager -> Architect -> Engineer
 ```
 
 Lead 不得在 `direct` 路径中偷偷生成 ProductSpec、AppSpec、修改仓库或消耗团队预算。用户可以点击“调用团队”覆盖 direct 判断；进入 team 后，supported 和 adapted ProductSpec 都要求用户确认当前内容指纹，不再另行批准 Blueprint 表单。
 
+已有 Project 的回答、澄清和修改提案不复用上述首次创建路由。修改提案须经用户批准，再由 Runtime 从所选固定入口执行；入口选择的目标合同统一维护在 Feature 04，不在本节重复定义。
+
 ## 3. Orchestrator 与执行状态
 
-V1 的 Lead 是独立 Agent，但自主范围只到 `direct/team` 二选一；Runtime 校验 LeadDecision 后推进固定状态机：
+以下状态机描述首次创建的完整链路；已有项目修改仍由 Runtime 调度，按 Feature 04 的固定入口方案复用有效上游产物。Lead 不因入口选择而获得权限、预算或发布控制权：
 
 ```text
 Created
@@ -344,7 +346,7 @@ Created
 
 硬规则：
 
-- Lead 只选择 direct/team；进入 team 后专业角色只有 Product Manager、Architect 和 Engineer，不由模型选择或追加角色。
+- 首次创建执行完整三角色链路；已有项目修改只允许选择三个固定入口，不允许任意组合、重排或追加角色。Runtime 负责实际执行和门禁。
 - ProductSpec 未批准、内容指纹改变或能力结论为 unsupported 时，不得进入 Architect。
 - ArchitectureDesign 的 `product_spec_hash` 必须与当前已批准 ProductSpec 一致；AppSpec 与 SourceBundle 必须同时绑定 ProductSpec、ArchitectureDesign 和源码清单指纹。
 - 同一时刻一个 Run 只有一个主阶段；重试和修复创建新的 stage attempt。

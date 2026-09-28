@@ -63,7 +63,7 @@ See the [overall product goal and positioning](./docs/design/整体/01-[产品]-
 
 - **Single entry point:** Users primarily talk to Lead and do not need to understand internal roles, modes, or workflows first.
 - **Specialized responsibilities:** Product Manager delivers ProductSpec, Architect delivers ArchitectureDesign, and Engineer delivers a SourceBundle with unit tests. Runtime performs deterministic Build, Test, and Validation. Data Analyst and Reviewer are disabled for new V1 Runs.
-- **Fixed handoff:** V1 uses a sequential Product Manager, Architect, and Engineer pipeline. Inspectable artifacts and explicit handoffs—not role count—provide the collaboration value.
+- **Fixed handoff:** Initial creation runs the complete Product Manager → Architect → Engineer pipeline. Choosing one of three fixed entry stages for existing-project changes is now part of the V1 product baseline, but is not implemented; current code still runs all three roles. See the [product scope](./docs/features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工). Entry selection does not bypass approval or validation.
 - **User involvement:** Users must confirm ProductSpec before engineering execution. ArchitectureDesign is inspectable but does not add a second mandatory approval unless it changes the confirmed product scope, target platform, or external capability boundary.
 
 ### Vibe Coding Workspace

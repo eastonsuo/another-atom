@@ -119,7 +119,7 @@ Bug 文件使用 Bug 目录内的独立稳定编号：`NN-[产品|Agent|工程|�
 - 完备性检查：[Review 待办与归档](../review/README.md)
 - 实现缺陷：[Bug 待办与归档](../bug/README.md)
 
-V1 目标固定顺序链路为：产品经理（Product Manager）→架构师（Architect）→工程师（Engineer）→共享运行系统构建、测试与校验（Runtime Build/Test/Validation）。数据分析师（Data Analyst）和质量评审员（Reviewer）在新运行中暂不启用；动态任务图（TaskGraph）、角色子集、局部并行、智能体（Agent）自主返工和多工作器（Worker）属于 V2。当前代码与目标的差异以待办评审和各文档的“当前实现”段落为准。
+V1 首次创建执行产品经理（Product Manager）→架构师（Architect）→工程师（Engineer）完整链路。已有项目修改按影响选择起始阶段并执行固定后缀，已于 2026-09-28 纳入产品基线、尚未实现；具体边界见[Feature 04 产品说明](../features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)。入口选择不跳过审批、适用的 Runtime Build/Test/Validation、基线检查和版本保护。Data Analyst 和 Reviewer 暂不启用；任意角色子集、动态 TaskGraph、局部并行、跨角色自主返工和多 Worker 仍属于 V2。当前代码与目标的差异以各文档的“当前实现”段落和相关检查证据为准。
 
 功能专项及未完成项统一见[九个 Feature 入口](../features/README.md)。
 

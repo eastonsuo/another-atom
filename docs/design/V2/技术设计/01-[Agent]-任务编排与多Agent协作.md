@@ -79,7 +79,7 @@ Artifact / Evidence -> Handoff -> Validator
 | 维度 | V1 | V2 改动 |
 | --- | --- | --- |
 | 执行范式 | Contract-first 固定 Plan -> Execute -> Validate | Leader 分层 Plan-and-Execute；Engineer/Data Analyst 可在单任务内 bounded ReAct |
-| Agent 拓扑 | 独立 Lead Agent 二选一路由；team 内五个 Specialist 固定顺序 | Lead 升级为 TaskGraph 协调者；五个 Specialist 可按图执行 |
+| Agent 拓扑 | 首次创建完整三角色链路；已有项目修改的三个固定入口已纳入产品基线、尚未实现，见 [Feature 04](../../../features/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工) | Lead 升级为 TaskGraph 协调者；五个 Specialist 可按图执行 |
 | Orchestrator | 平台状态机决定固定下一阶段 | Leader 提交 TaskGraph/Decision，Runtime 校验后动态调度 |
 | Context | Runtime 为每阶段组装最小 Artifact Context | Agent 独立 Context，通过 Handoff Package 传递 Artifact/Evidence，不共享隐藏记忆 |
 | Human-in-the-loop | adapted/范围变化、额外预算、破坏性仓库操作和 Publish | 保留 V1 风险门禁；新增越权 Tool、外部依赖/网络、预算扩展和无法仲裁冲突的确认 |
