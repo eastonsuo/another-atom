@@ -2,7 +2,7 @@
 
 [toc]
 
-项目文档分为 Design、Review 和 Bug 三类。已经确认的方案进入 Design；带日期的功能完备性检查和阶段结论进入 Review；违反既有设计或 Contract、能够独立复现和验收的代码实现错误进入 Bug。图片等非文档资源保存在 `assets/`。
+项目文档的长期产品与技术事实分为 Design、Review 和 Bug 三类。已经确认的方案进入 Design；带日期的功能完备性检查和阶段结论进入 Review；违反既有设计或 Contract、能够独立复现和验收的代码实现错误进入 Bug。Feature 的派生实施合同、可选任务账本和开发侧验证证据分别进入 `superpowers/` 与 `validation/`，不构成新的设计事实源。图片等非文档资源保存在 `assets/`。
 
 ## 设计
 
@@ -22,6 +22,16 @@ Review 发现需要系统性解决的问题时，在相应 Review 中记录依�
 ## Bug
 
 [Bug 文档](./bug/README.md)回答“哪个既有预期被代码实现违反、如何复现和证明修复”。Bug 默认可以直接修改代码，不要求同步更新 Design；只有修复会改变既有 Contract 或产品行为时，才把该部分升级为 Review/Design 变更。GitHub Issue 负责执行状态，Bug 文档保留仓库内的复现、根因与验收证据。
+
+## Feature 交付
+
+[Feature 交付工作流](./agents/feature-delivery-workflow.md)规定从技术设计、Code Spec、代码实施到非生产验证的门禁和交接关系。
+
+- [`superpowers/`](./superpowers/README.md)保存从已确认技术总设计派生的正式 Code Spec，以及复杂 Feature 可选的唯一 Implementation Plan。
+- [`validation/`](./validation/README.md)保存每个 Feature 唯一的开发侧自测方案与执行记录。
+- [`agents/validation-environments.md`](./agents/validation-environments.md)登记可以用于开发侧验证的环境、不可变版本口径和访问边界。
+
+这些文档只承接 Design 的已确认合同，不得增加或改变产品行为、架构职责、数据语义、故障、兼容或迁移决定。
 
 ## 资源
 

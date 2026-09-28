@@ -76,6 +76,21 @@ Before closing a task or milestone, verify:
 
 ## Agent skills
 
+### Feature delivery workflow
+
+- 新增或改变产品行为、公共接口、数据语义、组件职责、跨组件合同、故障、兼容或迁移时，遵循 [`docs/agents/feature-delivery-workflow.md`](docs/agents/feature-delivery-workflow.md)。不得以普通 Bug／维护修复绕过技术设计和 Code Spec 门禁。
+- `docs/design/` 继续作为产品与技术设计的唯一权威来源；正式 Code Spec 和可选 Implementation Plan 分别进入 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`，不得在 Issue、Review 或代码中建立平行设计。
+- 每个阶段只在其门禁满足后进入下一阶段。技术总设计确认、Code Spec 确认、Plan 确认和环境写入授权彼此独立；Agent 不得代替用户确认，也不得因用户要求“完整推进”而跨过尚未满足的门禁。
+- Implementation Plan 默认可选。只有用户明确要求，或复杂、跨仓、需要多轮维护任务账本时才使用；没有 Plan 不阻止已确认 Code Spec 进入实施。
+- 本仓库不采用 `openspec/**` 作为默认 Feature 流程。除非用户明确决定迁移到 OpenSpec，否则不得新建第二套 Spec 状态源。
+
+### Validation workflow
+
+- 开发侧自测遵循 [`docs/validation/README.md`](docs/validation/README.md)，一个 Feature 只维护一份自测方案与执行记录。
+- 非生产环境及其不可变版本、访问入口和授权边界从 [`docs/agents/validation-environments.md`](docs/agents/validation-environments.md) 读取。未登记或不能唯一识别的 Railway 环境不得推定为非生产环境。
+- 本地单元测试、静态检查、前端 lint/build 和本地真实边界集成属于代码实施；制品构建与环境变更属于部署；Smoke、API、页面和 E2E 属于环境验证。三类事实不得相互替代。
+- 当前未登记仓库内 `[实施澄清记录]`。需要形成持久实施基线、但现有设计和代码无法唯一决定的事项，在获得明确路径和写入授权前只在当前回复中报告，不写入 Design、Code Spec、Plan、Issue 或源码仓库。
+
 ### Issue tracker
 
 本仓库使用 GitHub Issues 跟踪议题。详见 `docs/agents/issue-tracker.md`。
