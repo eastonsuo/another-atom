@@ -1,19 +1,19 @@
 # Code Spec 与 Implementation Plan
 
-本目录保存从 `docs/design/**` 派生的实施合同和可选任务账本，不是新的产品或技术设计来源。项目级门禁与阶段关系见 [`Feature 交付工作流`](../agents/feature-delivery-workflow.md)。
+本目录保存从 [Feature 入口](../features/README.md)登记的已确认技术总设计派生的实施合同和可选任务账本；设计可位于共同基线或 Feature 专项目录，迁移期使用登记的现有正文路径。项目级门禁见 [Feature 交付工作流](../agents/feature-delivery-workflow.md)。
 
 ## Code Spec
 
 正式 Code Spec 放在 `specs/`，推荐命名：
 
 ```text
-YYYY-MM-DD-中文主题-Code-Spec.md
+<Feature稳定编号>-<中文功能名>-Code-Spec.md
 ```
 
 每份 Code Spec 至少记录：
 
-- 文档性质、Feature 和覆盖范围；
-- 唯一主技术设计及可定位章节；
+- 文档性质、Feature 入口链接和本次覆盖范围；
+- 唯一主技术设计、可定位章节及来源版本或提交；
 - 目标代码仓库和代码基线；
 - 明确非目标；
 - 外部行为、组件边界、接口、数据、状态、失败、兼容与迁移合同中实际适用的内容；
@@ -23,14 +23,20 @@ YYYY-MM-DD-中文主题-Code-Spec.md
 
 Code Spec 只能由已确认技术总设计受控派生。无法证明设计稳定、当前代码推翻核心前提或需要新增设计决定时，不创建或覆盖正式 Spec。
 
+同一 Feature 持续更新唯一当前文件，创建日期与修改日期放在元信息中。已有文件使用日期命名时保持路径稳定，不按每次修改日期重建文件。Feature 入口与 Spec 双向链接；实质合同变化更新条款和验收并标为`需重新审阅`，文字修正不机械撤销确认。历史由 Git 保留；如确需被取代的快照，须明确标记历史性质并链接唯一当前文件，不能并存两份当前合同。
+
+已完成 Feature 不补历史 Spec；下一次变更以本次范围派生或更新合同，不把历史实现伪装成曾经确认的 Spec。
+
 ## Implementation Plan
 
 Implementation Plan 放在 `plans/`，推荐命名：
 
 ```text
-YYYY-MM-DD-中文主题-Implementation-Plan.md
+<Feature稳定编号>-<中文功能名>-Implementation-Plan.md
 ```
 
 Plan 默认可选，只在复杂、跨仓或需要多轮任务账本时使用。一个 Feature 只能有一份当前 Plan；它负责文件落点、依赖、任务状态、验证入口和完成证据，不补充设计合同，也不自动授权代码修改、推送或部署。
+
+Plan 与 Feature 入口、当前 Spec 相互关联。保持路径稳定；上游范围或合同变化时重新核对依赖任务，不为已有功能或目录占位补建 Plan。
 
 Plan 状态使用：`草拟中`、`阻塞`、`待审阅`、`可执行`、`需重新核对`、`已完成`、`已废弃`、`已被取代`或`历史参考`。进入`可执行`前必须单独获得用户确认。

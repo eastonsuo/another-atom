@@ -2,16 +2,18 @@
 
 [toc]
 
-项目文档的长期产品与技术事实分为 Design、Review 和 Bug 三类。已经确认的方案进入 Design；带日期的功能完备性检查和阶段结论进入 Review；违反既有设计或 Contract、能够独立复现和验收的代码实现错误进入 Bug。Feature 的派生实施合同、可选任务账本和开发侧验证证据分别进入 `superpowers/` 与 `validation/`，不构成新的设计事实源。图片等非文档资源保存在 `assets/`。
+从 [Feature 索引](./features/README.md) 查找具体功能的设计、实施合同和验证依据；从[设计索引](./design/README.md)查找整体产品、架构和版本共同基线。设计（Design）持续定义预期，评审（Review）保存带日期的检查，缺陷（Bug）保存违反既有预期的实现证据。
+
+当前完成的是 Feature 入口和归属登记。现有设计正文仍在原路径，后续移动以[文档归属与迁移映射](./features/文档归属与迁移映射.md)为准；登记不代表设计重新确认或功能验收完成。
 
 ## 设计
 
-[设计文档](./design/README.md)回答“产品应该怎样工作、技术如何保证它成立”，是持续维护的实现依据。设计只分为两类：
+[设计文档](./design/README.md)回答“产品应该怎样工作、技术如何保证它成立”。跨 Feature 基线放在 `design/`，功能专项设计放在 `features/<稳定编号>-<中文功能名>/`；迁移期继续读取 Feature 入口登记的现有设计路径。同一个合同只有一处定义。设计内容分为两类：
 
 - `产品设计`：合并产品需求与产品层设计，定义目标、范围、用户路径、交互、用户可感知状态和验收标准；
 - `技术设计`：定义如何可靠实现产品设计，再按主要问题分为 `Agent` 和 `工程`。
 
-跨版本外部分析放入 `整体/参考资料`，不直接构成已采用 Contract。版本目录不再设置重复 README，全部设计入口由 `docs/design/README.md` 统一维护。
+跨版本产品原则与参考资料保留在 `design/整体/`，外部参考不直接构成已采用合同。已完成 Feature 复用现有设计与证据，不为目录齐全补写历史设计、Code Spec 或实施计划。
 
 ## Review
 
@@ -28,11 +30,13 @@ Review 发现需要系统性解决的问题时，在相应 Review 中记录依�
 [Feature 交付工作流](./agents/feature-delivery-workflow.md)规定从技术设计、Code Spec、代码实施到非生产验证的门禁和交接关系。
 
 - [`superpowers/`](./superpowers/README.md)保存从已确认技术总设计派生的正式 Code Spec，以及复杂 Feature 可选的唯一 Implementation Plan。
-- [`validation/`](./validation/README.md)保存每个 Feature 唯一的开发侧自测方案与执行记录。
+- [Feature 入口](./features/README.md)链接当前设计、Spec、可选 Plan 和验证证据；实施合同持续更新原文件，保留来源版本和审阅依据。
+- `features/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`按需保存唯一自测记录；[`validation/README.md`](./validation/README.md)只维护公共规范。
+- `features/<稳定编号>-<中文功能名>/11-实施澄清记录.md`按需保存需要确认的持久工程取舍；确认结论回写相应正式依据。
 - [`agents/validation-environments.md`](./agents/validation-environments.md)登记可以用于开发侧验证的环境、不可变版本口径和访问边界。
 
-这些文档只承接 Design 的已确认合同，不得增加或改变产品行为、架构职责、数据语义、故障、兼容或迁移决定。
+Spec、Plan 和自测记录承接已确认设计。实施澄清可以提出待决问题，但不能自行批准新的合同。GitHub Issue 管理执行待办，Feature 入口只汇总有来源的交付状态。
 
 ## 资源
 
-`assets/` 保存 README、Design、Review 和 Bug 引用的图片，不参与文档分类。
+已有图片保持当前路径。新增 Feature 专属资源按需放入该 Feature 的 `assets/`，共享展示资源继续放在 `docs/assets/`；截图与验证证据不得包含密钥或真实用户私密数据。

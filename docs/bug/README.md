@@ -6,7 +6,7 @@
 
 `docs/bug/` 保存能够独立复现、修复和验收的代码实现错误，回答“哪个既有预期被实现违反、如何证明它已经修复”。Bug 的预期行为必须能由现有 Design、Contract、测试或已经确认的产品行为支持；信息不足以确定预期时，先进入 Review，而不是把设计讨论写成 Bug。
 
-Bug 修复默认不要求修改 Design。只有修复会改变既有产品行为或 Contract 时，才把对应问题升级为 Review，并先更新 [`docs/design/`](../design/README.md)。
+Bug 修复默认不要求修改 Design。只有修复会改变既有产品行为或 Contract 时，才把对应问题升级为 Review，并先更新[共同基线](../design/README.md)或 [Feature 入口](../features/README.md)登记的当前专项设计。Feature 入口通过链接关联 Bug，不复制缺陷记录或根据目录整理自动归档。
 
 ## 2. 与 Review、Issue 的边界
 

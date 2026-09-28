@@ -4,7 +4,7 @@
 
 ## 1. 作用
 
-`docs/review/` 是功能完备性检查和历史证据库，回答“检查了什么、是否完备、还缺什么”。Review 不长期维护解决方案；需要持续生效的产品或技术结论必须进入 [`docs/design/`](../design/README.md)，能够独立复现和验收的代码实现错误进入 [`docs/bug/`](../bug/README.md)。
+`docs/review/` 是功能完备性检查和历史证据库，回答“检查了什么、是否完备、还缺什么”。Review 不长期维护解决方案；需要持续生效的产品或技术结论必须进入[共同基线](../design/README.md)或 [Feature 入口](../features/README.md)登记的当前专项设计，能够独立复现和验收的代码实现错误进入 [`docs/bug/`](../bug/README.md)。Feature 入口通过链接关联 Review，不复制原始检查或改变其归档状态。
 
 ## 2. 目录
 

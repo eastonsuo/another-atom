@@ -363,6 +363,7 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 - **完整知识库：** [项目完整设计知识库](./PROJECT_KNOWLEDGE_BASE.md)
 - **整体产品：** [整体产品目标与定位](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
 - **设计：** [设计文档规范与索引](./docs/design/README.md)
+- **Feature：** [功能入口与文档归属](./docs/features/README.md)
 - **Review：** [检查、反思与 Bug 索引](./docs/review/README.md)
 - **部署：** [运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
 - **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/02-[参考]-Atoms参考产品分析.md)
