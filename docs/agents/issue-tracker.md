@@ -1,10 +1,16 @@
 # 议题跟踪器：GitHub
 
-本仓库的议题和产品需求文档（PRD）记录在 GitHub Issues 中。所有操作使用 `gh` 命令行工具完成。
+本仓库使用 GitHub Issues 跟踪执行事项。产品需求、设计和当前 Code Spec 的权威正文保存在对应 [Feature 目录](../features/README.md)，不在 Issue 中维护第二份 PRD 或设计合同。下文列出 `gh` 命令行操作示例；使用其他已授权 GitHub 工具时遵守相同的归属和操作边界。
+
+## 与 Feature 和实施计划的关系
+
+- Issue 记录排期、负责人、协作讨论、阻塞和关闭，引用当前 Feature 及相关设计、Spec 和验证证据；讨论中的产品或技术结论经确认后回写对应权威文档，不能只留在 Issue 中作为新的实施合同。
+- 已有唯一 Implementation Plan 时，细分任务、依赖和完成证据在 Plan 维护，Issue 只保留协作状态、关注点和入口，不复制同一批任务的完成清单。没有 Plan 时，Issue 可以跟踪执行事项，不因存在 Issue 而自动生成 Plan。
+- 不另建与 Issue 或现有 Plan 重复维护完成状态的 `TODO.md` 或第二套任务账本。关闭 Issue 不自动确认设计、证明部署成功或证明环境验收通过。
 
 ## 与 Bug 文档的关系
 
-GitHub Issue 是执行状态事实源，负责排期、负责人、讨论和关闭；[`docs/bug/`](../bug/README.md) 是代码缺陷的仓库证据源，负责稳定保存复现、根因、修复边界和验收结果。
+GitHub Issue 负责 Bug 的执行协作状态；[`docs/bug/`](../bug/README.md) 是代码缺陷的仓库证据源，负责稳定保存复现、根因、修复边界和验收结果。
 
 - 一个能够独立修复和验收的 Bug 对应一个 Issue；同一根因的重复现象不重复建 Issue。
 - Issue 正文链接 Bug 文档；Bug 文档元信息回填 Issue 编号。

@@ -16,9 +16,11 @@
 
 - `railway.toml`：主服务使用 `Dockerfile`，健康检查为 `/api/health`；
 - `railway.executor.toml`：共享执行服务使用 `Dockerfile.executor`，健康检查为 `/health`；
-- `docs/design/V1/技术设计/04-[工程]-运行与部署.md`：Railway 主服务、Volume、私网 executor 和验收目标。
+- [运行与部署](../operations/01-运行与部署.md)：Railway 主服务、Volume、私网 executor 和验收目标。
 
 仓库当前没有登记能够唯一识别的 Railway 非生产 Project、Environment、服务实例、测试域名或实际版本读回入口。现有设计中的 `production` 配置和示例域名不能推定为非生产环境，也不能供 `validate-in-non-production` 使用。
+
+未登记不等于实际环境不存在。需要按明确目标只读定位并核对后登记，不能从示例值或其他项目的环境配置补出可执行目标；登记本身也不授权部署或执行用例。
 
 因此当前状态为：
 
@@ -45,3 +47,11 @@ Railway 环境验证：BLOCKED
 - 失败停止、保留现场和回滚边界。
 
 机器专属路径、账号、Token、Cookie 和 Secret 不写入本文件。目标未登记、身份不匹配或可能指向生产时，只允许只读调查并保持验证阻塞。
+
+## 4. 使用登记与保存证据
+
+执行前核对 Railway Project、Environment、主服务与 executor 标识、访问入口和实际版本是否属于同一已登记目标；环境名称不能替代身份核对。实际属于生产或共享生产数据的目标，不因名为 `beta`、`staging` 或 `testing` 就进入非生产验证。
+
+主服务与 executor 分别读回实际版本，不从 Git 分支、触发成功或另一个服务的部署结果推定。配置、版本或入口不匹配时停止受影响操作；其他环境的结果只能作对照，不能作为当前目标的验证证据。
+
+本文保存稳定的环境路由与检查方法，实际部署、版本读回、用例和清理事实进入对应 Feature 的唯一[自测方案与执行记录](../validation/README.md)。历史批次不因当前环境变化被重写，也不在本文件维护第二份用例状态。

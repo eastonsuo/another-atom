@@ -77,6 +77,12 @@ Before closing a task or milestone, verify:
 4. What automated or deployed verification proves it works?
 5. Do README, PRD, architecture, and actual behavior still agree?
 
+### 闭环完成检查
+
+- 最终回复前，重新核对本次已授权的完整目标、必要验证、持久记录和执行过程中产生的临时副作用。提交、推送或仅披露未完成项不等于目标完成。
+- 检查本次创建或修改的临时进程、容器、测试数据和临时配置是否已在授权范围内清理或恢复；需要继续保留时说明对象、原因和后续责任。不得清理用户原有资源，也不得从实施授权推导外部环境删除权限。
+- 范围内仍能自主推进时继续处理；只差用户输入或授权时停在最小阻塞点，说明尚未完成的目标、恢复条件和当前必要输入。该检查不授权跨越设计、Spec、Plan、部署或环境验证门禁。
+
 ## Agent skills
 
 ### Feature delivery workflow
@@ -85,19 +91,19 @@ Before closing a task or milestone, verify:
 - 先从 [`docs/features/README.md`](./docs/features/README.md) 定位 Feature，读取其登记的当前产品说明、技术设计与所依赖 Feature 合同。`docs/design/` 只放整体概览，不维护详细合同。正式 `Code-Spec.md`、可选 `Implementation-Plan.md`、`产品澄清.md` 均放在对应 Feature 内并与入口互链；不再创建 `docs/superpowers/specs/` 或 `plans/` 平行目录。
 - Code Spec 是持续维护的实施合同；保持唯一当前文件和稳定路径，记录来源设计版本及适用范围。每次实施重新核对设计与 Spec，合同变化时更新并按影响重新审阅；文字修正不机械撤销确认。不得按日期反复生成同一 Feature 的并行当前 Spec，也不为已完成功能补历史 Spec。
 - 每个阶段只在其门禁满足后进入下一阶段。技术总设计确认、Code Spec 确认、Plan 确认和环境写入授权彼此独立；Agent 不得代替用户确认，也不得因用户要求“完整推进”而跨过尚未满足的门禁。
-- Implementation Plan 默认可选。只有用户明确要求，或复杂、跨仓、需要多轮维护任务账本时才使用；没有 Plan 不阻止已确认 Code Spec 进入实施。
+- Implementation Plan 默认可选；生成或规划更新 Plan 需用户明确要求。复杂、跨仓或多轮任务可以成为建议理由，但不自动触发 Plan；已有唯一且已确认的 Plan 时按其恢复实施并维护实际任务状态，没有 Plan 不阻止已确认 Code Spec 进入实施。
 - 本仓库不采用 `openspec/**` 作为默认 Feature 流程。除非用户明确决定迁移到 OpenSpec，否则不得新建第二套 Spec 状态源。
 
 ### Validation workflow
 
 - 开发侧自测遵循 [`docs/validation/README.md`](./docs/validation/README.md)，记录按需创建于 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`。一个 Feature 只维护一份当前记录，执行批次绑定实际版本并追加结果；`docs/validation/` 只保留公共规范。
 - 非生产环境及其不可变版本、访问入口和授权边界从 [`docs/agents/validation-environments.md`](./docs/agents/validation-environments.md) 读取。未登记或不能唯一识别的 Railway 环境不得推定为非生产环境。
-- 本地单元测试、静态检查、前端 lint/build 和本地真实边界集成属于代码实施；制品构建与环境变更属于部署；Smoke、API、页面和 E2E 属于环境验证。三类事实不得相互替代。
+- 本地单元测试、静态检查、前端 lint/build 和本地真实边界集成属于代码实施；制品构建与环境变更属于部署；Smoke、API、页面和 E2E 属于环境验证。真实边界集成和环境验收中，被验证的组件与交互必须真实运行，Mock 不能替代该边界的证据；测试层级、批次和基线变化后的重测按自测规范执行，三类事实不得相互替代。
 - 本个人仓库的 `[实施澄清记录]` 位置登记为 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/11-实施澄清记录.md`；本轮目录授权随 Feature 更新这一位置，后续在已授权 Feature 工作范围内按需创建，不为占位创建空文档。记录不能由现有依据唯一决定的语义冲突或持久工程取舍；普通实现问题和一次性操作授权不进入记录。完整讨论只留在该记录，已确认结论回写适用设计、Spec 或项目配置；记录本身不替代设计／Spec 确认及环境授权。
 
 ### Issue tracker
 
-本仓库使用 GitHub Issues 跟踪议题。详见 `docs/agents/issue-tracker.md`。
+本仓库使用 GitHub Issues 跟踪执行事项；产品需求、设计和当前 Code Spec 的权威正文保存在对应 Feature，Issue 只引用，不另建重复的需求或任务账本。详见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 
