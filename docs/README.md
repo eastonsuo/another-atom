@@ -33,7 +33,7 @@ Review 发现需要系统性解决的问题时，在相应 Review 中记录依�
 - [Feature 入口](./features/README.md)链接当前设计、Spec、可选 Plan 和验证证据；实施合同持续更新原文件，保留来源版本和审阅依据。
 - `features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`按需保存唯一自测记录；[`validation/README.md`](./validation/README.md)只维护公共规范。
 - `features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/11-实施澄清记录.md`按需保存需要确认的持久工程取舍；确认结论回写相应正式依据。
-- [`agents/validation-environments.md`](./agents/validation-environments.md)登记可以用于开发侧验证的环境、不可变版本口径和访问边界。
+- [`agents/validation-environments.md`](./agents/validation-environments.md)维护验证环境登记规范、不可变版本口径和访问边界；真实环境信息保存在其指向的本地忽略文件中。
 
 Spec、Plan 和自测记录承接已确认设计。实施澄清可以提出待决问题，但不能自行批准新的合同。GitHub Issue 管理执行待办，Feature 入口只汇总有来源的交付状态。
 

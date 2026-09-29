@@ -8,3 +8,6 @@ studio/node_modules
 studio/dist
 .idea
 .DS_Store
+
+# 本地环境登记不进入构建上下文
+docs/agents/validation-environments.local.md

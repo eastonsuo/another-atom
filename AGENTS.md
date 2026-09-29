@@ -97,7 +97,8 @@ Before closing a task or milestone, verify:
 ### Validation workflow
 
 - 开发侧自测遵循 [`docs/validation/README.md`](./docs/validation/README.md)，记录按需创建于 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/10-自测方案与执行记录.md`。一个 Feature 只维护一份当前记录，执行批次绑定实际版本并追加结果；`docs/validation/` 只保留公共规范。
-- 非生产环境及其不可变版本、访问入口和授权边界从 [`docs/agents/validation-environments.md`](./docs/agents/validation-environments.md) 读取。未登记或不能唯一识别的 Railway 环境不得推定为非生产环境。
+- 先读取 [`docs/agents/validation-environments.md`](./docs/agents/validation-environments.md) 的通用规范，再读取本机 `docs/agents/validation-environments.local.md` 的实际环境映射、不可变版本、访问入口和授权依据。本地文件由 Git 与 Docker 忽略，不提交、不强制暂存；资源 ID、实际地址和部署快照不得复制进已跟踪文档，凭证明文也不得写入本地登记。缺少本地登记或不能唯一识别目标时，报告缺口，不从模板或显示名猜测非生产环境。
+- Railway CLI 用法见 [`docs/operations/01-运行与部署.md`](./docs/operations/01-运行与部署.md#50-使用已有项目cli-入口)。操作显式指定同一已登记目标的 Project、Environment 和 Service；名称或用途不一致时先核对，不静默切换目标。推送绑定分支可能触发多个服务或项目自动部署，需同时满足全部受影响目标的适用环境写入授权，不能仅凭纯文档变更推定无部署影响。
 - 本地单元测试、静态检查、前端 lint/build 和本地真实边界集成属于代码实施；制品构建与环境变更属于部署；Smoke、API、页面和 E2E 属于环境验证。真实边界集成和环境验收中，被验证的组件与交互必须真实运行，Mock 不能替代该边界的证据；测试层级、批次和基线变化后的重测按自测规范执行，三类事实不得相互替代。
 - 本个人仓库的 `[实施澄清记录]` 位置登记为 `docs/features/<能力域编号>-<能力域名>/<稳定编号>-<中文功能名>/11-实施澄清记录.md`；本轮目录授权随 Feature 更新这一位置，后续在已授权 Feature 工作范围内按需创建，不为占位创建空文档。记录不能由现有依据唯一决定的语义冲突或持久工程取舍；普通实现问题和一次性操作授权不进入记录。完整讨论只留在该记录，已确认结论回写适用设计、Spec 或项目配置；记录本身不替代设计／Spec 确认及环境授权。
 
