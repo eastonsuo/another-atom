@@ -5,7 +5,7 @@
 > **和 AI 团队一起，把想法做成软件。**
 
 [![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
-[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/04-版本范围与整体验收.md)
+[![Feature-based](https://img.shields.io/badge/Planning-Features-F2C94C?style=flat-square)](./docs/features/README.md)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
 [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
@@ -64,8 +64,8 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户可以提出任
 ### 多智能体协作
 
 - **[单一入口]** 用户通过“和 AI 团队沟通”进入统一对话，不需要先理解内部角色、模式和流程；内部由 Lead 接收请求并判断直接回答还是调用团队。
-- **[专业分工]** 产品经理（Product Manager）交付产品规格（ProductSpec），架构师（Architect）交付架构设计（ArchitectureDesign），工程师（Engineer）交付源码包（SourceBundle）和单元测试；运行系统（Runtime）执行确定性构建（Build）、测试（Test）和校验（Validation）。数据分析师（Data Analyst）与质量评审员（Reviewer）在第一版（V1）新运行中暂不启用。
-- **[固定交接]** 首次创建执行产品经理、架构师、工程师完整链路；已有项目修改按影响选择三个固定入口已纳入 V1 产品基线，尚未实现。当前代码仍执行完整三角色链路；目标边界见[对话式代码修改](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，审批与验证不因入口选择而跳过。
+- **[专业分工]** 产品经理（Product Manager）交付产品规格（ProductSpec），架构师（Architect）交付架构设计（ArchitectureDesign），工程师（Engineer）交付源码包（SourceBundle）和单元测试；运行系统（Runtime）执行确定性构建（Build）、测试（Test）和校验（Validation）。数据分析师（Data Analyst）与质量评审员（Reviewer）在固定流程的新运行中暂不启用。
+- **[固定交接]** 首次创建执行产品经理、架构师、工程师完整链路；已有项目修改按影响选择三个固定入口已获产品确认，尚未实现。当前代码仍执行完整三角色链路；目标边界见[对话式代码修改](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工)，审批与验证不因入口选择而跳过。
 - **[用户介入]** 用户必须在工程执行前确认产品规格；架构设计可以检查但默认不增加第二次强制确认。只有架构结论要求改变已确认的产品范围、目标平台或外部能力边界时，系统才退回产品规格重新确认。
 
 ### Vibe Coding 工作区
@@ -304,19 +304,18 @@ Studio / Preview / 文件与终端界面
 ```
 
 - **统一公网入口：** 浏览器只访问 Control Plane 的 HTTPS/WSS 域名，内部 Worker、数据库、产物存储和 Sandbox 不直接暴露给终端用户。
-- **部署边界：** Control Plane、Agent Worker 和 Sandbox 可以按版本合并或拆分，但可信控制面与不可信执行面不能合并权限。
+- **部署边界：** Control Plane、Agent Worker 和 Sandbox 的合并或拆分以对应 Feature 的技术设计为准，可信控制面与不可信执行面不能合并权限。
 - **分享边界：** Public Route 只读取已发布版本，不开放 Project Repository、Agent Context、内部 Event、配额或 Sandbox Session。
 
 详细工程边界由对应 Feature 持续维护，整体架构只保留概览，README 不重复功能合同。
 
-## 当前版本
+## 发布记录与功能状态
 
 当前发布版本为 **v0.3.0（2026-07-15）**。本版已完成的能力、验证结果和明确边界以 [Release / Changelog](./CHANGELOG.md) 为准；README 只维护产品定位、总体架构和使用入口，不重复维护发布明细。
 
-| 版本 | 服务整体目标的方式 | 状态与详细设计 |
-| --- | --- | --- |
-| **V1** | 用固定专业团队、Project Git、版本与受控发布证明完整闭环；通用源码交付与实际运行能力分开 | 已有局部实现和历史验证记录，不等于完整 V1 验收通过；当前差距见 [Feature 索引](./docs/features/README.md)，范围见[版本概览](./docs/design/04-版本范围与整体验收.md) |
-| **V2** | 在同一 Project、Artifact 和权限基础上增加任务图、角色子集、Tool、局部并行和返工 | 已有草案，仍有产品和技术待确认项；V1 验收后再推进。见 [任务图与协作](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md)、[任务隔离与工具](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md) |
+产品不再分为 V1/V2，统一按五个能力域下的 [Feature](./docs/features/README.md)维护需求、设计、依赖和状态。已确认、已实现、已部署与已验证分别记录；具体范围与整体验收见[功能概览](./docs/design/04-功能范围与整体验收.md)。
+
+固定执行、修改、源码、版本与发布已有局部实现，但仍有待开发和待验收项。[任务图与协作](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md)、[任务隔离与工具](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md)仍按草案和单项确认状态维护；取消分期不代表这些功能已经完成或整体获批。
 
 ## 快速开始
 

@@ -5,7 +5,7 @@
 > **Build software from ideas, together with an AI team.**
 
 [![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
-[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/04-版本范围与整体验收.md)
+[![Feature-based](https://img.shields.io/badge/Planning-Features-F2C94C?style=flat-square)](./docs/features/README.md)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
 [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
@@ -62,8 +62,8 @@ See the [overall product goal and positioning](./docs/design/01-产品定位.md)
 ### Multi-agent Collaboration
 
 - **Single entry point:** Users primarily talk to Lead and do not need to understand internal roles, modes, or workflows first.
-- **Specialized responsibilities:** Product Manager delivers ProductSpec, Architect delivers ArchitectureDesign, and Engineer delivers a SourceBundle with unit tests. Runtime performs deterministic Build, Test, and Validation. Data Analyst and Reviewer are disabled for new V1 Runs.
-- **Fixed handoff:** Initial creation runs the complete Product Manager → Architect → Engineer pipeline. Choosing one of three fixed entry stages for existing-project changes is now part of the V1 product baseline, but is not implemented; current code still runs all three roles. See the [product scope](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工). Entry selection does not bypass approval or validation.
+- **Specialized responsibilities:** Product Manager delivers ProductSpec, Architect delivers ArchitectureDesign, and Engineer delivers a SourceBundle with unit tests. Runtime performs deterministic Build, Test, and Validation. Data Analyst and Reviewer are disabled for new fixed-pipeline Runs.
+- **Fixed handoff:** Initial creation runs the complete Product Manager → Architect → Engineer pipeline. Choosing one of three fixed entry stages for existing-project changes is product-confirmed but not implemented; current code still runs all three roles. See the [product scope](./docs/features/02-任务规划与执行编排/04-对话式代码修改/01-产品说明.md#5-lead-与下游团队如何分工). Entry selection does not bypass approval or validation.
 - **User involvement:** Users must confirm ProductSpec before engineering execution. ArchitectureDesign is inspectable but does not add a second mandatory approval unless it changes the confirmed product scope, target platform, or external capability boundary.
 
 ### Vibe Coding Workspace
@@ -262,19 +262,18 @@ Browser -- HTTPS / WSS --> Unified Gateway
 ```
 
 - **One public entry:** the browser reaches only the Control Plane HTTPS/WSS domain; internal Workers, databases, artifact storage, and Sandboxes are not exposed to end users.
-- **Deployment boundary:** versions may combine or split Control Plane, Agent Worker, and Sandbox components, but trusted control authority and untrusted execution must not share privileges.
+- **Deployment boundary:** the owning Feature's technical design determines whether Control Plane, Agent Worker, and Sandbox components are combined or split; trusted control authority and untrusted execution must not share privileges.
 - **Sharing boundary:** the Public Route reads only the published version and does not expose the Project Repository, Agent Context, internal Events, quota, or Sandbox Sessions.
 
-Version-specific engineering boundaries remain in each architecture document; the README does not duplicate implementation details.
+Feature-specific engineering boundaries remain in their owning design documents; the README does not duplicate implementation details.
 
-## Current Versions
+## Releases and Feature Status
 
 The current release is **v0.3.0 (2026-07-15)**. Refer to the [Release / Changelog](./CHANGELOG.md) for accepted capabilities, verification evidence, and explicit boundaries. This README keeps only the product position, overall architecture, and usage entry points instead of duplicating release details.
 
-| Version | How it advances the overall goal | Status and design sources |
-| --- | --- | --- |
-| **V1** | Proves the controlled creation, modification, validation, version, and publishing loop; source delivery is separate from executable runtime support | Partial implementations and historical verification do not prove complete V1 acceptance. See [Features](./docs/features/README.md) and [version scope](./docs/design/04-版本范围与整体验收.md) for remaining work. |
-| **V2** | Adds task graphs, role subsets, controlled tools, selective parallelism, and rework | Existing drafts still require product and technical decisions; implementation follows V1 acceptance. See [task collaboration](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md) and [task isolation](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md). |
+The product is no longer divided into V1/V2 phases. Requirements, design, dependencies, and status are maintained in [Features](./docs/features/README.md) under five capability domains. Confirmation, implementation, deployment, and verification remain distinct facts; see [feature scope and acceptance](./docs/design/04-功能范围与整体验收.md).
+
+Fixed execution, modification, source delivery, versioning, and publishing have partial implementations with remaining work and verification gaps. [Task collaboration](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md) and [task isolation](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md) retain their draft and individual decision status; removing phase labels does not approve or complete them.
 
 ## Quick Start
 

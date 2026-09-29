@@ -1,8 +1,8 @@
-# Another Atom V1 受控动态源码 Context 与文件变更执行
+# Another Atom 受控动态源码 Context 与文件变更执行
 
 [toc]
 
-- **文档状态：** V1 目标技术设计；静态 `SourceFileChangeSet`、隔离文件物化和验证失败后最多两次 Repair ChangeSet 已本地实现，动态读取、完整 CandidateRevision/ContextReceipt 协议、修复检查点恢复与 Railway 验收尚未完成
+- **文档状态：** 目标技术设计；静态 `SourceFileChangeSet`、隔离文件物化和验证失败后最多两次 Repair ChangeSet 已本地实现，动态读取、完整 CandidateRevision/ContextReceipt 协议、修复检查点恢复与 Railway 验收尚未完成
 - **更新日期：** 2026-07-16
 - **功能范围：** 已有 Project 的 Engineer 源码读取、受控文件变更、候选物化、验证与恢复
 - **上位设计：** [基于现有代码的对话式 AI Coding](./02-技术总设计.md)
@@ -15,7 +15,7 @@
 
 ## 背景
 
-当前 V1 会在调用 Engineer 之前，由 Runtime 一次性挑选一批源码交给模型。小项目可以发送全部源码；源码超过字符预算后，系统按固定顺序选择完整文件。这个方案已经解决了“模型完全看不到真实代码”的问题，但仍有两个缺口：第一次没有选中真正相关的文件时，模型不能继续读取；第一次候选物化或验证失败时，模型也不能基于真实错误继续修正。
+当前会在调用 Engineer 之前，由 Runtime 一次性挑选一批源码交给模型。小项目可以发送全部源码；源码超过字符预算后，系统按固定顺序选择完整文件。这个方案已经解决了“模型完全看不到真实代码”的问题，但仍有两个缺口：第一次没有选中真正相关的文件时，模型不能继续读取；第一次候选物化或验证失败时，模型也不能基于真实错误继续修正。
 
 本文把目标确定为一条有边界的完整闭环：模型先读取初始源码，信息不足时结构化申请补充；信息足够后返回小范围 `SourceFileChangeSet`；Runtime 在隔离候选工作区物化声明文件并立即执行构建、单元测试和校验；属于代码问题且仍有预算时，把结构化错误和当前候选源码重新交给 Engineer 生成 Repair ChangeSet。所有候选修正通过后才创建 ProjectVersion 和 Git commit，失败或达到上限时丢弃候选，不影响当前版本。
 
@@ -32,7 +32,7 @@
 - **即时验证**
   - 每次 ChangeSet 成功物化后，Runtime 都重新计算真实 Diff，并依次执行 Build、Unit Test 和 Validator；模型不能自报通过。
 - **有界修正**
-  - V1 默认最多三次变更尝试：一次初始 ChangeSet、最多两次 Repair ChangeSet；初始读取最多补充两轮，每次修复最多补充一轮，不允许无限 Agent loop。
+  - 固定流程默认最多三次变更尝试：一次初始 ChangeSet、最多两次 Repair ChangeSet；初始读取最多补充两轮，每次修复最多补充一轮，不允许无限 Agent loop。
 - **提交与回滚**
   - 多次 ChangeSet 只形成隔离候选 revision，不逐次 Git commit；全部验证通过后才创建一个项目版本。失败、取消或达到上限时丢弃候选，当前版本和已发布版本不变。
 - **恢复依据**
@@ -40,7 +40,7 @@
 
 ## 1. 设计结论
 
-V1 采用“**完整源码清单 + 简化仓库地图 + 有次数上限的动态读取 + 小步 Patch + 每步验证 + 有界修正**”，而不是“第一次截取一批文件后一次性生成并结束”：
+固定流程采用“**完整源码清单 + 简化仓库地图 + 有次数上限的动态读取 + 小步 Patch + 每步验证 + 有界修正**”，而不是“第一次截取一批文件后一次性生成并结束”：
 
 ```text
 用户批准修改代码
@@ -119,7 +119,7 @@ Engineer（工程师智能体）-> EngineerAction（工程师动作）
 
 当前的 `source_change_attempt_ledger` 保存 initial/repair 尝试、当前候选 hash、ChangeSet hash 和验证证据；Repair ChangeSet 绑定 attempt index、source revision、candidate manifest、`repair_context_hash` 和 failure code。这是终态 `ChangeAttempt + CandidateRevision` 的最小持久化 seam，不是完整协议：`EngineerAction`、`NeedContext`、RepositoryMap、Context Exchange、ContextReceipt、按需读取以及物化失败修复仍未实现。因此当前可以表述为“静态 Context 下的有界验证修复已本地实现”，不能表述为“动态 Context 已实现”。
 
-这里的循环只发生在固定 Engineer（工程师智能体）阶段内部，包括受控读取、生成 Patch、接收确定性验证反馈和生成 Repair Patch，不改变 V1 固定角色顺序。Lead（团队负责人智能体）不能借此选择角色，Engineer 不能调用其他 Agent（智能体），Runtime 也不因为模型请求而开放任意 Tool（工具）。产品经理、架构师、工程师和 Runtime 仍按既定顺序执行；TaskGraph（任务图）、角色子集、并行和跨角色自主返工继续属于 V2。
+这里的循环只发生在固定 Engineer（工程师智能体）阶段内部，包括受控读取、生成 Patch、接收确定性验证反馈和生成 Repair Patch，不改变固定角色顺序。Lead（团队负责人智能体）不能借此选择角色，Engineer 不能调用其他 Agent（智能体），Runtime 也不因为模型请求而开放任意 Tool（工具）。产品经理、架构师、工程师和 Runtime 仍按既定顺序执行；TaskGraph（任务图）、角色子集、并行和跨角色自主返工继续属于任务图协作方案。
 
 ## 2. 当前实现与目标差距
 
@@ -158,7 +158,7 @@ Engineer（工程师智能体）-> EngineerAction（工程师动作）
 
 ## 3. 范围与明确不做
 
-### 3.1 V1 范围
+### 3.1 范围
 
 本文只解决已有 Project 中 Engineer 如何取得必要源码、生成小步文件变更，并根据 Runtime 的确定性反馈进行有界修正：
 
@@ -174,7 +174,7 @@ Engineer（工程师智能体）-> EngineerAction（工程师动作）
 - 在固定变更次数和 Context 预算内生成 Repair ChangeSet；
 - 全部验证通过后只创建一个 ProjectVersion 和 Git commit；失败时丢弃候选。
 
-### 3.2 V1 不做
+### 3.2 不做
 
 - 不预建全仓库向量 Embedding 或引入向量数据库；
 - 不依赖语义检索证明依赖完整性；
@@ -249,7 +249,7 @@ RepositoryMap
   map_hash
 ```
 
-V1 的最低可用 RepositoryMap 只要求当前 revision 的完整文件树、文件角色、语言、大小、hash、入口和保护状态。符号与 import 只有在 Adapter 能确定性解析时才加入；解析能力不存在时保持空值，不能由文件名或模型猜测伪造依赖图。
+本功能的最低可用 RepositoryMap 只要求当前 revision 的完整文件树、文件角色、语言、大小、hash、入口和保护状态。符号与 import 只有在 Adapter 能确定性解析时才加入；解析能力不存在时保持空值，不能由文件名或模型猜测伪造依赖图。
 
 `web-static-v1` 可以先提供已知入口和文件角色，不要求为了本文立即引入多语言 AST。后续符号索引只能作为提高定位效率的 Adapter 能力，不能改变 Git 文件是源码事实的原则。
 
@@ -472,7 +472,7 @@ SourceReadRequest
 
 ### 7.3 search_source
 
-V1 只支持受控源码中的字面量文本搜索：
+固定流程只支持受控源码中的字面量文本搜索：
 
 - `query` 必须是有界非空文本；
 - 可选 `path_prefix` 必须是规范化 Project 相对路径；
@@ -537,11 +537,11 @@ Runtime 返回结构化结果，不把命令输出原样拼接进 Prompt。相�
 - Runtime 不能因为剩余预算不足而缩短用户请求的行范围后继续，必须返回明确的 `limit_exceeded`；
 - 如果安全生成 ChangeSet 所需的完整目标文件无法放入预算，Engineer 必须 `CannotProceed`，Run 进入可见失败或等待用户缩小范围。
 
-`MAX_SOURCE_CHARS` 仍是稳定、可测试的部署配置。V1 不要求为不同 Provider 动态计算 tokenizer；真实 input/output token 继续由 Provider Usage 记录。
+`MAX_SOURCE_CHARS` 仍是稳定、可测试的部署配置。固定流程不要求为不同 Provider 动态计算 tokenizer；真实 input/output token 继续由 Provider Usage 记录。
 
 ### 8.3 变更尝试预算
 
-V1 默认 `MAX_CHANGE_ATTEMPTS=3`，包括一次 initial ChangeSet 和最多两次 Repair ChangeSet：
+固定流程默认 `MAX_CHANGE_ATTEMPTS=3`，包括一次 initial ChangeSet 和最多两次 Repair ChangeSet：
 
 - `NeedContext` 和 Schema retry 不增加 ChangeAttempt；只有通过 Schema 的 `ProduceChanges` 才占用一次；
 - 候选物化失败不生成新 revision，但已经消耗本次 ChangeAttempt；
@@ -551,11 +551,11 @@ V1 默认 `MAX_CHANGE_ATTEMPTS=3`，包括一次 initial ChangeSet 和最多两�
 - Run 保存 `ChangePolicySnapshot`，至少包含变更次数、每次修复读取轮次、文件数、单文件大小、实际 Diff 阈值、验证超时和 Provider 配额上限；
 - 部署可以收紧默认值，但不能在同一 Run 中途放宽。
 
-“三次”是 V1 的交付上限，不是模型权利：Runtime 可以因不可修复错误、范围扩大、用户取消、基线冲突或配额不足提前停止。
+“三次”是本功能的交付上限，不是模型权利：Runtime 可以因不可修复错误、范围扩大、用户取消、基线冲突或配额不足提前停止。
 
 ### 8.4 为什么不用无限 Tool Loop
 
-动态读取和验证修正都能提高成功率，但会增加模型调用、延迟、候选状态和恢复复杂度。V1 通过读取轮次与 Patch 次数双重上限取得可用性与可交付性的平衡：
+动态读取和验证修正都能提高成功率，但会增加模型调用、延迟、候选状态和恢复复杂度。固定流程通过读取轮次与 Patch 次数双重上限取得可用性与可交付性的平衡：
 
 - 简单修改通常在 Round 0 完成；
 - 一次搜索和一次定向读取可以处理常见跨文件定位；
@@ -650,7 +650,7 @@ SourceFileChangeSet
 - `delete`：目标文件必须被完整读取并提供 `before_hash`，不得提供 content；
 - `add`：目标路径不得在输入 revision 中存在，提供完整 `replacement_content`，不提供 before hash，并符合 Adapter、Capability Policy、目录和文件类型限制；
 - `change_kind=initial` 时不得包含 repair 字段；`change_kind=repair` 时 `repair_context_hash / repairs_failure_code` 必须与当前 RepairContext 一致；
-- rename 在 V1 中表示一条 delete 和一条 add，不增加独立操作类型；
+- rename 在本功能中表示一条 delete 和一条 add，不增加独立操作类型；
 - 只读过局部行范围的文件不得修改或删除；
 - ChangeSet 不能修改输入 revision Manifest 标记为 protected 的文件；
 - `changes[]` 之外的文件在候选物化后必须保持 byte-level 相同；
@@ -776,7 +776,7 @@ Runtime 只把以下确定性代码问题标为可修复：
 
 ### 13.1 Context Exchange
 
-当前 Artifact 表对 `(run_id, artifact_type)` 唯一，不适合直接保存多轮同类型动作。V1 新增顺序化持久化对象 `EngineerContextExchange`：
+当前 Artifact 表对 `(run_id, artifact_type)` 唯一，不适合直接保存多轮同类型动作。固定流程新增顺序化持久化对象 `EngineerContextExchange`：
 
 ```text
 EngineerContextExchange
@@ -800,7 +800,7 @@ EngineerContextExchange
 UNIQUE(run_id, sequence)
 ```
 
-一次 Run 会有多个 ChangeSet 和多个候选 revision，不能把唯一 `(run_id, artifact_type)` 的 Artifact 当成全部事实。V1 增加顺序化 `SourceChangeAttempt`：
+一次 Run 会有多个 ChangeSet 和多个候选 revision，不能把唯一 `(run_id, artifact_type)` 的 Artifact 当成全部事实。固定流程增加顺序化 `SourceChangeAttempt`：
 
 ```text
 SourceChangeAttempt
@@ -956,7 +956,7 @@ IncrementalSourceDiff 用于解释本次小 Patch 做了什么；CumulativeSourc
 
 ### 15.3 回滚语义
 
-V1 不向 Engineer 提供 `git_checkout` 或可写 Git Tool。所谓回滚分为两层：
+固定流程不向 Engineer 提供 `git_checkout` 或可写 Git Tool。所谓回滚分为两层：
 
 - **候选内修正**：Engineer 基于当前失败 revision 生成反向或补偿 Patch，Runtime 仍按普通 Patch 校验、apply 和验证；
 - **Run 级放弃**：取消、不可修复、达到上限或最终 CAS 冲突时，Runtime 丢弃候选工作区，不创建 ProjectVersion；当前工作版本和已发布版本天然保持不变。
@@ -987,7 +987,7 @@ V1 不向 Engineer 提供 `git_checkout` 或可写 Git Tool。所谓回滚分为
 
 ## 18. 配额、延迟与成本
 
-动态扩展与验证修正的主要代价是额外 Provider 请求和重复 Build/Test/Validation。V1 采用以下控制：
+动态扩展与验证修正的主要代价是额外 Provider 请求和重复 Build/Test/Validation。固定流程采用以下控制：
 
 - 小仓库全量源码未超过预算时仍允许一次 Engineer 调用完成；
 - 在默认上限下，正常动作链最多包含初始阶段 3 次 Engineer 调用和两次修复各 2 次调用，共 7 次；Schema retry/Provider fallback 另按现有策略受限并可见；
@@ -999,7 +999,7 @@ V1 不向 Engineer 提供 `git_checkout` 或可写 Git Tool。所谓回滚分为
 - 超过 Context、Patch、时间、字符或配额上限时停止，不自动购买额外预算；
 - UI 显示“正在定位源码 / 正在生成 Patch 1/3 / 正在验证候选 revision 1 / 正在根据测试失败修复 1/2”，不承诺缺少数据依据的预计完成时间。
 
-后续是否增加 RepositoryMap 解析或语义检索，应比较“减少的无效 Provider 轮次”和“新增索引成本、陈旧风险、存储与隐私成本”，不能只因行业产品使用索引就直接加入 V1。
+后续是否增加 RepositoryMap 解析或语义检索，应比较“减少的无效 Provider 轮次”和“新增索引成本、陈旧风险、存储与隐私成本”，不能只因行业产品使用索引就直接加入固定流程。
 
 ## 19. 事件与可观测性
 
@@ -1179,7 +1179,7 @@ raw Patch 第一阶段曾出现与业务语义无关的 hunk 语法失败。当�
 - 现有设计、README 和实现不再把静态 `MAX_SOURCE_CHARS` 装箱描述为最终方案；
 - 已知能力边界明确：没有匹配 RepositoryMap/Source Adapter 的项目不能声称支持可靠动态修改。
 
-## 24. V2 与未来扩展
+## 24. 任务图协作与其他扩展
 
 在不改变 BaseSourceManifest、CandidateRevision、ContextReceipt、SourceFileChangeSet、Runtime 候选物化和真实 SourceDiff 不变量的前提下，未来可以增加：
 
@@ -1195,7 +1195,7 @@ raw Patch 第一阶段曾出现与业务语义无关的 hunk 语法失败。当�
 ## 25. 参考依据
 
 - [OpenAI：Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)：模型通过结构化 Tool Call 请求动作，Agent 执行并把结果加入后续推理输入。
-- [GitHub Copilot：Repository indexing](https://docs.github.com/en/copilot/concepts/context/repository-indexing)：语义代码索引可以改善仓库级检索，但属于具体产品能力，不是本文 V1 的必要前提。
+- [GitHub Copilot：Repository indexing](https://docs.github.com/en/copilot/concepts/context/repository-indexing)：语义代码索引可以改善仓库级检索，但属于具体产品能力，不是本设计的必要前提。
 - [Aider：Repository map](https://aider.chat/docs/repomap.html)：低分辨率仓库地图可以提供文件和关键符号结构，并在需要时引导读取具体文件。
 
 本文只吸收“多分辨率 Context、按需读取和 Agent loop”的可验证机制，不把任何外部产品的内部索引、分片或模型策略当作 Another Atom 已实现事实。

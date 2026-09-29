@@ -239,7 +239,7 @@ function AdminDashboard({ admin }: { admin: AdminUserView }) {
       </header>
       <main className="admin-main">
         <section className="admin-title">
-          <div><span>V1 SYSTEM OVERVIEW</span><h1>用户与项目</h1><p>查看注册用户和 Project 状态，并配置管理员权限。</p></div>
+          <div><span>SYSTEM OVERVIEW</span><h1>用户与项目</h1><p>查看注册用户和 Project 状态，并配置管理员权限。</p></div>
           <button className="admin-refresh" onClick={() => void loadUsers()}><RefreshCw size={16} />刷新</button>
         </section>
         <form className="admin-search" onSubmit={(event) => { event.preventDefault(); setPage(1); setQuery(queryInput.trim()); }}>

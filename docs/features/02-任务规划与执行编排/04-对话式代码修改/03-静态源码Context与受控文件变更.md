@@ -1,8 +1,8 @@
-# Another Atom V1 静态源码 Context 与受控文件变更执行
+# Another Atom 静态源码 Context 与受控文件变更执行
 
 [toc]
 
-- **文档状态：** V1 本地实现基线；`SourceFileChangeSet`、隔离文件物化、Runtime 本地 Diff、静态 Context 下有界 Repair 与自动化测试已完成，真实 Provider、Worker 修复检查点恢复与 Railway 验收仍待完成
+- **文档状态：** 本地实现基线；`SourceFileChangeSet`、隔离文件物化、Runtime 本地 Diff、静态 Context 下有界 Repair 与自动化测试已完成，真实 Provider、Worker 修复检查点恢复与 Railway 验收仍待完成
 - **功能范围：** 已有 Project 修改时的一次性源码 Context、受控文件变更、隔离候选、真实 Diff、最多两次验证修复与现有执行门禁
 - **上位设计：** [基于现有代码的对话式 AI Coding](./02-技术总设计.md)
 - **后续终态：** [受控动态源码 Context 与 Patch 执行](./04-动态源码Context与受控文件变更.md)
@@ -10,11 +10,11 @@
 
 ## 背景
 
-V1 第一阶段曾把 Engineer 从完整 `AppSpec` 重生成迁移为模型输出 `SourcePatchSet`，Runtime 再执行 `git apply --check` 和隔离 apply。该路径已经具备基线、Context、路径和 `before_hash` 约束，但仍要求模型精确生成 unified diff 的 hunk 行数、起始位置和上下文。
+固定流程第一阶段曾把 Engineer 从完整 `AppSpec` 重生成迁移为模型输出 `SourcePatchSet`，Runtime 再执行 `git apply --check` 和隔离 apply。该路径已经具备基线、Context、路径和 `before_hash` 约束，但仍要求模型精确生成 unified diff 的 hunk 行数、起始位置和上下文。
 
 Run `1c36c375-f800-4ef8-8b2d-d4392ed68f9b` 证明这个接口不够可靠：模型正确完成了“毛玻璃翻译”到“我要翻译”的内容修改，却因 hunk 把实际 `6→6` 写成 `7→7` 而在构建前失败。该错误与业务语义无关，继续在 raw diff 上叠加 Prompt、重试或自动修复会扩大接口和恢复状态。
 
-本文将 V1 seam 调整为 `SourceFileChangeSet`。Engineer 只声明受控文件应变成什么；Runtime 负责候选物化、本地 Diff、执行门禁和版本写回。模型不再生成 raw unified diff。
+本文将固定流程 seam 调整为 `SourceFileChangeSet`。Engineer 只声明受控文件应变成什么；Runtime 负责候选物化、本地 Diff、执行门禁和版本写回。模型不再生成 raw unified diff。
 
 ## 摘要
 

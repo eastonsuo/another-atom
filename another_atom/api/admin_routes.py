@@ -46,8 +46,8 @@ from another_atom.storage.models import (
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = get_logger("admin")
 
-# V1 runs as a single instance, so an in-process failure window is an acceptable
-# brute-force guard; a shared store is only needed once there are multiple replicas.
+# The admin service runs as a single instance, so an in-process failure window is
+# an acceptable brute-force guard; a shared store is only needed with multiple replicas.
 ADMIN_LOGIN_WINDOW_SECONDS = 900
 ADMIN_LOGIN_MAX_FAILURES = 5
 _login_failures: dict[str, list[float]] = {}

@@ -535,7 +535,7 @@ def materialize_source_file_change_set(
             if len(change.replacement_content) > 120_000 or len(encoded) > 256_000:
                 raise SourceChangeError(
                     "SOURCE_CHANGE_OUTPUT_TOO_LARGE",
-                    f"Replacement content exceeds the V1 per-file limit: {path}",
+                    f"Replacement content exceeds the per-file limit: {path}",
                 )
 
     with tempfile.TemporaryDirectory(prefix="another-atom-change-") as directory:
@@ -581,7 +581,7 @@ def materialize_source_file_change_set(
             if len(content) > 120_000:
                 raise SourceChangeError(
                     "CANDIDATE_CONTRACT_INVALID",
-                    f"Candidate source exceeds the V1 per-file limit: {path}",
+                    f"Candidate source exceeds the per-file limit: {path}",
                 )
             candidate_files[path] = content
 

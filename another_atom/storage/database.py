@@ -184,7 +184,7 @@ def init_database(target_engine: Engine | None = None) -> None:
             and settings.admin_username == "admin"
             and settings.admin_password == "admin12345"
         ):
-            # Accepted V1 boundary: the default admin stays usable in public deployments,
+            # Accepted demo boundary: the default admin stays usable in public deployments,
             # but the operator must be able to see that the well-known credentials are live.
             logger.warning(
                 "default_admin_credentials_active",

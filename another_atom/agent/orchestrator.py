@@ -902,7 +902,7 @@ class Orchestrator:
 
             compatibility_review = ReviewReport(
                 summary=(
-                    "兼容字段：V1 当前由独立 Runtime（运行时）的构建、单元测试和确定性验证"
+                    "兼容字段：当前由独立 Runtime（运行时）的构建、单元测试和确定性验证"
                     "作为发布前证据，不再调用 Reviewer（评审员）Agent。"
                 ),
                 requirement_checks=["ProductSpec 与 ArchitectureDesign 已进入执行请求。"],
