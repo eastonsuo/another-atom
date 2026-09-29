@@ -4,9 +4,9 @@
 
 > 类型：工程检查｜状态：待办｜日期：2026-07-14｜版本范围：V1｜基线：`AppSpec`、Engineer Prompt、Repository Packager 与 Preview Adapter
 
-- **产品设计：** [V1 核心产品需求与交互](../../design/V1/产品设计/01-核心产品需求与交互.md)
-- **Agent 设计：** [V1 多 Agent 设计](../../design/V1/技术设计/01-[Agent]-多Agent设计.md)
-- **工程设计：** [V1 系统架构](../../design/V1/技术设计/03-[工程]-系统架构.md)
+- **产品设计：** [V1 核心产品需求与交互](../../design/02-端到端流程.md)
+- **Agent 设计：** [V1 多 Agent 设计](../../features/01-角色职责与能力/10-角色职责与交付物/02-角色契约与上下文.md)
+- **工程设计：** [V1 系统架构](../../design/03-系统架构概览.md)
 
 ## 背景
 
@@ -93,7 +93,7 @@ Run `f697...` 最终不是正常的校验失败，而是 `another_atom/agent/pro
 
 这不构成删除 Runtime 校验的理由。Runtime 仍必须生成不可由 Agent 自报的 Build/Test/Sandbox 证据；需要调整的是校验职责和时机：通用 SourceBundle 负责表达项目源码，Adapter 负责声明并预检其固定输入，Executor 负责真实执行。没有匹配 Adapter 的非 Web 项目仍可保存源码、文档和版本，但应明确“不支持在线运行或预览”，不能被改写成 HTML，也不能仅因没有 Preview Adapter 被判定为源码交付失败。
 
-该结论已与[整体产品目标与定位](../../design/整体/01-[产品]-整体产品目标与定位.md#46-产品目标开放还是-runtime-无限制)和[V1 多 Agent 设计](../../design/V1/技术设计/01-[Agent]-多Agent设计.md#25-工程师engineer交付项目源码单元测试并对通过负责)对齐，不新增另一套长期设计。
+该结论已与[整体产品目标与定位](../../design/01-产品定位.md)和[V1 多 Agent 设计](../../features/01-角色职责与能力/10-角色职责与交付物/02-角色契约与上下文.md#a-25-工程师engineer交付项目源码单元测试并对通过负责)对齐，不新增另一套长期设计。
 
 ### 可靠性目标与统计口径
 

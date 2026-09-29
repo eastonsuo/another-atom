@@ -1,13 +1,13 @@
 # Code Spec 与 Implementation Plan
 
-本目录保存从 [Feature 入口](../features/README.md)登记的已确认技术总设计派生的实施合同和可选任务账本；设计可位于共同基线或 Feature 专项目录，迁移期使用登记的现有正文路径。项目级门禁见 [Feature 交付工作流](../agents/feature-delivery-workflow.md)。
+本目录仅保留通用规范，不保存实施合同正文。从 [Feature 入口](../features/README.md)登记的已确认技术总设计派生的实施合同和可选任务账本均放在对应 Feature 内。项目级门禁见 [Feature 交付工作流](../agents/feature-delivery-workflow.md)。
 
 ## Code Spec
 
-正式 Code Spec 放在 `specs/`，推荐命名：
+正式 Code Spec 放在对应 Feature 内，固定命名：
 
 ```text
-<Feature稳定编号>-<中文功能名>-Code-Spec.md
+Code-Spec.md
 ```
 
 每份 Code Spec 至少记录：
@@ -29,10 +29,10 @@ Code Spec 只能由已确认技术总设计受控派生。无法证明设计稳�
 
 ## Implementation Plan
 
-Implementation Plan 放在 `plans/`，推荐命名：
+Implementation Plan 放在同一 Feature 内，固定命名：
 
 ```text
-<Feature稳定编号>-<中文功能名>-Implementation-Plan.md
+Implementation-Plan.md
 ```
 
 Plan 默认可选，只在复杂、跨仓或需要多轮任务账本时使用。一个 Feature 只能有一份当前 Plan；它负责文件落点、依赖、任务状态、验证入口和完成证据，不补充设计合同，也不自动授权代码修改、推送或部署。

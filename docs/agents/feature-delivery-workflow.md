@@ -4,7 +4,7 @@
 
 ## 1. 主流程
 
-先从 [Feature 索引](../features/README.md)经能力域定位具体 Feature，读取对应入口登记的当前设计和相关共同基线。能力域只负责分类，交付、Spec 和自测仍落到明确 Feature 与实施范围，不在域级另建一套合同。正文现行位置与旧路径来源见[迁移映射](../features/文档归属与迁移映射.md)，旧路径不再作为活动来源。Feature 入口是导航和证据摘要，不替代设计，也不因登记目录而触发重新设计。
+先从 [Feature 索引](../features/README.md)经能力域定位具体 Feature，读取对应入口登记的当前设计和相关 Feature 合同与整体概览。能力域只负责分类，交付、Spec 和自测仍落到明确 Feature 与实施范围，不在域级另建一套合同。正文现行位置与旧路径来源见[迁移映射](../features/文档归属与迁移映射.md)，旧路径不再作为活动来源。Feature 入口是导航和证据摘要，不替代设计，也不因登记目录而触发重新设计。
 
 新增或改变产品行为、公共接口、数据语义、组件职责、跨组件合同、故障、兼容或迁移时，按以下顺序推进：
 
@@ -25,9 +25,9 @@
 
 | 问题 | 入口 | 必要输入 | 阶段结果 |
 | --- | --- | --- | --- |
-| 产品应该怎样工作、技术如何保证 | `write-design-doc` | 已确认产品基线、相关代码、目标文件写入授权 | Feature 登记的专项设计或 `docs/design/**` 中的共同基线 |
-| 如何把技术总设计变成实施合同 | `derive-code-spec` | 已确认且本轮核对稳定的技术总设计、Feature 和实施范围 | `docs/superpowers/specs/**` 中的候选或已确认 Code Spec |
-| 是否需要持久任务账本 | `write-implementation-plan` | 已确认 Code Spec；用户明确要求或复杂任务确有需要 | `docs/superpowers/plans/**` 中唯一当前 Plan |
+| 产品应该怎样工作、技术如何保证 | `write-design-doc` | 已确认产品基线、相关代码、目标文件写入授权 | Feature 内的产品说明、澄清与技术设计；整体概览只维护跨功能关系 |
+| 如何把技术总设计变成实施合同 | `derive-code-spec` | 已确认且本轮核对稳定的技术总设计、Feature 和实施范围 | Feature 内唯一 `Code-Spec.md` |
+| 是否需要持久任务账本 | `write-implementation-plan` | 已确认 Code Spec；用户明确要求或复杂任务确有需要 | Feature 内唯一 `Implementation-Plan.md` |
 | 如何修改代码并证明本地正确 | `implement-code-change` | Feature 使用已确认 Code Spec；维护修改使用能够唯一确定的既有行为 | 代码、测试、本地验证和提交 |
 | 如何准备或改变验证环境 | `deploy-for-validation` | 已登记环境、不可变版本、明确目标和写入授权 | 制品、部署及实际版本读回事实 |
 | 已部署实现在环境中是否满足合同 | `validate-in-non-production` | 已确认 Code Spec、唯一自测记录、已登记非生产环境和不可变版本 | 实际用例结果、证据和开发侧结论 |
@@ -37,13 +37,13 @@ Skill 可以根据用户请求自动选择，但不会自动跨越阶段。用�
 ## 3. 权威关系
 
 ```text
-docs/design/** 共同基线 + Feature 登记的专项设计
+Feature 内产品说明 + 技术总设计 + 所依赖 Feature 的唯一合同
   └─ 每项合同一个权威落点，以 Feature 入口登记的现行正文为准
        ↓ 受控派生
-docs/superpowers/specs/**
+当前 Feature/Code-Spec.md
   └─ 指定 Feature 和实施范围的唯一 Code Spec
        ↓ 可选拆解
-docs/superpowers/plans/**
+当前 Feature/Implementation-Plan.md
   └─ 复杂 Feature 的唯一当前任务账本
        ↓ 实施与验证
 代码 + docs/features/<能力域>/<Feature>/10-自测方案与执行记录.md
@@ -53,7 +53,7 @@ docs/superpowers/plans/**
 - Plan 只组织实施，不摘要或改写 Code Spec，也不构成部署授权。
 - Issue 负责执行协作状态；Review 负责完备性检查；Bug 负责既有合同的实现缺陷。三者都不是设计或 Spec 的替代品。
 - 一个 Feature 不得并存多个当前 Code Spec、多个当前 Plan 或多份自测执行记录。
-- 专项产品与技术设计、Spec、自测记录持续维护；执行证据按版本追加。Review 和 Bug 保留原始发现及 dated Update，不随 Feature 整理重写历史。
+- Feature 产品与技术设计、Spec、自测记录持续维护；执行证据按版本追加。Review 和 Bug 保留原始发现及 dated Update，不随 Feature 整理重写历史。
 - 已完成 Feature 复用现有设计和证据，不补历史 Spec、Plan、确认或测试记录。只有维护依据存在实质缺口时才补说明；基于代码补录的现状不自动成为已确认设计。下一次改变合同前，为明确范围核对设计并派生或更新 Spec。
 
 ## 4. 确认门禁
@@ -115,3 +115,9 @@ Plan 默认可选。只有用户明确要求，或任务跨仓、依赖复杂、
 - 已部署：目标环境实际运行版本已经读回；异步部署仅受理时不得写成已部署。
 - 开发侧自测完成：当前不可变版本的全部必测用例均有真实证据并通过。
 - Feature 完成交付：除本地实现外，还满足设计要求的部署环境验证和用户可见验收；不能用局部完成概括整体完成。
+
+## 8. 产品澄清与整体概览
+
+产品问题只在负责该规则的 Feature 的 `产品澄清.md` 记录；跨 Feature 影响使用同一 PQ 引用。保留用户原始答复和归一化结论，确认后回写唯一产品规则及受影响设计。`11-实施澄清记录.md` 是持久工程取舍记录，不与产品问题混用。
+
+`docs/design/` 只解释定位、主流程、组件关系和版本范围；不能在 V1/V2 下再复制详细设计。一个 Feature 可以分多份专题，但同一条精确合同只有一个当前落点。整体索引只显示问题状态和链接，不保存完整问答。

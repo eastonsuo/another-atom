@@ -6,7 +6,7 @@
 
 - **发布主题：** 可检查、可恢复的对话式项目修改
 - **产品范围：** V1 ProductSpec 确认、持久化 Project Chat、架构交付、受控源码修改与 Runtime 验证
-- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)、[常驻流式对话与执行期间输入控制](./docs/features/03-用户交互与协作/01-项目对话与交互控制/01-产品说明.md)、[静态源码 Context 与受控文件变更执行](./docs/features/02-任务规划与执行编排/04-对话式代码修改/03-静态源码Context与受控文件变更.md)
+- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/features/03-用户交互与协作/01-项目对话与交互控制/02-统一对话与流程衔接.md)、[常驻流式对话与执行期间输入控制](./docs/features/03-用户交互与协作/01-项目对话与交互控制/01-产品说明.md)、[静态源码 Context 与受控文件变更执行](./docs/features/02-任务规划与执行编排/04-对话式代码修改/03-静态源码Context与受控文件变更.md)
 
 ### 本次发布
 
@@ -69,7 +69,7 @@
 
 - **发布主题：** 统一 Project Chat 与 Human-in-the-loop
 - **产品范围：** V1 对话式 AI Coding 核心纵切
-- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)
+- **设计基线：** [统一 Chat 与 Human-in-the-loop](./docs/features/03-用户交互与协作/01-项目对话与交互控制/02-统一对话与流程衔接.md)
 
 ### 本次发布
 
@@ -112,7 +112,7 @@
 
 ### 依据
 
-- [统一 Chat 与 Human-in-the-loop 设计](./docs/design/V1/产品设计/06-统一Chat与Human-in-the-loop.md)
+- [统一 Chat 与 Human-in-the-loop 设计](./docs/features/03-用户交互与协作/01-项目对话与交互控制/02-统一对话与流程衔接.md)
 - [对话式 AI Coding 实现检查](./docs/review/待办/16-[综合]-2026-07-14-对话式AI-Coding实现检查.md)
 - [统一 Chat 与 HITL 核心纵切检查](./docs/review/归档/19-[综合]-2026-07-14-统一Chat与HITL核心纵切检查.md)
 

@@ -5,14 +5,14 @@
 > **和 AI 团队一起，把想法做成软件。**
 
 [![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
-[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/V1/产品设计/01-核心产品需求与交互.md)
+[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/04-版本范围与整体验收.md)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
 [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
 
 从需求澄清到代码、验证和发布，所有过程归入同一个 Project；文档和源码可查看、可修改，项目可以基于现有版本持续迭代。
 
-[产品设计](./docs/design/V1/产品设计/01-核心产品需求与交互.md) · [技术设计](./docs/design/V1/技术设计/03-[工程]-系统架构.md) · [Release](./CHANGELOG.md) · [快速开始](#快速开始)
+[产品设计](./docs/design/02-端到端流程.md) · [技术设计](./docs/design/03-系统架构概览.md) · [Release](./CHANGELOG.md) · [快速开始](#快速开始)
 
 ## 产品目标
 
@@ -50,7 +50,7 @@ Another Atom 是一个多智能体 Vibe Coding 工作台。用户可以提出任
            继续对话和迭代
 ```
 
-完整产品判断与取舍见[整体产品目标与定位](./docs/design/整体/01-[产品]-整体产品目标与定位.md)。
+完整产品判断与取舍见[整体产品目标与定位](./docs/design/01-产品定位.md)。
 
 ## 要解决的核心问题
 
@@ -307,7 +307,7 @@ Studio / Preview / 文件与终端界面
 - **部署边界：** Control Plane、Agent Worker 和 Sandbox 可以按版本合并或拆分，但可信控制面与不可信执行面不能合并权限。
 - **分享边界：** Public Route 只读取已发布版本，不开放 Project Repository、Agent Context、内部 Event、配额或 Sandbox Session。
 
-详细工程边界由各版本架构设计维护，README 不重复版本实现细节。
+详细工程边界由对应 Feature 持续维护，整体架构只保留概览，README 不重复功能合同。
 
 ## 当前版本
 
@@ -315,8 +315,8 @@ Studio / Preview / 文件与终端界面
 
 | 版本 | 服务整体目标的方式 | 状态与详细设计 |
 | --- | --- | --- |
-| **V1** | 用固定专业团队、Project Git、版本和显式发布证明完整闭环；当前已实现 Web 源码与浏览器 Preview 适配器 | Railway 单副本已验收；非 Web Runtime 适配器和 Linux Sandbox 实机安全验收待完成。见 [V1 产品](./docs/design/V1/产品设计/01-核心产品需求与交互.md)、[V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md)、[V1 架构](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
-| **V2** | 在同一 Project、Artifact 和权限基础上增加动态任务图、角色子集、Tool、局部并行和返工 | 设计完成，待 V1 验收后实施。见 [V2 产品](./docs/design/V2/产品设计/01-产品范围与交互.md)、[V2 Agent](./docs/design/V2/技术设计/01-[Agent]-任务编排与多Agent协作.md)、[V2 架构](./docs/design/V2/技术设计/02-[工程]-多Agent执行与沙箱架构.md) |
+| **V1** | 用固定专业团队、Project Git、版本与受控发布证明完整闭环；通用源码交付与实际运行能力分开 | 已有局部实现和历史验证记录，不等于完整 V1 验收通过；当前差距见 [Feature 索引](./docs/features/README.md)，范围见[版本概览](./docs/design/04-版本范围与整体验收.md) |
+| **V2** | 在同一 Project、Artifact 和权限基础上增加任务图、角色子集、Tool、局部并行和返工 | 已有草案，仍有产品和技术待确认项；V1 验收后再推进。见 [任务图与协作](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md)、[任务隔离与工具](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md) |
 
 ## 快速开始
 
@@ -326,7 +326,7 @@ Studio / Preview / 文件与终端界面
 - [uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 22 和 npm
 
-本地默认使用 SQLite 和确定性 Mock Provider，不需要 API Key。真实 Ollama Cloud / DeepSeek 配置见[运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)。
+本地默认使用 SQLite 和确定性 Mock Provider，不需要 API Key。真实 Ollama Cloud / DeepSeek 配置见[运行与部署说明](./docs/operations/01-运行与部署.md)。
 
 ### 1. 安装后端依赖
 
@@ -360,16 +360,16 @@ uv run --python 3.12 uvicorn another_atom.main:app --host 127.0.0.1 --port 8000
 ## 文档导航
 
 - **Release：** [版本发布记录与当前能力边界](./CHANGELOG.md)
-- **完整知识库：** [项目完整设计知识库](./PROJECT_KNOWLEDGE_BASE.md)
-- **整体产品：** [整体产品目标与定位](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
+- **历史快照：** [已归档的单文件项目知识库](./docs/archive/2026-09-29-项目知识库快照.md)，不作为当前设计源
+- **整体产品：** [整体产品目标与定位](./docs/design/01-产品定位.md)
 - **设计：** [设计文档规范与索引](./docs/design/README.md)
 - **Feature：** [功能入口与文档归属](./docs/features/README.md)
 - **Review：** [检查、反思与 Bug 索引](./docs/review/README.md)
-- **部署：** [运行与部署说明](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
-- **Atoms 参考：** [Atoms 参考产品分析](./docs/design/整体/02-[参考]-Atoms参考产品分析.md)
+- **部署：** [运行与部署说明](./docs/operations/01-运行与部署.md)
+- **Atoms 参考：** [Atoms 参考产品分析](./docs/references/Atoms参考产品分析.md)
 
 ## 项目状态
 
 - **源码仓库：** [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
-- **在线版本：** Railway 已部署并完成公开访问验收；具体服务域名由 Railway 部署环境管理。
+- **在线版本：** 既有发布记录包含 Railway 部署与公开访问验证；本轮文档整理未复核当前在线版本。实际入口与环境边界见[环境登记](./docs/agents/validation-environments.md)，不能将历史验收扩大为当前全部 Feature 已通过。
 - **当前限制：** Project 问答与修改提案已分流，但异步可恢复的 ConversationJob、通用 Approval subject、真实 Linux Sandbox 安全验收、完整 Retry/Resolve 和需要后端的产品能力仍待后续版本完善。

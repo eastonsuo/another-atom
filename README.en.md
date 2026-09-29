@@ -5,14 +5,14 @@
 > **Build software from ideas, together with an AI team.**
 
 [![Release v0.3.0](https://img.shields.io/badge/Release-v0.3.0-2563EB?style=flat-square)](./CHANGELOG.md)
-[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/V1/产品设计/01-核心产品需求与交互.md)
+[![Scope V1](https://img.shields.io/badge/Scope-V1-F2C94C?style=flat-square)](./docs/design/04-版本范围与整体验收.md)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](./another_atom/main.py)
 [![React](https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB)](./studio/package.json)
 
 Requirements, code, validation, and publishing stay in one Project. Documents and source remain inspectable and editable, and each iteration continues from an existing version.
 
-[Product design](./docs/design/V1/产品设计/01-核心产品需求与交互.md) · [Technical design](./docs/design/V1/技术设计/03-[工程]-系统架构.md) · [Release](./CHANGELOG.md) · [Quick start](#quick-start)
+[Product design](./docs/design/02-端到端流程.md) · [Technical design](./docs/design/03-系统架构概览.md) · [Release](./CHANGELOG.md) · [Quick start](#quick-start)
 
 ## Product Goal
 
@@ -48,7 +48,7 @@ Idea / materials / existing project
           Continue conversation and iteration
 ```
 
-See the [overall product goal and positioning](./docs/design/整体/01-[产品]-整体产品目标与定位.md) for the full decisions and trade-offs.
+See the [overall product goal and positioning](./docs/design/01-产品定位.md) for the full decisions and trade-offs.
 
 ## Core Problems
 
@@ -273,8 +273,8 @@ The current release is **v0.3.0 (2026-07-15)**. Refer to the [Release / Changelo
 
 | Version | How it advances the overall goal | Status and design sources |
 | --- | --- | --- |
-| **V1** | Proves the complete loop with a fixed specialist team, Project Git, versions, and explicit publishing; the Web source and browser Preview adapter is the currently implemented path | Railway single-replica accepted; non-Web Runtime adapters and target Linux Sandbox isolation acceptance remain. See [V1 product](./docs/design/V1/产品设计/01-核心产品需求与交互.md), [V1 Agent](./docs/design/V1/技术设计/01-[Agent]-多Agent设计.md), and [V1 architecture](./docs/design/V1/技术设计/03-[工程]-系统架构.md) |
-| **V2** | Adds dynamic task graphs, role subsets, tools, selective parallelism, and rework on the same Project, Artifact, and authority foundations | Designed, not implemented. See [V2 product](./docs/design/V2/产品设计/01-产品范围与交互.md), [V2 Agent](./docs/design/V2/技术设计/01-[Agent]-任务编排与多Agent协作.md), and [V2 architecture](./docs/design/V2/技术设计/02-[工程]-多Agent执行与沙箱架构.md) |
+| **V1** | Proves the controlled creation, modification, validation, version, and publishing loop; source delivery is separate from executable runtime support | Partial implementations and historical verification do not prove complete V1 acceptance. See [Features](./docs/features/README.md) and [version scope](./docs/design/04-版本范围与整体验收.md) for remaining work. |
+| **V2** | Adds task graphs, role subsets, controlled tools, selective parallelism, and rework | Existing drafts still require product and technical decisions; implementation follows V1 acceptance. See [task collaboration](./docs/features/02-任务规划与执行编排/16-任务图与多角色协作/README.md) and [task isolation](./docs/features/04-执行与验证环境/17-任务级隔离与受控工具/README.md). |
 
 ## Quick Start
 
@@ -284,7 +284,7 @@ The current release is **v0.3.0 (2026-07-15)**. Refer to the [Release / Changelo
 - [uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 22 and npm
 
-Local development defaults to SQLite and a deterministic Mock Provider, with no API key required. See the [run and deployment guide](./docs/design/V1/技术设计/04-[工程]-运行与部署.md) for Ollama Cloud and DeepSeek configuration.
+Local development defaults to SQLite and a deterministic Mock Provider, with no API key required. See the [run and deployment guide](./docs/operations/01-运行与部署.md) for Ollama Cloud and DeepSeek configuration.
 
 ### 1. Install backend dependencies
 
@@ -318,15 +318,16 @@ Local data is stored in `data/another_atom.db`. xterm.js + restricted Vim additi
 ## Documentation
 
 - **Release:** [Release history and current capability boundaries](./CHANGELOG.md)
-- **Complete knowledge base (Chinese):** [Full project design knowledge base](./PROJECT_KNOWLEDGE_BASE.md)
-- **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/整体/01-[产品]-整体产品目标与定位.md)
+- **Historical snapshot (Chinese):** [Archived single-file knowledge base](./docs/archive/2026-09-29-项目知识库快照.md), not a current design source
+- **Overall product:** [Overall product goal and positioning (Chinese)](./docs/design/01-产品定位.md)
 - **Design:** [Design documentation index](./docs/design/README.md)
+- **Features:** [Capability domains and detailed feature contracts](./docs/features/README.md)
 - **Review:** [Inspection, reflection, and bug index](./docs/review/README.md)
-- **Deployment:** [Run and deployment guide](./docs/design/V1/技术设计/04-[工程]-运行与部署.md)
-- **Atoms reference:** [Atoms reference product analysis](./docs/design/整体/02-[参考]-Atoms参考产品分析.md)
+- **Deployment:** [Run and deployment guide](./docs/operations/01-运行与部署.md)
+- **Atoms reference:** [Atoms reference product analysis](./docs/references/Atoms参考产品分析.md)
 
 ## Project Status
 
 - **Source:** [github.com/eastonsuo/another-atom](https://github.com/eastonsuo/another-atom)
-- **Online:** Railway deployment and public access have been accepted; the service domain is managed by the Railway environment.
+- **Online:** Existing release records include Railway deployment and public-access checks. This documentation review did not inspect the current deployed version; see the [environment registry](./docs/agents/validation-environments.md). Historical checks do not prove acceptance of all current Features.
 - **Current limits:** a recoverable asynchronous `ConversationJob`, generic Approval subjects, target Linux Sandbox security acceptance, complete Retry/Resolve coverage, and backend-dependent product capabilities remain future work.
